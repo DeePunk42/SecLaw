@@ -1,0 +1,326 @@
+# ─── SecAgent Default Rules (Unified Rule Engine) ───
+#
+# Each rule returns a tier: GREEN or YELLOW.
+#   GREEN  → allow execution, async LLM audit in background
+#   YELLOW → synchronous LLM audit before execution
+#
+# Priority ranges:
+#   9000-10000 : YELLOW — catastrophic patterns (rm -rf /, pipe-to-shell, credential theft)
+#   8000       : YELLOW — always-YELLOW tools (fs_delete, sessions_spawn, etc.)
+#   7000-7500  : GREEN  — known-safe patterns (git, npm, docker safe ops, workspace rm)
+#   6000-6500  : YELLOW — parameter-level YELLOW (dangerous commands, sensitive files, SSRF)
+#   5000-5500  : GREEN  — always-GREEN tools (read, web_search, memory_*)
+#   4000-4500  : GREEN  — parameter-level GREEN (non-dangerous commands, non-sensitive paths)
+#   0          : GREEN  — fallback (no rule matched → GREEN, async audit)
+#
+# Key: GREEN safe patterns (7000+) override parameter-level YELLOW (6000+),
+# so `git status` and `npm install` stay GREEN even though their commands
+# might match generic YELLOW patterns. Catastrophic YELLOW (9000+) is highest.
+
+# ═══════════════════════════════════════════════════════
+# YELLOW — Catastrophic patterns (9000-10000)
+# ═══════════════════════════════════════════════════════
+
+- id: CAT-001
+  name: Catastrophic recursive delete
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "rm\\s+.*(-rf|-fr)\\s+(/\\s|/$|/\\*|~/?\\s|~/?$|/etc\\b|/usr\\b|/var\\b|/home\\b|/root\\b|/boot\\b|/sys\\b|/proc\\b)"
+  tier: YELLOW
+  reason: "Recursive delete targeting system or home directory"
+  priority: 10000
+
+- id: CAT-002
+  name: Force remove root
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "rm\\s+.*--no-preserve-root"
+  tier: YELLOW
+  reason: "Bypassing root deletion protection"
+  priority: 10000
+
+- id: CAT-003
+  name: Pipe download to shell
+  toolMatch: [exec, bash]
+  conditions:
+    - type: pipe_to_shell
+      value: true
+  tier: YELLOW
+  reason: "Piping downloaded content to shell execution"
+  priority: 9500
+
+- id: CAT-004
+  name: Data exfiltration via curl/wget
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "(curl|wget).*\\$\\(.*cat.*(secret|env|credential|ssh|key|token|password)"
+  tier: YELLOW
+  reason: "Potential credential exfiltration via HTTP request"
+  priority: 9500
+
+- id: CAT-005
+  name: Overwrite SSH config
+  toolMatch: [fs_write]
+  conditions:
+    - type: path_matches
+      pattern: "(\\.ssh/|authorized_keys|known_hosts|id_rsa|id_ed25519)"
+  tier: YELLOW
+  reason: "Modifying SSH configuration files"
+  priority: 9200
+
+- id: CAT-006
+  name: Overwrite shell profile
+  toolMatch: [fs_write]
+  conditions:
+    - type: path_matches
+      pattern: "(\\.bashrc|\\.zshrc|\\.profile|\\.bash_profile|\\.zprofile)"
+  tier: YELLOW
+  reason: "Modifying shell profile (potential persistence)"
+  priority: 9100
+
+- id: CAT-007
+  name: Disk format/wipe
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "(mkfs|dd\\s+.*of=/dev/)"
+  tier: YELLOW
+  reason: "Disk format or raw device write"
+  priority: 9800
+
+- id: CAT-008
+  name: Cron/at job creation
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "(crontab\\s+-|at\\s+)"
+  tier: YELLOW
+  reason: "Scheduled task creation (potential persistence)"
+  priority: 9000
+
+# ═══════════════════════════════════════════════════════
+# YELLOW — Always-YELLOW tools (8000)
+# ═══════════════════════════════════════════════════════
+
+- id: TOOL-Y-001
+  name: File deletion tool
+  toolMatch: [fs_delete]
+  conditions: []
+  tier: YELLOW
+  reason: "File deletion requires audit"
+  priority: 8000
+
+- id: TOOL-Y-002
+  name: File move tool
+  toolMatch: [fs_move]
+  conditions: []
+  tier: YELLOW
+  reason: "File move requires audit"
+  priority: 8000
+
+- id: TOOL-Y-003
+  name: Session spawn tool
+  toolMatch: [sessions_spawn]
+  conditions: []
+  tier: YELLOW
+  reason: "Spawning new session requires audit"
+  priority: 8000
+
+- id: TOOL-Y-004
+  name: Session send tool
+  toolMatch: [sessions_send]
+  conditions: []
+  tier: YELLOW
+  reason: "Sending to session requires audit"
+  priority: 8000
+
+- id: TOOL-Y-005
+  name: Gateway tool
+  toolMatch: [gateway]
+  conditions: []
+  tier: YELLOW
+  reason: "Gateway operation requires audit"
+  priority: 8000
+
+# ═══════════════════════════════════════════════════════
+# GREEN — Known-safe patterns (7000-7500)
+# These override parameter-level YELLOW (6000+) to ensure
+# common safe commands are not over-classified.
+# ═══════════════════════════════════════════════════════
+
+- id: SAFE-001
+  name: Workspace-scoped delete
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_starts_with
+      prefix: "rm"
+    - type: path_in_workspace
+      value: true
+  tier: GREEN
+  reason: "Delete within workspace boundary"
+  priority: 7500
+
+- id: SAFE-002
+  name: Git operations
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_starts_with
+      prefix: "git"
+  tier: GREEN
+  reason: "Git version control operation"
+  priority: 7200
+
+- id: SAFE-003
+  name: Package manager operations
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "^(npm|yarn|pnpm|bun|pip|pip3|poetry|cargo|go)\\s+(install|add|remove|uninstall|build|test|run|start|init|create|dev|serve|watch|lint|format|check|publish|pack|link|ci)"
+  tier: GREEN
+  reason: "Standard package manager operation"
+  priority: 7200
+
+- id: SAFE-004
+  name: Docker safe operations
+  toolMatch: [exec, bash]
+  conditions:
+    - type: command_matches
+      pattern: "^docker\\s+(build|run|ps|images|logs|inspect|compose|pull|push|tag|stop|start|restart|rm|rmi|network|volume)"
+  tier: GREEN
+  reason: "Standard Docker operation"
+  priority: 7100
+
+# ═══════════════════════════════════════════════════════
+# YELLOW — Parameter-level YELLOW (6000-6500)
+# Dangerous commands, sensitive file reads/writes, SSRF
+# ═══════════════════════════════════════════════════════
+
+- id: PARAM-Y-001
+  name: Dangerous command detected
+  toolMatch: [exec, bash]
+  conditions:
+    - type: is_yellow_command
+      value: true
+  tier: YELLOW
+  reason: "Command classified as potentially dangerous"
+  priority: 6500
+
+- id: PARAM-Y-002
+  name: Command reads sensitive files
+  toolMatch: [exec, bash]
+  conditions:
+    - type: reads_sensitive_files
+      value: true
+  tier: YELLOW
+  reason: "Command reads sensitive files (credentials, keys, env)"
+  priority: 6400
+
+- id: PARAM-Y-003
+  name: Sensitive file write path
+  toolMatch: [fs_write]
+  conditions:
+    - type: is_sensitive_write_path
+      value: true
+  tier: YELLOW
+  reason: "Writing to sensitive file path"
+  priority: 6300
+
+- id: PARAM-Y-004
+  name: SSRF - internal URL
+  toolMatch: [web_fetch]
+  conditions:
+    - type: url_is_internal
+      value: true
+  tier: YELLOW
+  reason: "Request targets internal/private network address"
+  priority: 6200
+
+- id: PARAM-Y-005
+  name: Cloud metadata endpoint
+  toolMatch: [web_fetch]
+  conditions:
+    - type: url_is_metadata
+      value: true
+  tier: YELLOW
+  reason: "Request targets cloud metadata endpoint (SSRF risk)"
+  priority: 6200
+
+- id: PARAM-Y-006
+  name: Credential endpoint URL
+  toolMatch: [web_fetch]
+  conditions:
+    - type: url_is_credential
+      value: true
+  tier: YELLOW
+  reason: "Request targets credential/token endpoint"
+  priority: 6100
+
+# ═══════════════════════════════════════════════════════
+# GREEN — Always-GREEN tools (5000-5500)
+# ═══════════════════════════════════════════════════════
+
+- id: TOOL-G-001
+  name: Read file tool
+  toolMatch: [read, fs_read]
+  conditions: []
+  tier: GREEN
+  reason: "Read-only file operation"
+  priority: 5500
+
+- id: TOOL-G-002
+  name: Web search tool
+  toolMatch: [web_search]
+  conditions: []
+  tier: GREEN
+  reason: "Web search is read-only"
+  priority: 5500
+
+- id: TOOL-G-003
+  name: Memory tools
+  toolMatch: [memory_read, memory_write, memory_list, memory_delete]
+  conditions: []
+  tier: GREEN
+  reason: "Memory operation (plugin-scoped)"
+  priority: 5500
+
+# ═══════════════════════════════════════════════════════
+# GREEN — Parameter-level GREEN (4000-4500)
+# Non-dangerous commands, safe file writes, external URLs
+# ═══════════════════════════════════════════════════════
+
+- id: PARAM-G-001
+  name: Non-dangerous exec command
+  toolMatch: [exec, bash]
+  conditions:
+    - type: is_yellow_command
+      value: false
+  tier: GREEN
+  reason: "Command not classified as dangerous"
+  priority: 4500
+
+- id: PARAM-G-002
+  name: Non-sensitive file write
+  toolMatch: [fs_write]
+  conditions:
+    - type: is_sensitive_write_path
+      value: false
+  tier: GREEN
+  reason: "Writing to non-sensitive file path"
+  priority: 4000
+
+- id: PARAM-G-003
+  name: External URL fetch
+  toolMatch: [web_fetch]
+  conditions:
+    - type: url_is_internal
+      value: false
+    - type: url_is_metadata
+      value: false
+    - type: url_is_credential
+      value: false
+  tier: GREEN
+  reason: "External URL with no SSRF or credential indicators"
+  priority: 4000

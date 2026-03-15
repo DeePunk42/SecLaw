@@ -1,0 +1,62 @@
+{
+  "id": "sec-agent",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "maxConcurrent": { "type": "number" },
+          "endpoint": { "type": "string" },
+          "apiKey": { "type": "string" },
+          "promptRecentCalls": { "type": "number" },
+          "trustedSenderLabels": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "timeouts": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "syncAuditMs": { "type": "number" },
+          "asyncAuditMs": { "type": "number" },
+          "syncTimeoutPolicy": { "type": "string", "enum": ["fail_closed", "fail_open"] }
+        }
+      },
+      "logging": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+          "auditJsonl": { "type": "boolean" }
+        }
+      },
+      "rules": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "extra": { "type": "array" }
+        }
+      },
+      "agentProfiles": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "classification": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "safeCommands": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
