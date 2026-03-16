@@ -226,6 +226,48 @@ Each audit request is fingerprinted via SHA-256 of `{ toolName, params, userGoal
 | `fail_closed` | LLM timeout/failure → DANGER (block) |
 | `fail_open` | LLM timeout/failure → SAFE (allow) |
 
+### Error Classification & Retry
+
+LLM errors are classified into categories with different handling strategies:
+
+| Category | HTTP Status | Retryable | Behavior |
+|----------|-------------|-----------|----------|
+| `rate_limited` | 429 | Yes | Retry with backoff; triggers cooldown after threshold |
+| `server_error` | 5xx | Yes | Retry with backoff |
+| `auth_error` | 401, 403 | No | Fail immediately |
+| `network_error` | DNS/connection | No | Fail immediately |
+| `unknown_error` | — | No | Fail immediately (backward compatible with plain `Error`) |
+
+**Retry logic** (in `LLMAuditor.callLLM()`):
+1. Check cooldown — if active, return error result immediately (no LLM call)
+2. Retry loop (0 to `maxRetries`):
+   - Try LLM call → success resets consecutive 429 counter
+   - On error: classify → if not retryable, return immediately
+   - Rate limited: increment counter; if exceeds `cooldownThreshold`, activate cooldown
+   - If not last attempt: sleep with exponential backoff (`initialBackoffMs * 2^attempt`)
+3. All retries exhausted → return error result
+
+**Cooldown mechanism**: After `cooldownThreshold` consecutive 429 errors, all LLM calls are skipped for `cooldownMs` (default 30s). This prevents sustained request storms during rate limiting. `isCoolingDown()` and `resetCooldown()` are public for monitoring and testing.
+
+**Error results**: When an error occurs, `LLMAuditResult._errorInfo` is populated with the error category, status code, and message. The `decision` field follows `syncTimeoutPolicy` (DANGER for fail_closed, SAFE for fail_open).
+
+**Service error vs security finding**: `beforeToolCall` checks `_errorInfo` to distinguish service issues from actual LLM security evaluations:
+- **Service errors** (rate_limited, auth_error, server_error, network_error): block/allow per `syncTimeoutPolicy`, no override PIN (overriding a service issue is meaningless), clear `[SERVICE UNAVAILABLE]` or `[WARNING]` message asking the agent to stop
+- **Security findings** (actual DANGER from LLM): block with override PIN and buttons (existing flow)
+- **Async audit service errors**: silently skipped — do not set danger flag (prevents false interrupts)
+
+**Configuration** (`llm.retry`):
+```json
+{
+  "maxRetries": 2,
+  "initialBackoffMs": 1000,
+  "cooldownMs": 30000,
+  "cooldownThreshold": 3
+}
+```
+
+**Gateway integration**: `createGatewayLLMCallFn()` throws `LLMHttpError` (extends `Error`, carries `statusCode` and `retryAfterMs`) instead of plain `Error`. For 429 responses, the `Retry-After` header is parsed and passed through.
+
 ## Async Audit Queue
 
 After every tool call (`afterToolCall`), the operation is checked:
@@ -261,13 +303,19 @@ When `logging.auditJsonl: true`, structured events are written to `sec-agent-aud
 
 | Event Type | Trigger |
 |------------|---------|
-| `tool_classified` | Every tool call classification + intent context (RED path) |
+| `tool_classified` | Every tool call classification |
 | `rule_matched` | When a named rule matches |
-| `llm_audit` | LLM audit result |
+| `intent_context` | Intent context dump (RED path, debug level) |
+| `llm_audit` | LLM audit result (sync or async) |
 | `tool_blocked` | Tool call blocked |
 | `tool_allowed` | Tool call allowed (RED path only) |
+| `async_audit_enqueued` | Tool call enqueued for async audit |
+| `async_audit_complete` | Async audit finished |
 | `danger_detected` | Async audit found danger |
 | `override_used` | Trusted sender override consumed |
+| `llm_service_error` | LLM service error (429, 5xx, auth, network) |
+
+All events carry a `toolCallId` field (when available) that links events from the same tool call together. The `toolCallId` comes from OpenClaw's `event.toolCallId` / `ctx.toolCallId`, or is generated via `crypto.randomUUID()` if not provided.
 
 ## LLM Gateway Connection
 
@@ -295,7 +343,13 @@ The response is parsed from OpenAI format: `data.choices[0].message.content`.
     "promptRecentCalls": 3,
     "trustedSenderLabels": ["openclaw-control-ui"],
     "endpoint": "http://127.0.0.1:3000/v1/chat/completions",
-    "apiKey": "sk-..."
+    "apiKey": "sk-...",
+    "retry": {
+      "maxRetries": 2,
+      "initialBackoffMs": 1000,
+      "cooldownMs": 30000,
+      "cooldownThreshold": 3
+    }
   },
   "timeouts": {
     "syncAuditMs": 10000,
@@ -425,15 +479,58 @@ SecAgent includes a built-in web dashboard on port 19198 (configurable) for real
 |--------|------|-------------|
 | GET | `/api/logs` | Recent audit log entries (query: `limit`, `tier`, `eventType`, `toolName`) |
 | GET | `/api/logs/stream` | SSE real-time log stream (same filter params) |
+| GET | `/api/tool-calls` | Aggregated ToolCallRecords (query: `limit`, `tier`, `toolName`) |
+| GET | `/api/tool-calls/stream` | SSE real-time ToolCallRecord updates |
 | GET | `/api/config` | Current config (apiKey masked as `"***"`) |
 | PUT | `/api/config` | Update runtime config (apiKey/endpoint blocked) |
 | GET | `/api/health` | Health check (`{ status: "running" }`) |
 | GET | `/api/rules` | Loaded rule list |
 
+### ToolCallRecord Aggregation
+
+Events with the same `toolCallId` are aggregated into a `ToolCallRecord`:
+
+```typescript
+interface ToolCallRecord {
+  toolCallId: string;
+  sessionKey: string;
+  toolName: string;
+  startedAt: string;
+  updatedAt: string;
+  tier?: "GREEN" | "YELLOW" | "RED";
+  finalStatus: "allowed" | "blocked" | "overridden" | "pending";
+  syncAudit?: { decision, reason?, durationMs? };
+  asyncAuditStatus?: "enqueued" | "complete";
+  asyncAudit?: { decision, reason?, durationMs? };
+  dangerDetected?: boolean;
+  overridePin?: string;
+  overrideUsed?: boolean;
+  intentContext?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+  events: AuditLogEntry[];  // all raw events for this call
+}
+```
+
+The aggregation happens in `AuditLog.log()` — when an entry has a `toolCallId`, the corresponding `ToolCallRecord` is created or updated. Up to 200 records are kept in memory.
+
+### Dashboard Frontend (Grouped Card View)
+
+The dashboard Audit Log tab shows tool calls as **grouped cards** instead of flat events:
+
+- Each card represents one tool call (identified by `toolCallId`)
+- Card header: relative time, tool name, tier badge, status label
+- Status labels: green "allowed", red "BLOCKED" (with PIN if override available), yellow "auditing..." with spinner, purple "OVERRIDDEN"
+- Danger detection shows a red "DANGER" badge
+- Click to expand: lifecycle phases (Rule Match, Intent Context, Sync Audit, Async Audit, Override, Params)
+- Async audit shows a spinner while `enqueued`, updates in-place when `complete`
+- Filters: tier, status (All/Allowed/Blocked/Overridden/Pending), tool name
+- Cards update in-place via SSE (`/api/tool-calls/stream`), preserving expanded state
+
 ### SSE Push Mechanism
 
-- `AuditLog.subscribe(fn)` registers a callback for new log entries
-- SSE endpoint sends `event: connected` on connection, then `data: {entry}` for each new log
+- `AuditLog.subscribe(fn)` — callback for raw `AuditLogEntry` events
+- `AuditLog.subscribeToolCalls(fn)` — callback for `ToolCallRecord` updates
+- SSE endpoints send `data: {}` on connection, then `data: {json}` for each update
 - 30-second heartbeat prevents connection timeout
 - Cleanup on client disconnect via `req.on("close")`
 
@@ -447,6 +544,8 @@ SecAgent includes a built-in web dashboard on port 19198 (configurable) for real
 ### Audit Log Ring Buffer
 
 `AuditLog` maintains a 500-entry ring buffer independent of JSONL file output:
-- `subscribe(fn)` / `unsubscribe(fn)` — real-time subscriber pattern
+- `subscribe(fn)` / `unsubscribe(fn)` — real-time subscriber pattern for raw entries
+- `subscribeToolCalls(fn)` / `unsubscribeToolCalls(fn)` — real-time subscriber for aggregated records
 - `getRecentEntries(limit?)` — returns buffered entries for initial page load
+- `getToolCallRecords(limit?)` — returns aggregated records
 - Buffer always active (even when `auditJsonl: false`)

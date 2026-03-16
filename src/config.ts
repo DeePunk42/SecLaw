@@ -57,6 +57,28 @@ export interface RuleResult {
   reason?: string;
 }
 
+export type LLMErrorCategory =
+  | "rate_limited"    // 429
+  | "auth_error"      // 401, 403
+  | "server_error"    // 5xx
+  | "network_error"   // DNS/connection failure
+  | "unknown_error";  // Other (including plain Error from test mocks)
+
+export interface LLMErrorInfo {
+  category: LLMErrorCategory;
+  statusCode?: number;
+  retryAfterMs?: number;   // 429 Retry-After header
+  message: string;
+  timestamp: number;
+}
+
+export interface RetryConfig {
+  maxRetries: number;          // default 2
+  initialBackoffMs: number;    // default 1000, doubles each retry
+  cooldownMs: number;          // default 30000
+  cooldownThreshold: number;   // consecutive 429 count to trigger cooldown, default 3
+}
+
 export interface LLMAuditResult {
   decision: AuditDecision;
   reason?: string;
@@ -67,6 +89,8 @@ export interface LLMAuditResult {
   _rawResponse?: string;
   /** Whether the result came from cache. */
   _cached?: boolean;
+  /** Populated when the result was produced due to an LLM service error (not a security evaluation). */
+  _errorInfo?: LLMErrorInfo;
 }
 
 export interface AuditQueueItem {
@@ -76,6 +100,7 @@ export interface AuditQueueItem {
   sessionKey: string;
   intentContext: IntentContext;
   timestamp: number;
+  toolCallId?: string;
 }
 
 export interface DangerReport {
@@ -134,6 +159,8 @@ export interface LLMConfig {
   promptRecentCalls?: number;
   /** Trusted sender labels; operations from other senders get extra scrutiny */
   trustedSenderLabels?: string[];
+  /** Retry configuration for transient LLM errors (429, 5xx) */
+  retry?: RetryConfig;
 }
 
 export interface TimeoutConfig {
@@ -174,6 +201,12 @@ const DEFAULT_CONFIG: SecAgentConfig = {
     enabled: true,
     maxConcurrent: 2,
     trustedSenderLabels: ["openclaw-control-ui"],
+    retry: {
+      maxRetries: 2,
+      initialBackoffMs: 1000,
+      cooldownMs: 30000,
+      cooldownThreshold: 3,
+    },
   },
   timeouts: {
     syncAuditMs: 30000,
@@ -187,7 +220,7 @@ const DEFAULT_CONFIG: SecAgentConfig = {
   dashboard: {
     enabled: true,
     port: 19198,
-    host: "127.0.0.1",
+    host: "0.0.0.0",
   },
 };
 

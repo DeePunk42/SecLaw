@@ -11,6 +11,7 @@ import type {
   DangerReport,
   IntentContext,
   LLMAuditResult,
+  LLMErrorInfo,
 } from "./config.js";
 
 export type AuditEventType =
@@ -21,7 +22,11 @@ export type AuditEventType =
   | "tool_allowed"
   | "danger_detected"
   | "danger_cleared"
-  | "override_used";
+  | "override_used"
+  | "async_audit_enqueued"
+  | "async_audit_complete"
+  | "intent_context"
+  | "llm_service_error";
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -35,8 +40,32 @@ export interface AuditLogEntry {
   reason?: string;
   source?: "sync" | "async";
   durationMs?: number;
+  toolCallId?: string;
   [key: string]: unknown;
 }
+
+export interface ToolCallRecord {
+  toolCallId: string;
+  sessionKey: string;
+  toolName: string;
+  startedAt: string;
+  updatedAt: string;
+  tier?: "GREEN" | "YELLOW" | "RED";
+  ruleId?: string;
+  ruleReason?: string;
+  finalStatus: "allowed" | "blocked" | "overridden" | "pending";
+  syncAudit?: { decision: string; reason?: string; durationMs?: number };
+  asyncAuditStatus?: "enqueued" | "complete";
+  asyncAudit?: { decision: string; reason?: string; durationMs?: number };
+  dangerDetected?: boolean;
+  overridePin?: string;
+  overrideUsed?: boolean;
+  intentContext?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+  events: AuditLogEntry[];
+}
+
+export type ToolCallSubscriber = (record: ToolCallRecord) => void;
 
 /** Logger interface matching OpenClaw's PluginLogger. */
 export interface ExternalLogger {
@@ -61,6 +90,11 @@ export class AuditLog {
   private subscribers: AuditLogSubscriber[] = [];
   private recentEntries: AuditLogEntry[] = [];
   private static readonly MAX_RECENT = 500;
+
+  private toolCallRecords = new Map<string, ToolCallRecord>();
+  private toolCallIds: string[] = [];
+  private static readonly MAX_TOOL_CALL_RECORDS = 200;
+  private toolCallSubscribers: ToolCallSubscriber[] = [];
 
   constructor(config: LoggingConfig) {
     this.config = config;
@@ -87,6 +121,36 @@ export class AuditLog {
   unsubscribe(fn: AuditLogSubscriber): void {
     const idx = this.subscribers.indexOf(fn);
     if (idx !== -1) this.subscribers.splice(idx, 1);
+  }
+
+  /**
+   * Register a subscriber to receive ToolCallRecord updates in real time.
+   */
+  subscribeToolCalls(fn: ToolCallSubscriber): void {
+    this.toolCallSubscribers.push(fn);
+  }
+
+  /**
+   * Remove a previously registered ToolCallRecord subscriber.
+   */
+  unsubscribeToolCalls(fn: ToolCallSubscriber): void {
+    const idx = this.toolCallSubscribers.indexOf(fn);
+    if (idx !== -1) this.toolCallSubscribers.splice(idx, 1);
+  }
+
+  /**
+   * Return ToolCallRecords in order, optionally limited.
+   */
+  getToolCallRecords(limit?: number): ToolCallRecord[] {
+    const ids = limit !== undefined
+      ? this.toolCallIds.slice(-limit)
+      : this.toolCallIds;
+    const result: ToolCallRecord[] = [];
+    for (const id of ids) {
+      const rec = this.toolCallRecords.get(id);
+      if (rec) result.push(rec);
+    }
+    return result;
   }
 
   /**
@@ -167,6 +231,11 @@ export class AuditLog {
       try { fn(entry); } catch { /* best-effort */ }
     }
 
+    // Aggregate into ToolCallRecord if toolCallId is present
+    if (entry.toolCallId) {
+      this.aggregateIntoToolCallRecord(entry.toolCallId, entry);
+    }
+
     // JSONL file write (conditional)
     if (!this.config.auditJsonl || !this.logStream) return;
 
@@ -183,6 +252,94 @@ export class AuditLog {
       this.logStream.write(JSON.stringify(sanitized) + "\n");
     } catch {
       // Best-effort
+    }
+  }
+
+  private aggregateIntoToolCallRecord(toolCallId: string, entry: AuditLogEntry): void {
+    let record = this.toolCallRecords.get(toolCallId);
+    if (!record) {
+      record = {
+        toolCallId,
+        sessionKey: entry.sessionKey,
+        toolName: entry.toolName || "unknown",
+        startedAt: entry.timestamp,
+        updatedAt: entry.timestamp,
+        finalStatus: "pending",
+        events: [],
+      };
+      this.toolCallRecords.set(toolCallId, record);
+      this.toolCallIds.push(toolCallId);
+
+      // Evict oldest if over limit
+      while (this.toolCallIds.length > AuditLog.MAX_TOOL_CALL_RECORDS) {
+        const oldId = this.toolCallIds.shift()!;
+        this.toolCallRecords.delete(oldId);
+      }
+    }
+
+    record.updatedAt = entry.timestamp;
+    record.events.push(entry);
+
+    switch (entry.eventType) {
+      case "tool_classified":
+        if (entry.tier) record.tier = entry.tier;
+        if (entry.params) record.params = entry.params;
+        // GREEN/YELLOW → default to allowed (may be overridden by later events)
+        if (entry.tier === "GREEN" || entry.tier === "YELLOW") {
+          record.finalStatus = "allowed";
+        }
+        break;
+      case "rule_matched":
+        record.ruleId = entry.ruleId;
+        if (entry.reason) record.ruleReason = entry.reason;
+        break;
+      case "intent_context":
+        if (entry.intentContext) {
+          record.intentContext = entry.intentContext as Record<string, unknown>;
+        }
+        break;
+      case "llm_audit":
+        record.syncAudit = {
+          decision: entry.decision || "unknown",
+          reason: entry.reason,
+          durationMs: entry.durationMs,
+        };
+        break;
+      case "tool_blocked":
+        record.finalStatus = "blocked";
+        if (entry.overridePin) {
+          record.overridePin = entry.overridePin as string;
+        }
+        break;
+      case "tool_allowed":
+        record.finalStatus = "allowed";
+        break;
+      case "async_audit_enqueued":
+        record.asyncAuditStatus = "enqueued";
+        break;
+      case "async_audit_complete":
+        record.asyncAuditStatus = "complete";
+        record.asyncAudit = {
+          decision: entry.decision || "unknown",
+          reason: entry.reason,
+          durationMs: entry.durationMs,
+        };
+        if (entry.decision === "DANGER") {
+          record.dangerDetected = true;
+        }
+        break;
+      case "override_used":
+        record.finalStatus = "overridden";
+        record.overrideUsed = true;
+        break;
+      case "danger_detected":
+        record.dangerDetected = true;
+        break;
+    }
+
+    // Notify subscribers
+    for (const fn of this.toolCallSubscribers) {
+      try { fn(record); } catch { /* best-effort */ }
     }
   }
 
@@ -215,6 +372,7 @@ export class AuditLog {
     toolName: string,
     params: Record<string, unknown>,
     tier: "GREEN" | "YELLOW" | "RED",
+    toolCallId?: string,
   ): void {
     const paramSummary = this.summarizeParams(toolName, params);
     if (tier === "GREEN") {
@@ -232,6 +390,7 @@ export class AuditLog {
       toolName,
       params,
       tier,
+      toolCallId,
     });
   }
 
@@ -241,6 +400,7 @@ export class AuditLog {
     ruleId: string,
     decision: string,
     reason?: string,
+    toolCallId?: string,
   ): void {
     this.log({
       timestamp: new Date().toISOString(),
@@ -250,6 +410,7 @@ export class AuditLog {
       ruleId,
       decision,
       reason,
+      toolCallId,
     });
   }
 
@@ -267,6 +428,7 @@ export class AuditLog {
     decision: string,
     reason?: string,
     durationMs?: number,
+    toolCallId?: string,
   ): void {
     this.log({
       timestamp: new Date().toISOString(),
@@ -276,6 +438,7 @@ export class AuditLog {
       decision,
       reason,
       durationMs,
+      toolCallId,
     });
   }
 
@@ -288,6 +451,8 @@ export class AuditLog {
     toolName: string,
     reason: string,
     source: "sync" | "async",
+    toolCallId?: string,
+    overridePin?: string,
   ): void {
     // BLOCKED is always visible at info level
     this.info(`⛔ BLOCKED ${toolName} [${source}] -- ${reason.split("\n")[0]}`);
@@ -299,10 +464,12 @@ export class AuditLog {
       toolName,
       reason,
       source,
+      toolCallId,
+      overridePin,
     });
   }
 
-  logAllow(sessionKey: string, toolName: string, reason: string): void {
+  logAllow(sessionKey: string, toolName: string, reason: string, toolCallId?: string): void {
     // Final ALLOW decision visible at info for YELLOW (caller already logged YELLOW at info)
     this.info(`✅ ALLOW ${toolName} -- ${reason}`);
 
@@ -312,10 +479,11 @@ export class AuditLog {
       sessionKey,
       toolName,
       reason,
+      toolCallId,
     });
   }
 
-  logDanger(sessionKey: string, report: DangerReport): void {
+  logDanger(sessionKey: string, report: DangerReport, toolCallId?: string): void {
     this.error(
       `🚨 DANGER ${report.toolName} [${report.source}]${report.ruleId ? ` rule=${report.ruleId}` : ""} -- ${report.reason}`,
     );
@@ -328,25 +496,55 @@ export class AuditLog {
       reason: report.reason,
       source: report.source,
       ruleId: report.ruleId,
+      toolCallId,
     });
   }
 
-  logOverrideUsed(sessionKey: string, toolName: string): void {
+  logOverrideUsed(sessionKey: string, toolName: string, toolCallId?: string): void {
     this.warn(`🔓 OVERRIDE ${toolName} -- trusted sender confirmed override`);
     this.log({
       timestamp: new Date().toISOString(),
       eventType: "override_used",
       sessionKey,
       toolName,
+      toolCallId,
     });
   }
 
   logAsyncEnqueue(
-    _sessionKey: string,
-    _toolName: string,
-    _queueLength: number,
+    sessionKey: string,
+    toolName: string,
+    queueLength: number,
+    toolCallId?: string,
   ): void {
-    // Intentionally silent
+    this.log({
+      timestamp: new Date().toISOString(),
+      eventType: "async_audit_enqueued",
+      sessionKey,
+      toolName,
+      queueLength,
+      toolCallId,
+    });
+  }
+
+  logAsyncAuditComplete(
+    sessionKey: string,
+    toolName: string,
+    decision: string,
+    reason?: string,
+    durationMs?: number,
+    toolCallId?: string,
+  ): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      eventType: "async_audit_complete",
+      sessionKey,
+      toolName,
+      decision,
+      reason,
+      durationMs,
+      toolCallId,
+    });
   }
 
   logAsyncProcessStart(_sessionKey: string, _toolName: string): void {
@@ -366,6 +564,7 @@ export class AuditLog {
     toolName: string,
     ctx: IntentContext,
     maxRecentCalls?: number,
+    toolCallId?: string,
   ): void {
     if (!this.shouldLog("debug")) return;
 
@@ -393,10 +592,11 @@ export class AuditLog {
 
     this.log({
       timestamp: new Date().toISOString(),
-      eventType: "tool_classified",
+      eventType: "intent_context",
       sessionKey,
       toolName,
       intentContext: ctx as unknown as Record<string, unknown>,
+      toolCallId,
     });
   }
 
@@ -409,6 +609,26 @@ export class AuditLog {
     _durationMs: number,
   ): void {
     // Intentionally silent
+  }
+
+  logLLMServiceError(
+    sessionKey: string,
+    toolName: string,
+    errorInfo: LLMErrorInfo,
+    toolCallId?: string,
+  ): void {
+    this.warn(`⚠️ LLM service error: ${errorInfo.category}${errorInfo.statusCode ? ` (${errorInfo.statusCode})` : ""} — ${errorInfo.message}`);
+
+    this.log({
+      timestamp: new Date().toISOString(),
+      eventType: "llm_service_error",
+      sessionKey,
+      toolName,
+      errorCategory: errorInfo.category,
+      statusCode: errorInfo.statusCode,
+      reason: errorInfo.message,
+      toolCallId,
+    });
   }
 
   close(): void {

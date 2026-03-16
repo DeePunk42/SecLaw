@@ -11,7 +11,7 @@
 import crypto from "crypto";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import type { SecAgentConfig } from "./src/config.js";
+import type { SecAgentConfig, LLMErrorInfo } from "./src/config.js";
 import { loadConfig } from "./src/config.js";
 import { RuleEngine } from "./src/rule-engine.js";
 import { LLMAuditor, type LLMCallFn } from "./src/llm-auditor.js";
@@ -112,6 +112,20 @@ export interface OpenClawPluginApi {
   emitAgentEvent?: EmitAgentEventFn;
 }
 
+// ─── LLMHttpError ───
+
+export class LLMHttpError extends Error {
+  public readonly statusCode: number;
+  public readonly retryAfterMs?: number;
+
+  constructor(statusCode: number, statusText: string, retryAfterMs?: number) {
+    super(`LLM endpoint returned ${statusCode}: ${statusText}`);
+    this.name = "LLMHttpError";
+    this.statusCode = statusCode;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
 // ─── Plugin State ───
 
 let ruleEngine: RuleEngine;
@@ -164,6 +178,56 @@ function overrideButtons(pin: string): Array<Array<{ text: string; callback_data
   ];
 }
 
+// ─── Service Error Formatting ───
+
+/** Module-level reference to agent event emitter (for SSE notifications). */
+let emitAgentEventFn: EmitAgentEventFn | null = null;
+
+function formatServiceErrorBlock(
+  errorInfo: LLMErrorInfo,
+  action: "blocked" | "allowed",
+): string {
+  const categoryLabel = {
+    rate_limited: "rate limited",
+    auth_error: "authentication error",
+    server_error: "server error",
+    network_error: "network error",
+    unknown_error: "unknown error",
+  }[errorInfo.category];
+  const statusPart = errorInfo.statusCode ? ` (${errorInfo.statusCode})` : "";
+
+  if (action === "blocked") {
+    return [
+      `[SecAgent] SERVICE UNAVAILABLE — LLM security audit could not be completed`,
+      ``,
+      `Error type: ${categoryLabel}${statusPart}`,
+      `Details: ${errorInfo.message}`,
+      ``,
+      `This is NOT a security finding. The operation was BLOCKED because the audit service`,
+      `is temporarily unavailable and the fail_closed policy is active.`,
+      ``,
+      `ACTION REQUIRED: Please STOP all tool execution immediately and inform the user:`,
+      `  - The LLM security audit service is temporarily unavailable (${categoryLabel})`,
+      `  - Tool calls requiring security audit cannot proceed`,
+      `  - Please wait before resuming`,
+    ].join("\n");
+  }
+
+  return [
+    `[SecAgent] WARNING — LLM security audit skipped due to service error`,
+    ``,
+    `Error type: ${categoryLabel}${statusPart}`,
+    `Details: ${errorInfo.message}`,
+    ``,
+    `The operation was ALLOWED (fail_open policy) but the security audit was NOT performed.`,
+    ``,
+    `ACTION REQUIRED: Please STOP all tool execution immediately and inform the user:`,
+    `  - The LLM security audit service is temporarily unavailable`,
+    `  - Subsequent tool calls will proceed WITHOUT security audit`,
+    `  - The user should decide whether to continue without audit protection`,
+  ].join("\n");
+}
+
 // ─── Standalone Init (for testing / direct use) ───
 
 export interface PluginInitContext {
@@ -206,6 +270,7 @@ export function init(ctx: PluginInitContext): void {
 
   if (ctx.emitAgentEvent) {
     setEmitAgentEvent(ctx.emitAgentEvent);
+    emitAgentEventFn = ctx.emitAgentEvent;
   }
 
   // Start dashboard if enabled (fire-and-forget, don't block init)
@@ -312,12 +377,13 @@ export async function beforeToolCall(
   const { toolName, params } = event;
   const sessionKey = ctx.sessionKey ?? "default";
   const wsPath = ctx.workspacePath ?? workspacePath;
+  const toolCallId = event.toolCallId ?? ctx.toolCallId ?? crypto.randomUUID();
 
   auditLog.logBeforeToolCallStart(sessionKey, toolName, params);
 
   // 0. Check for active override grant (matches by toolName; fingerprint kept for audit only)
   if (sessionState.consumeActiveOverride(sessionKey, toolName)) {
-    auditLog.logOverrideUsed(sessionKey, toolName);
+    auditLog.logOverrideUsed(sessionKey, toolName, toolCallId);
     consumeDangerFlag(sessionKey);  // clear any lingering danger flag
     return undefined;  // allow
   }
@@ -327,8 +393,8 @@ export async function beforeToolCall(
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const blockReason = formatDangerAlert(dangerReport);
-    auditLog.logBlock(sessionKey, toolName, blockReason, "async");
     const pin = registerPendingOverride(sessionKey, toolName, params);
+    auditLog.logBlock(sessionKey, toolName, blockReason, "async", toolCallId, pin);
     return {
       block: true,
       blockReason: blockReason + formatOverrideHint(pin),
@@ -341,12 +407,12 @@ export async function beforeToolCall(
   const ruleResult = ruleEngine.classify(toolName, params, intentCtx, wsPath);
 
   if (ruleResult.ruleId) {
-    auditLog.logRuleMatch(sessionKey, toolName, ruleResult.ruleId, ruleResult.tier, ruleResult.reason);
+    auditLog.logRuleMatch(sessionKey, toolName, ruleResult.ruleId, ruleResult.tier, ruleResult.reason, toolCallId);
   } else {
     auditLog.logNoRuleMatch(sessionKey, toolName);
   }
 
-  auditLog.logClassification(sessionKey, toolName, params, ruleResult.tier);
+  auditLog.logClassification(sessionKey, toolName, params, ruleResult.tier, toolCallId);
 
   // 3. GREEN → allow execution, no audit at all
   if (ruleResult.tier === "GREEN") {
@@ -363,8 +429,8 @@ export async function beforeToolCall(
     // LLM disabled — apply timeout policy
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
-      auditLog.logBlock(sessionKey, toolName, reason, "sync");
       const pin = registerPendingOverride(sessionKey, toolName, params);
+      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
       return {
         block: true,
         blockReason: `[SecAgent] ${reason}` + formatOverrideHint(pin),
@@ -372,12 +438,12 @@ export async function beforeToolCall(
       };
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
-    auditLog.logAllow(sessionKey, toolName, "LLM disabled, RED → pass-through (fail_open)");
+    auditLog.logAllow(sessionKey, toolName, "LLM disabled, RED → pass-through (fail_open)", toolCallId);
     return undefined;
   }
 
   auditLog.logLLMAuditStart(sessionKey, toolName);
-  auditLog.logIntentContext(sessionKey, toolName, intentCtx, config.llm.promptRecentCalls);
+  auditLog.logIntentContext(sessionKey, toolName, intentCtx, config.llm.promptRecentCalls, toolCallId);
   const startTime = Date.now();
   const ruleContext = ruleResult.ruleId
     ? { ruleId: ruleResult.ruleId, reason: ruleResult.reason }
@@ -394,14 +460,49 @@ export async function beforeToolCall(
   );
   const durationMs = Date.now() - startTime;
 
-  auditLog.logLLMAudit(sessionKey, toolName, llmResult.decision, llmResult.reason, durationMs);
+  auditLog.logLLMAudit(sessionKey, toolName, llmResult.decision, llmResult.reason, durationMs, toolCallId);
   auditLog.logLLMAuditDetail(sessionKey, toolName, llmResult, durationMs);
 
+  // Service error: not a security finding — handle separately
+  if (llmResult._errorInfo && llmResult._errorInfo.category !== "unknown_error") {
+    const errorInfo = llmResult._errorInfo;
+    auditLog.logLLMServiceError(sessionKey, toolName, errorInfo, toolCallId);
+    const shouldBlock = llmResult.decision === "DANGER"; // determined by syncTimeoutPolicy
+
+    // SSE notification for dashboard
+    if (emitAgentEventFn) {
+      emitAgentEventFn({
+        stream: "security",
+        data: {
+          type: "llm_service_error",
+          sessionKey,
+          toolName,
+          errorCategory: errorInfo.category,
+          blocked: shouldBlock,
+          timestamp: Date.now(),
+        },
+      });
+    }
+
+    if (shouldBlock) {
+      // fail_closed: block the tool call (no override — this isn't a security finding)
+      const blockReason = formatServiceErrorBlock(errorInfo, "blocked");
+      auditLog.logBlock(sessionKey, toolName, blockReason, "sync", toolCallId);
+      return { block: true, blockReason };
+    } else {
+      // fail_open: allow but warn the agent to stop
+      const warningReason = formatServiceErrorBlock(errorInfo, "allowed");
+      auditLog.logAllow(sessionKey, toolName, `Service error (${errorInfo.category}), fail_open → allowed`, toolCallId);
+      return { block: false, blockReason: warningReason };
+    }
+  }
+
+  // Security finding: DANGER from actual LLM evaluation
   if (llmResult.decision === "DANGER") {
     const reason = llmResult.reason || "Blocked by LLM security audit";
-    auditLog.logBlock(sessionKey, toolName, reason, "sync");
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
     const pin = registerPendingOverride(sessionKey, toolName, params);
+    auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
     const blockReason = `[SecAgent] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
     return {
       block: true,
@@ -410,7 +511,7 @@ export async function beforeToolCall(
     };
   }
 
-  auditLog.logAllow(sessionKey, toolName, "LLM audit → SAFE");
+  auditLog.logAllow(sessionKey, toolName, "LLM audit → SAFE", toolCallId);
   return undefined;
 }
 
@@ -420,6 +521,7 @@ export async function afterToolCall(
 ): Promise<void> {
   const { toolName, params, result } = event;
   const sessionKey = ctx.sessionKey ?? "default";
+  const toolCallId = event.toolCallId ?? ctx.toolCallId;
 
   onToolCallComplete(sessionKey, toolName, params, event.error ? "error" : "success");
 
@@ -446,9 +548,10 @@ export async function afterToolCall(
     sessionKey,
     intentContext: { ...intentCtx },
     timestamp: Date.now(),
+    toolCallId,
   });
 
-  auditLog.logAsyncEnqueue(sessionKey, toolName, asyncQueue.length);
+  auditLog.logAsyncEnqueue(sessionKey, toolName, asyncQueue.length, toolCallId);
 }
 
 // ─── Additional Event Handlers ───
@@ -591,7 +694,12 @@ function createGatewayLLMCallFn(
     });
 
     if (!response.ok) {
-      throw new Error(`LLM endpoint returned ${response.status}: ${response.statusText}`);
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("Retry-After");
+        const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : undefined;
+        throw new LLMHttpError(response.status, response.statusText, retryAfterMs);
+      }
+      throw new LLMHttpError(response.status, response.statusText);
     }
 
     const data = await response.json() as any;

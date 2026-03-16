@@ -375,6 +375,206 @@ describe("LLMAuditor", () => {
     expect(capturedPrompt).toContain("Trusted sender labels: (none configured)");
   });
 
+  // ─── Error handling tests ───
+
+  describe("error handling", () => {
+    it("classifies 429 as rate_limited with _errorInfo", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error429);
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 3 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-429",
+      });
+      expect(result._errorInfo).toBeDefined();
+      expect(result._errorInfo!.category).toBe("rate_limited");
+      expect(result.decision).toBe("DANGER"); // fail_closed
+    });
+
+    it("classifies 401 as auth_error and does not retry", async () => {
+      const error401 = Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error401);
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 3 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-401",
+      });
+      expect(result._errorInfo!.category).toBe("auth_error");
+      // auth_error is not retryable — should only call LLM once
+      expect(mockLLM).toHaveBeenCalledOnce();
+    });
+
+    it("retries 500 server_error and succeeds on second attempt", async () => {
+      const error500 = Object.assign(new Error("Internal Server Error"), { statusCode: 500 });
+      const mockLLM: LLMCallFn = vi.fn()
+        .mockRejectedValueOnce(error500)
+        .mockResolvedValueOnce({ content: '{"decision": "SAFE"}' });
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 3 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-500-retry",
+      });
+      expect(result.decision).toBe("SAFE");
+      expect(result._errorInfo).toBeUndefined();
+      expect(mockLLM).toHaveBeenCalledTimes(2);
+    });
+
+    it("returns error after exhausting retries on 429", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error429);
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-429-exhaust",
+      });
+      expect(result._errorInfo!.category).toBe("rate_limited");
+      // 1 initial + 2 retries = 3 calls
+      expect(mockLLM).toHaveBeenCalledTimes(3);
+    });
+
+    it("retries 429 and succeeds on second attempt", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn()
+        .mockRejectedValueOnce(error429)
+        .mockResolvedValueOnce({ content: '{"decision": "SAFE"}' });
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-429-recover",
+      });
+      expect(result.decision).toBe("SAFE");
+      expect(result._errorInfo).toBeUndefined();
+    });
+
+    it("activates cooldown after consecutive 429s exceed threshold", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error429);
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 3 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const auditParams = {
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-cooldown",
+      };
+
+      // Trigger 3 consecutive 429s (threshold = 3)
+      await retryAuditor.audit({ ...auditParams, sessionKey: "cd-1" });
+      await retryAuditor.audit({ ...auditParams, sessionKey: "cd-2" });
+      await retryAuditor.audit({ ...auditParams, sessionKey: "cd-3" });
+
+      expect(retryAuditor.isCoolingDown()).toBe(true);
+    });
+
+    it("does not call LLM during cooldown", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error429);
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 2 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const auditParams = {
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-no-call-cooldown",
+      };
+
+      // Trigger cooldown (2 consecutive 429s)
+      await retryAuditor.audit({ ...auditParams, sessionKey: "nc-1" });
+      await retryAuditor.audit({ ...auditParams, sessionKey: "nc-2" });
+      expect(retryAuditor.isCoolingDown()).toBe(true);
+
+      const callCountBefore = mockLLM.mock.calls.length;
+
+      // This should NOT call LLM — cooldown is active
+      const result = await retryAuditor.audit({ ...auditParams, sessionKey: "nc-3" });
+      expect(result._errorInfo!.category).toBe("rate_limited");
+      expect(mockLLM.mock.calls.length).toBe(callCountBefore);
+    });
+
+    it("classifies plain Error as unknown_error and does not retry", async () => {
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(new Error("API error"));
+      const retryAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 3 } },
+        defaultTimeoutConfig,
+      );
+      retryAuditor.setLLMCallFn(mockLLM);
+
+      const result = await retryAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-unknown",
+      });
+      expect(result._errorInfo!.category).toBe("unknown_error");
+      expect(result.decision).toBe("DANGER"); // fail_closed
+      // unknown_error is not retryable — should only call LLM once
+      expect(mockLLM).toHaveBeenCalledOnce();
+    });
+
+    it("fail_open + 429 returns SAFE with _errorInfo", async () => {
+      const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+      const mockLLM: LLMCallFn = vi.fn().mockRejectedValue(error429);
+      const openAuditor = new LLMAuditor(
+        { ...defaultLLMConfig, retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 } },
+        { ...defaultTimeoutConfig, syncTimeoutPolicy: "fail_open" },
+      );
+      openAuditor.setLLMCallFn(mockLLM);
+
+      const result = await openAuditor.audit({
+        toolName: "exec",
+        params: { command: "test" },
+        intentContext: defaultContext,
+        sessionKey: "test-open-429",
+      });
+      expect(result.decision).toBe("SAFE");
+      expect(result._errorInfo).toBeDefined();
+      expect(result._errorInfo!.category).toBe("rate_limited");
+    });
+  });
+
   it("respects timeout with fail_closed policy", async () => {
     const slowAuditor = new LLMAuditor(defaultLLMConfig, {
       ...defaultTimeoutConfig,

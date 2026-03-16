@@ -1,10 +1,22 @@
 /**
  * LLM audit layer: constructs security audit prompts, calls LLM,
  * parses responses, and manages fingerprint caching.
+ *
+ * Includes retry with exponential backoff for transient errors (429, 5xx),
+ * cooldown mechanism for sustained rate limiting, and error classification
+ * that distinguishes service issues from security findings.
  */
 
 import * as crypto from "crypto";
-import type { IntentContext, LLMAuditResult, LLMConfig, TimeoutConfig } from "./config.js";
+import type {
+  IntentContext,
+  LLMAuditResult,
+  LLMConfig,
+  LLMErrorCategory,
+  LLMErrorInfo,
+  RetryConfig,
+  TimeoutConfig,
+} from "./config.js";
 import { sessionState } from "./session-state.js";
 
 /** Interface for the LLM API call function (injected for testability). */
@@ -44,11 +56,20 @@ Respond with ONLY a JSON object in one of these formats:
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 2,
+  initialBackoffMs: 1000,
+  cooldownMs: 30000,
+  cooldownThreshold: 3,
+};
+
 export class LLMAuditor {
   private config: LLMConfig;
   private timeoutConfig: TimeoutConfig;
   private llmCall: LLMCallFn | null = null;
   private activeCalls = 0;
+  private consecutive429Count = 0;
+  private cooldownUntil = 0;
 
   constructor(config: LLMConfig, timeoutConfig: TimeoutConfig) {
     this.config = config;
@@ -72,6 +93,21 @@ export class LLMAuditor {
   ): string {
     const raw = JSON.stringify({ toolName, params, userGoal });
     return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  }
+
+  /**
+   * Check if the auditor is in a cooldown period (rate limit backoff).
+   */
+  isCoolingDown(): boolean {
+    return Date.now() < this.cooldownUntil;
+  }
+
+  /**
+   * Reset the cooldown state (for testing).
+   */
+  resetCooldown(): void {
+    this.consecutive429Count = 0;
+    this.cooldownUntil = 0;
   }
 
   /**
@@ -103,6 +139,15 @@ export class LLMAuditor {
       return { decision: cached, _cached: true };
     }
 
+    // Cooldown fast path: if we're in cooldown, skip the LLM call
+    if (this.isCoolingDown()) {
+      return this.buildErrorResult({
+        category: "rate_limited",
+        message: "LLM audit skipped: cooling down after sustained rate limiting",
+        timestamp: Date.now(),
+      });
+    }
+
     // Respect concurrency limit
     if (this.activeCalls >= this.config.maxConcurrent) {
       // Fail-safe: treat as needing review when at capacity
@@ -115,12 +160,14 @@ export class LLMAuditor {
       this.activeCalls++;
       const result = await this.callLLM(params, ruleContext);
 
-      // Cache the result
-      sessionState.setAuditCache(
-        params.sessionKey,
-        fingerprint,
-        result.decision,
-      );
+      // Only cache real LLM evaluation results, not error fallbacks
+      if (!result._errorInfo) {
+        sessionState.setAuditCache(
+          params.sessionKey,
+          fingerprint,
+          result.decision,
+        );
+      }
 
       return result;
     } finally {
@@ -166,35 +213,149 @@ export class LLMAuditor {
     });
   }
 
+  // ─── Error Classification ───
+
+  classifyError(error: unknown): LLMErrorCategory {
+    if (error && typeof error === "object" && "statusCode" in error) {
+      const statusCode = (error as { statusCode: number }).statusCode;
+      if (statusCode === 429) return "rate_limited";
+      if (statusCode === 401 || statusCode === 403) return "auth_error";
+      if (statusCode >= 500 && statusCode < 600) return "server_error";
+    }
+    // Check for network-level errors (DNS, connection refused, etc.)
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      return "network_error";
+    }
+    if (error && typeof error === "object" && "code" in error) {
+      const code = (error as { code: string }).code;
+      if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT" || code === "ECONNRESET") {
+        return "network_error";
+      }
+    }
+    return "unknown_error";
+  }
+
+  private isRetryable(category: LLMErrorCategory): boolean {
+    return category === "rate_limited" || category === "server_error";
+  }
+
+  buildErrorResult(errorInfo: LLMErrorInfo, prompt?: string): LLMAuditResult {
+    const decision = this.timeoutConfig.syncTimeoutPolicy === "fail_closed"
+      ? "DANGER" as const
+      : "SAFE" as const;
+    return {
+      decision,
+      reason: this.formatErrorReason(errorInfo),
+      _errorInfo: errorInfo,
+      _prompt: prompt,
+    };
+  }
+
+  private formatErrorReason(errorInfo: LLMErrorInfo): string {
+    const categoryLabel = {
+      rate_limited: "rate limited",
+      auth_error: "authentication error",
+      server_error: "server error",
+      network_error: "network error",
+      unknown_error: "unknown error",
+    }[errorInfo.category];
+    const statusPart = errorInfo.statusCode ? ` (${errorInfo.statusCode})` : "";
+    return `[SERVICE ISSUE] LLM audit failed: ${categoryLabel}${statusPart} — ${errorInfo.message}`;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ─── Core LLM Call with Retry ───
+
   private async callLLM(params: {
     toolName: string;
     params: Record<string, unknown>;
     intentContext: IntentContext;
   }, ruleContext?: { ruleId?: string; reason?: string }): Promise<LLMAuditResult> {
     const prompt = this.buildPrompt(params, ruleContext);
+    const retryConfig = this.config.retry ?? DEFAULT_RETRY_CONFIG;
 
-    try {
-      const response = await this.llmCall!({
-        model: this.config.model,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 256,
-      });
-
-      const result = this.parseResponse(response.content);
-      result._prompt = prompt;
-      result._rawResponse = response.content;
-      return result;
-    } catch (error) {
-      // LLM call failed — apply timeout policy
-      if (this.timeoutConfig.syncTimeoutPolicy === "fail_closed") {
-        return {
-          decision: "DANGER",
-          reason: `LLM audit failed: ${error instanceof Error ? error.message : "unknown error"}`,
-          _prompt: prompt,
-        };
-      }
-      return { decision: "SAFE", _prompt: prompt };
+    // Check cooldown before attempting
+    if (this.isCoolingDown()) {
+      return this.buildErrorResult({
+        category: "rate_limited",
+        message: "LLM audit skipped: cooling down after sustained rate limiting",
+        timestamp: Date.now(),
+      }, prompt);
     }
+
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      try {
+        const response = await this.llmCall!({
+          model: this.config.model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 256,
+        });
+
+        // Success — reset 429 counter
+        this.consecutive429Count = 0;
+
+        const result = this.parseResponse(response.content);
+        result._prompt = prompt;
+        result._rawResponse = response.content;
+        return result;
+      } catch (error) {
+        const category = this.classifyError(error);
+
+        // Build error info
+        const statusCode = error && typeof error === "object" && "statusCode" in error
+          ? (error as { statusCode: number }).statusCode
+          : undefined;
+        const retryAfterMs = error && typeof error === "object" && "retryAfterMs" in error
+          ? (error as { retryAfterMs?: number }).retryAfterMs
+          : undefined;
+        const errorInfo: LLMErrorInfo = {
+          category,
+          statusCode,
+          retryAfterMs,
+          message: error instanceof Error ? error.message : "unknown error",
+          timestamp: Date.now(),
+        };
+
+        // Not retryable — return immediately
+        if (!this.isRetryable(category)) {
+          return this.buildErrorResult(errorInfo, prompt);
+        }
+
+        // Rate limited — track consecutive 429s
+        if (category === "rate_limited") {
+          this.consecutive429Count++;
+          if (this.consecutive429Count >= retryConfig.cooldownThreshold) {
+            this.cooldownUntil = Date.now() + retryConfig.cooldownMs;
+            return this.buildErrorResult({
+              ...errorInfo,
+              message: `Rate limited — cooldown activated after ${this.consecutive429Count} consecutive 429s`,
+            }, prompt);
+          }
+        }
+
+        // If this was the last attempt, return error
+        if (attempt >= retryConfig.maxRetries) {
+          return this.buildErrorResult({
+            ...errorInfo,
+            message: `${errorInfo.message} (after ${retryConfig.maxRetries} retries)`,
+          }, prompt);
+        }
+
+        // Wait before retrying (exponential backoff)
+        const backoffMs = retryConfig.initialBackoffMs * Math.pow(2, attempt);
+        await this.sleep(backoffMs);
+      }
+    }
+
+    // Should not reach here, but just in case
+    return this.buildErrorResult({
+      category: "unknown_error",
+      message: "Retry loop exited unexpectedly",
+      timestamp: Date.now(),
+    }, prompt);
   }
 
   private buildPrompt(params: {

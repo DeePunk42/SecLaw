@@ -1,6 +1,6 @@
 /**
  * Async audit queue: serially processes tool calls after execution.
- * Re-classifies via rule engine; if YELLOW, runs LLM audit.
+ * Re-classifies via rule engine; if not GREEN, runs LLM audit.
  * If danger is detected, triggers interrupt.
  */
 
@@ -108,7 +108,7 @@ export class AsyncAuditQueue {
   }
 
   private async auditItem(item: AuditQueueItem): Promise<void> {
-    const { toolName, params, sessionKey, intentContext } = item;
+    const { toolName, params, sessionKey, intentContext, toolCallId } = item;
     const workspacePath = undefined; // TODO: pass from context if available
 
     this.auditLog.logAsyncProcessStart(sessionKey, toolName);
@@ -126,7 +126,7 @@ export class AsyncAuditQueue {
       return;
     }
 
-    // YELLOW → LLM audit
+    // YELLOW/RED → LLM audit
     if (!this.config.llm.enabled) {
       return;
     }
@@ -147,10 +147,26 @@ export class AsyncAuditQueue {
       llmResult.decision,
       llmResult.reason,
       durationMs,
+      toolCallId,
     );
     this.auditLog.logLLMAuditDetail(sessionKey, toolName, llmResult, durationMs);
 
+    this.auditLog.logAsyncAuditComplete(
+      sessionKey,
+      toolName,
+      llmResult.decision,
+      llmResult.reason,
+      durationMs,
+      toolCallId,
+    );
+
     if (llmResult.decision === "DANGER") {
+      // Service errors (rate_limited, auth_error, server_error, network_error)
+      // should not set the danger flag — they are not security findings
+      if (llmResult._errorInfo && llmResult._errorInfo.category !== "unknown_error") {
+        return;
+      }
+
       const report: DangerReport = {
         toolName,
         params,
@@ -160,7 +176,7 @@ export class AsyncAuditQueue {
         source: "async",
         ruleId: ruleResult.ruleId,
       };
-      this.auditLog.logDanger(sessionKey, report);
+      this.auditLog.logDanger(sessionKey, report, toolCallId);
       triggerInterrupt(sessionKey, report);
     }
   }
