@@ -156,7 +156,7 @@ describe("onUserMessage override detection", () => {
     sessionState.clear();
   });
 
-  it("trusted sender + correct PIN → activates override", () => {
+  it("trusted sender + correct PIN (SEC_OVERRIDE format) → activates override", () => {
     sessionState.addPendingOverride(sessionKey, {
       pin: "038291",
       toolName: "exec",
@@ -165,6 +165,20 @@ describe("onUserMessage override detection", () => {
     });
 
     const msg = senderMessage("Alice (admin)", "SEC_OVERRIDE:038291");
+    onUserMessage(sessionKey, msg, trustedLabels);
+
+    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
+  });
+
+  it("trusted sender + correct PIN (/override_ format) → activates override", () => {
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "038291",
+      toolName: "exec",
+      paramsFingerprint: "fp-test",
+      timestamp: Date.now(),
+    });
+
+    const msg = senderMessage("Alice (admin)", "/override_038291");
     onUserMessage(sessionKey, msg, trustedLabels);
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
@@ -303,6 +317,7 @@ describe("Integration: Override flow", () => {
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("Recursive delete risk");
     expect(result!.blockReason).toContain("--- Override ---");
+    expect(result!.blockReason).toContain("/override_");
     expect(result!.blockReason).toContain("SEC_OVERRIDE:");
 
     // Extract PIN from blockReason
@@ -317,6 +332,35 @@ describe("Integration: Override flow", () => {
     mockLLM.mockClear();
 
     // 6. Retry same tool call → should be allowed
+    const retryResult = await beforeToolCall(event, ctx);
+    expect(retryResult).toBeUndefined();
+    expect(mockLLM).not.toHaveBeenCalled();
+  });
+
+  it("sync DANGER → /override_ command format also works for override", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete temp files"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Recursive delete risk"}',
+    });
+
+    const event: PluginHookBeforeToolCallEvent = {
+      toolName: "exec",
+      params: { command: "rm -rf /tmp/important" },
+    };
+
+    const result = await beforeToolCall(event, ctx);
+    expect(result!.block).toBe(true);
+
+    // blockReason contains /override_PIN format
+    const slashMatch = result!.blockReason!.match(/\/override_(\d{6})/);
+    expect(slashMatch).not.toBeNull();
+    const pin = slashMatch![1];
+
+    // User taps the Telegram clickable /override_PIN command
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/override_${pin}`));
+
+    mockLLM.mockClear();
     const retryResult = await beforeToolCall(event, ctx);
     expect(retryResult).toBeUndefined();
     expect(mockLLM).not.toHaveBeenCalled();
@@ -610,6 +654,7 @@ describe("Integration: fail_closed override flow", () => {
     const result = await beforeToolCall(event, ctx);
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("fail_closed");
+    expect(result!.blockReason).toContain("/override_");
     expect(result!.blockReason).toContain("SEC_OVERRIDE:");
 
     // Extract PIN and override

@@ -162,8 +162,8 @@ When a tool call is blocked (sync DANGER, async danger flag, or fail_closed poli
    - **Slack**: converted to `[[slack_buttons: ...]]` text directive
    - **Discord**: converted to Discord components v2 buttons
    - **Web/CLI/other**: ignored; the text `blockReason` already contains the `SEC_OVERRIDE:<pin>` instruction
-3. **User confirms** — Sends `SEC_OVERRIDE:<pin>` (text input or button callback — Telegram callbacks deliver `callback_data` as text)
-4. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
+3. **User confirms** — Sends `SEC_OVERRIDE:<pin>` or `/override_<pin>` (text input, Telegram clickable command, or button callback)
+4. **Detection** — `onUserMessage()` matches `SEC_OVERRIDE:\d{6}` or `/override_\d{6}`, checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 
 ### Turn-scoped override
