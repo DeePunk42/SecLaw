@@ -40,7 +40,7 @@ After tool execution (`after_tool_call`), GREEN calls are enqueued for async LLM
 
 ### Override mechanism
 
-When a call is blocked, a 6-digit decimal PIN is generated. The `blockReason` includes the override hint in two formats: `/override_<pin>` (Telegram renders as clickable bot command) and `SEC_OVERRIDE:<pin>` (text fallback). A `buttons` field is also returned for future gateway inline button support. Trusted senders (`config.llm.trustedSenderLabels`) can reply with either format to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
+When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field is returned alongside `blockReason` for channel-agnostic inline button rendering (Telegram inline keyboard, Slack buttons, etc.). Trusted senders (`config.llm.trustedSenderLabels`) can reply `SEC_OVERRIDE:<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
 
 ### Module map
 

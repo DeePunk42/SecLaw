@@ -152,8 +152,7 @@ function formatOverrideHint(pin: string): string {
   return [
     "",
     "--- Override ---",
-    `If the user confirms this is intentional, they can tap or type: /override_${pin}`,
-    `(Alternative: SEC_OVERRIDE:${pin})`,
+    `If the user confirms this is intentional, they can reply with: SEC_OVERRIDE:${pin}`,
     "Explain the risk to the user and let them decide whether to proceed.",
   ].join("\n");
 }

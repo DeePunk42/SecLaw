@@ -55,9 +55,9 @@ export function onUserMessage(
     // New turn: clear any override from previous turn
     sessionState.clearTurnOverride(sessionKey);
 
-    const match = userMessage.match(/(?:SEC_OVERRIDE:|\/override_)(\d{6})/);
+    const match = userMessage.match(/SEC_OVERRIDE:(\d{6})/);
     if (match) {
-      const pin = match[1];
+      const pin = match[1].toLowerCase();
       const isTrusted = senderLabel != null && trustedSenderLabels.includes(senderLabel);
       if (isTrusted && sessionState.getPendingOverride(sessionKey, pin)) {
         sessionState.activateOverride(sessionKey, pin);
