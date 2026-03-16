@@ -118,6 +118,7 @@ export interface PendingOverride {
   toolName: string;
   paramsFingerprint: string;      // SHA256(toolName:JSON(params))
   timestamp: number;
+  toolCallId?: string;            // original blocked toolCallId (for override backtracking)
 }
 
 // ─── Plugin Hook Types (mirroring OpenClaw's plugin system) ───

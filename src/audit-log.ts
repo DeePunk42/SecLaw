@@ -62,6 +62,13 @@ export interface ToolCallRecord {
   overrideUsed?: boolean;
   intentContext?: Record<string, unknown>;
   params?: Record<string, unknown>;
+  blockReason?: string;
+  blockSource?: "sync" | "async";
+  serviceError?: {
+    category: string;
+    statusCode?: number;
+    message: string;
+  };
   events: AuditLogEntry[];
 }
 
@@ -310,6 +317,12 @@ export class AuditLog {
         if (entry.overridePin) {
           record.overridePin = entry.overridePin as string;
         }
+        if (entry.reason) {
+          record.blockReason = entry.reason as string;
+        }
+        if (entry.source) {
+          record.blockSource = entry.source as "sync" | "async";
+        }
         break;
       case "tool_allowed":
         record.finalStatus = "allowed";
@@ -334,6 +347,13 @@ export class AuditLog {
         break;
       case "danger_detected":
         record.dangerDetected = true;
+        break;
+      case "llm_service_error":
+        record.serviceError = {
+          category: (entry.errorCategory as string) || "unknown",
+          statusCode: entry.statusCode as number | undefined,
+          message: (entry.reason as string) || "",
+        };
         break;
     }
 

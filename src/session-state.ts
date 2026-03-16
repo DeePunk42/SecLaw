@@ -203,6 +203,13 @@ class SessionStateManager {
   }
 
   /**
+   * Return the current active override PIN (without consuming it).
+   */
+  getActiveOverridePin(sessionKey: string): string | null {
+    return this.getSession(sessionKey).activeOverridePin;
+  }
+
+  /**
    * Clear the active override and its pending entry.
    * Called at the start of each new turn (onUserMessage) to ensure
    * overrides don't leak across turns.

@@ -152,6 +152,7 @@ function registerPendingOverride(
   sessionKey: string,
   toolName: string,
   params: Record<string, unknown>,
+  toolCallId?: string,
 ): string {
   const pin = generatePin();
   sessionState.addPendingOverride(sessionKey, {
@@ -159,6 +160,7 @@ function registerPendingOverride(
     toolName,
     paramsFingerprint: computeParamsFingerprint(toolName, params),
     timestamp: Date.now(),
+    toolCallId,
   });
   return pin;
 }
@@ -384,6 +386,14 @@ export async function beforeToolCall(
   // 0. Check for active override grant (matches by toolName; fingerprint kept for audit only)
   if (sessionState.consumeActiveOverride(sessionKey, toolName)) {
     auditLog.logOverrideUsed(sessionKey, toolName, toolCallId);
+    // Backtrack: also mark the original blocked card as overridden
+    const activePin = sessionState.getActiveOverridePin(sessionKey);
+    if (activePin) {
+      const pending = sessionState.getPendingOverride(sessionKey, activePin);
+      if (pending?.toolCallId && pending.toolCallId !== toolCallId) {
+        auditLog.logOverrideUsed(sessionKey, toolName, pending.toolCallId);
+      }
+    }
     consumeDangerFlag(sessionKey);  // clear any lingering danger flag
     return undefined;  // allow
   }
@@ -393,7 +403,7 @@ export async function beforeToolCall(
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const blockReason = formatDangerAlert(dangerReport);
-    const pin = registerPendingOverride(sessionKey, toolName, params);
+    const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
     auditLog.logBlock(sessionKey, toolName, blockReason, "async", toolCallId, pin);
     return {
       block: true,
@@ -421,6 +431,7 @@ export async function beforeToolCall(
 
   // 4. YELLOW → allow execution, afterToolCall will handle async audit
   if (ruleResult.tier === "YELLOW") {
+    auditLog.logIntentContext(sessionKey, toolName, intentCtx, config.llm.promptRecentCalls, toolCallId);
     return undefined;
   }
 
@@ -429,7 +440,7 @@ export async function beforeToolCall(
     // LLM disabled — apply timeout policy
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
-      const pin = registerPendingOverride(sessionKey, toolName, params);
+      const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
       auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
       return {
         block: true,
@@ -501,7 +512,7 @@ export async function beforeToolCall(
   if (llmResult.decision === "DANGER") {
     const reason = llmResult.reason || "Blocked by LLM security audit";
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
-    const pin = registerPendingOverride(sessionKey, toolName, params);
+    const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
     auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
     const blockReason = `[SecAgent] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
     return {
