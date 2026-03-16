@@ -40,7 +40,7 @@ After tool execution (`after_tool_call`), GREEN calls are enqueued for async LLM
 
 ### Override mechanism
 
-When a call is blocked, a 6-digit decimal PIN is generated. Trusted senders (`config.llm.trustedSenderLabels`) can reply `SEC_OVERRIDE:<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message). An SSE event (`override_available`) is also emitted for platforms with inline buttons (e.g. Telegram).
+When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field is returned alongside `blockReason` for channel-agnostic inline button rendering (Telegram inline keyboard, Slack buttons, etc.). Trusted senders (`config.llm.trustedSenderLabels`) can reply `SEC_OVERRIDE:<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
 
 ### Module map
 
@@ -53,7 +53,7 @@ When a call is blocked, a 6-digit decimal PIN is generated. Trusted senders (`co
 | `src/async-audit-queue.ts` | Background queue with deduplication. Re-classifies via rule engine, then LLM audits YELLOW items. |
 | `src/session-state.ts` | Singleton `sessionState`. Per-session danger flags, intent context, audit cache, override state. |
 | `src/intent-context.ts` | Accumulates user goal, sender label, message source from hook events. Detects `SEC_OVERRIDE` commands. |
-| `src/interrupt.ts` | Danger flag lifecycle, `emitOverrideAvailable()`, SSE event emission. |
+| `src/interrupt.ts` | Danger flag lifecycle, interrupt mechanism (`triggerInterrupt` for async danger SSE). |
 | `src/audit-log.ts` | Console + JSONL structured logging. |
 | `src/patterns/` | `command-patterns.ts`, `path-patterns.ts`, `url-patterns.ts` — used by rule engine condition matchers. |
 
@@ -67,7 +67,7 @@ Rule IDs follow prefixes: `CAT-` (catastrophic, priority 9000-10000), `TOOL-Y-` 
 
 `register(api: OpenClawPluginApi)` hooks into: `before_tool_call` (priority 9999), `after_tool_call` (100), `before_prompt_build`, `llm_input`, `session_start`, `before_reset`, `before_compaction`.
 
-The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` for output routing, `pluginConfig` for sec-agent settings, `emitAgentEvent` for SSE, `config.workspace.dir` for workspace path.
+The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` for output routing, `pluginConfig` for sec-agent settings, `emitAgentEvent` for SSE (async danger notifications only), `config.workspace.dir` for workspace path.
 
 ## Workflow rules
 
