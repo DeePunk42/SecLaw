@@ -285,23 +285,23 @@ describe("Integration: Override flow", () => {
 
   it("sync DANGER → block with override hint → override → retry → allow", async () => {
     // 1. Set up user goal
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete temp files"));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval command"));
 
     // 2. LLM returns DANGER
     mockLLM.mockResolvedValue({
-      content: '{"decision": "DANGER", "reason": "Recursive delete risk"}',
+      content: '{"decision": "DANGER", "reason": "Dangerous eval command"}',
     });
 
     const event: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp/important" },
+      params: { command: "eval \"dangerous_payload\"" },
     };
 
     // 3. First call → blocked with override hint
     const result = await beforeToolCall(event, ctx);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
-    expect(result!.blockReason).toContain("Recursive delete risk");
+    expect(result!.blockReason).toContain("Dangerous eval command");
     expect(result!.blockReason).toContain("--- Override ---");
     expect(result!.blockReason).toContain("SEC_OVERRIDE:");
 
@@ -358,15 +358,15 @@ describe("Integration: Override flow", () => {
   });
 
   it("override covers multiple tool calls in the same turn", async () => {
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete files"));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval commands"));
 
     mockLLM.mockResolvedValue({
-      content: '{"decision": "DANGER", "reason": "Dangerous delete"}',
+      content: '{"decision": "DANGER", "reason": "Dangerous eval"}',
     });
 
     const event: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /data" },
+      params: { command: "eval \"payload1\"" },
     };
 
     // Block → get PIN
@@ -388,7 +388,7 @@ describe("Integration: Override flow", () => {
     mockLLM.mockClear();
     const event2: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /data --force" },
+      params: { command: "eval \"payload2\"" },
     };
     const retry2 = await beforeToolCall(event2, ctx);
     expect(retry2).toBeUndefined();
@@ -396,15 +396,15 @@ describe("Integration: Override flow", () => {
   });
 
   it("new turn after override → override cleared → LLM consulted again", async () => {
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete files"));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval"));
 
     mockLLM.mockResolvedValue({
-      content: '{"decision": "DANGER", "reason": "Dangerous delete"}',
+      content: '{"decision": "DANGER", "reason": "Dangerous eval"}',
     });
 
     const event: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /data" },
+      params: { command: "eval \"payload\"" },
     };
 
     // Block → get PIN → Override → Allow
@@ -435,7 +435,7 @@ describe("Integration: Override flow", () => {
 
     const event1: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp/safe && ls -l /tmp" },
+      params: { command: "eval \"payload && extra\"" },
     };
 
     // Block with original params
@@ -446,10 +446,10 @@ describe("Integration: Override flow", () => {
     // Override
     onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
 
-    // Retry with modified params (LLM removed the ls part) → override SHOULD apply
+    // Retry with modified params (LLM simplified) → override SHOULD apply
     const event2: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp/safe" },  // simplified command
+      params: { command: "eval \"payload\"" },  // simplified command
     };
 
     mockLLM.mockClear();
@@ -467,7 +467,7 @@ describe("Integration: Override flow", () => {
 
     const event1: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp/safe" },
+      params: { command: "eval \"payload\"" },
     };
 
     // Block with exec
@@ -494,7 +494,7 @@ describe("Integration: Override flow", () => {
   });
 
   it("untrusted sender cannot use override even with correct PIN", async () => {
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete files"));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval"));
 
     mockLLM.mockResolvedValue({
       content: '{"decision": "DANGER", "reason": "Blocked"}',
@@ -502,7 +502,7 @@ describe("Integration: Override flow", () => {
 
     const event: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp" },
+      params: { command: "eval \"payload\"" },
     };
 
     const result = await beforeToolCall(event, ctx);
@@ -603,10 +603,10 @@ describe("Integration: fail_closed override flow", () => {
 
     const event: PluginHookBeforeToolCallEvent = {
       toolName: "exec",
-      params: { command: "rm -rf /tmp" },
+      params: { command: "eval \"payload\"" },
     };
 
-    // Block (YELLOW + fail_closed)
+    // Block (RED + fail_closed)
     const result = await beforeToolCall(event, ctx);
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("fail_closed");

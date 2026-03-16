@@ -1,7 +1,7 @@
 /**
  * Rule engine: loads YAML rules and matches tool calls against them.
  * Rules are evaluated in priority-descending order; first match wins.
- * Returns a tier (GREEN or YELLOW) — default is GREEN when no rule matches.
+ * Returns a tier (GREEN, YELLOW, or RED) — default is YELLOW when no rule matches.
  */
 
 import * as fs from "fs";
@@ -57,7 +57,7 @@ export class RuleEngine {
 
   /**
    * Classify a tool call against loaded rules.
-   * Returns { tier, ruleId?, reason? }. Default: { tier: "GREEN" }.
+   * Returns { tier, ruleId?, reason? }. Default: { tier: "YELLOW" }.
    */
   classify(
     toolName: string,
@@ -76,8 +76,8 @@ export class RuleEngine {
       }
     }
 
-    // No rule matched — default GREEN (allow + async audit)
-    return { tier: "GREEN" };
+    // No rule matched — default YELLOW (allow + async audit)
+    return { tier: "YELLOW" };
   }
 
   /**
@@ -153,11 +153,11 @@ export class RuleEngine {
           : !cmdAnalysis.hasDynamicExpansion;
       }
 
-      case "is_yellow_command": {
+      case "is_dangerous_command": {
         const cmdAnalysis = analyzeCommand(command);
         return condition.value === true
-          ? cmdAnalysis.isYellowCommand
-          : !cmdAnalysis.isYellowCommand;
+          ? cmdAnalysis.isDangerousCommand
+          : !cmdAnalysis.isDangerousCommand;
       }
 
       case "reads_sensitive_files": {

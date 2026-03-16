@@ -4,7 +4,7 @@
  */
 
 import type * as http from "node:http";
-import type { AuditLogEntry } from "../audit-log.js";
+import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
 
 // ─── Helpers ───
@@ -42,6 +42,10 @@ export function handleApiRequest(
     handleLogsStream(req, res, url, deps);
   } else if (path === "/api/logs" && method === "GET") {
     handleGetLogs(res, url, deps);
+  } else if (path === "/api/tool-calls/stream" && method === "GET") {
+    handleToolCallsStream(req, res, url, deps);
+  } else if (path === "/api/tool-calls" && method === "GET") {
+    handleGetToolCalls(res, url, deps);
   } else if (path === "/api/config" && method === "GET") {
     handleGetConfig(res, deps);
   } else if (path === "/api/config" && method === "PUT") {
@@ -99,10 +103,15 @@ function handleLogsStream(
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
   });
+  res.flushHeaders();
+
+  // Disable Nagle's algorithm to ensure immediate delivery of small SSE chunks
+  res.socket?.setNoDelay?.(true);
 
   // Send initial connected event
-  res.write("event: connected\ndata: {}\n\n");
+  res.write("data: {}\n\n");
 
   const subscriber = (entry: AuditLogEntry): void => {
     if (tier && entry.tier !== tier) return;
@@ -122,6 +131,73 @@ function handleLogsStream(
   const cleanup = (): void => {
     clearInterval(heartbeat);
     deps.getAuditLog().unsubscribe(subscriber);
+  };
+
+  req.on("close", cleanup);
+  req.on("error", cleanup);
+}
+
+// ─── GET /api/tool-calls ───
+
+function handleGetToolCalls(
+  res: http.ServerResponse,
+  url: URL,
+  deps: DashboardDeps,
+): void {
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+  const tier = url.searchParams.get("tier") || undefined;
+  const toolName = url.searchParams.get("toolName") || undefined;
+
+  let records = deps.getAuditLog().getToolCallRecords(limit);
+
+  if (tier) {
+    records = records.filter((r) => r.tier === tier);
+  }
+  if (toolName) {
+    records = records.filter((r) => r.toolName === toolName);
+  }
+
+  json(res, 200, records);
+}
+
+// ─── GET /api/tool-calls/stream (SSE) ───
+
+function handleToolCallsStream(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  _url: URL,
+  deps: DashboardDeps,
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+
+  // Disable Nagle's algorithm to ensure immediate delivery of small SSE chunks
+  res.socket?.setNoDelay?.(true);
+
+  // Send initial connected event
+  res.write("data: {}\n\n");
+
+  const subscriber = (record: ToolCallRecord): void => {
+    res.write(`data: ${JSON.stringify(record)}\n\n`);
+  };
+
+  deps.getAuditLog().subscribeToolCalls(subscriber);
+
+  // Heartbeat every 30 seconds
+  const heartbeat = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 30_000);
+
+  // Cleanup on disconnect
+  const cleanup = (): void => {
+    clearInterval(heartbeat);
+    deps.getAuditLog().unsubscribeToolCalls(subscriber);
   };
 
   req.on("close", cleanup);

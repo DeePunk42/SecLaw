@@ -612,12 +612,18 @@ export class AuditLog {
     }
 
     // Always log for ToolCallRecord aggregation + SSE push
+    // Truncate recentToolCalls to match promptRecentCalls setting
+    const n = maxRecentCalls ?? 3;
+    const truncatedCtx = {
+      ...ctx,
+      recentToolCalls: ctx.recentToolCalls.slice(-n),
+    };
     this.log({
       timestamp: new Date().toISOString(),
       eventType: "intent_context",
       sessionKey,
       toolName,
-      intentContext: ctx as unknown as Record<string, unknown>,
+      intentContext: truncatedCtx as unknown as Record<string, unknown>,
       toolCallId,
     });
   }

@@ -14,7 +14,17 @@
           "endpoint": { "type": "string" },
           "apiKey": { "type": "string" },
           "promptRecentCalls": { "type": "number" },
-          "trustedSenderLabels": { "type": "array", "items": { "type": "string" } }
+          "trustedSenderLabels": { "type": "array", "items": { "type": "string" } },
+          "retry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxRetries": { "type": "number" },
+              "initialBackoffMs": { "type": "number" },
+              "cooldownMs": { "type": "number" },
+              "cooldownThreshold": { "type": "number" }
+            }
+          }
         }
       },
       "timeouts": {

@@ -23,6 +23,8 @@ npx tsx scripts/test-dangerous.ts   # 40+ comprehensive scenarios
 
 ## Architecture
 
+The detailed architecture and design of SecAgent is documented in `ARCHITECTURE.md`. Below is a high-level overview.
+
 SecAgent is an OpenClaw plugin that audits every AI agent tool call in real time. It classifies calls into three tiers:
 
 - **GREEN** — Allow immediately, no audit at all

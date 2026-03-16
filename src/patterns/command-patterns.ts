@@ -2,44 +2,14 @@
  * Bash command parsing and pattern matching for security classification.
  */
 
-/** Commands that always trigger yellow-line (synchronous audit). */
-const YELLOW_COMMANDS = new Set([
-  "rm",
-  "curl",
-  "wget",
-  "chmod",
-  "chown",
-  "ssh",
-  "scp",
-  "sudo",
-  "su",
-  "docker",
-  "kill",
-  "killall",
-  "pkill",
+/** Commands that are classified as dangerous (trigger RED-tier synchronous audit). */
+const DANGEROUS_COMMANDS = new Set([
   "mkfs",
   "dd",
   "nc",
   "ncat",
   "netcat",
-  "mount",
-  "umount",
-  "iptables",
-  "systemctl",
-  "service",
-  "crontab",
-  "at",
-  "nohup",
-  "screen",
-  "tmux",
   "eval",
-  "source",
-  "exec",
-  "env",
-  "export",
-  "unset",
-  "alias",
-  "ping",
 ]);
 
 /** Regex patterns for pipe-to-shell detection. */
@@ -75,8 +45,8 @@ export interface CommandAnalysis {
   hasDynamicExpansion: boolean;
   /** Whether the command reads sensitive files. */
   readsSensitiveFiles: boolean;
-  /** Whether the primary command is in the yellow-commands set. */
-  isYellowCommand: boolean;
+  /** Whether the primary command is in the dangerous-commands set. */
+  isDangerousCommand: boolean;
   /** All distinct commands in a pipeline. */
   pipelineCommands: string[];
 }
@@ -177,21 +147,20 @@ export function analyzeCommand(command: string): CommandAnalysis {
     p.test(command),
   );
 
-  const isYellowCommand =
+  const isDangerousCommand =
     pipelineCommands.some((cmd) =>
-      YELLOW_COMMANDS.has(cmd) ||
+      DANGEROUS_COMMANDS.has(cmd) ||
       // Handle dot-suffixed variants like mkfs.ext4, mkfs.xfs
-      YELLOW_COMMANDS.has(cmd.split(".")[0]),
+      DANGEROUS_COMMANDS.has(cmd.split(".")[0]),
     ) ||
-    pipesToShell ||
-    hasDynamicExpansion;
+    pipesToShell;
 
   return {
     primaryCommand,
     pipesToShell,
     hasDynamicExpansion,
     readsSensitiveFiles,
-    isYellowCommand,
+    isDangerousCommand,
     pipelineCommands,
   };
 }

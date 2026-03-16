@@ -245,6 +245,110 @@ describe("Dashboard", () => {
     expect(data.length).toBeGreaterThan(0);
   });
 
+  // ─── Tool Calls API Tests ───
+
+  it("GET /api/tool-calls returns empty array initially", async () => {
+    const res = await fetch(`${baseUrl}/api/tool-calls`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data)).toBe(true);
+    expect((data as any[]).length).toBe(0);
+  });
+
+  it("events with toolCallId aggregate into ToolCallRecord", async () => {
+    const auditLog = _getAuditLog();
+    const tcId = "tc-test-001";
+
+    // Simulate a full tool call lifecycle
+    auditLog.logClassification("s1", "exec", { command: "ls" }, "YELLOW", tcId);
+    auditLog.logRuleMatch("s1", "exec", "PARAM-G-001", "YELLOW", "Non-dangerous command", tcId);
+    auditLog.logAllow("s1", "exec", "YELLOW → allowed", tcId);
+
+    const res = await fetch(`${baseUrl}/api/tool-calls`);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data.length).toBe(1);
+    expect(data[0].toolCallId).toBe(tcId);
+    expect(data[0].toolName).toBe("exec");
+    expect(data[0].tier).toBe("YELLOW");
+    expect(data[0].finalStatus).toBe("allowed");
+    expect(data[0].ruleId).toBe("PARAM-G-001");
+    expect(data[0].events.length).toBe(3);
+  });
+
+  it("GET /api/tool-calls?tier=RED filters by tier", async () => {
+    const auditLog = _getAuditLog();
+    auditLog.logClassification("s1", "exec", { command: "ls" }, "GREEN", "tc-green-1");
+    auditLog.logClassification("s1", "exec", { command: "rm -rf /" }, "RED", "tc-red-1");
+    auditLog.logBlock("s1", "exec", "dangerous", "sync", "tc-red-1");
+
+    const res = await fetch(`${baseUrl}/api/tool-calls?tier=RED`);
+    const data = await res.json() as any[];
+    expect(data.length).toBe(1);
+    expect(data[0].tier).toBe("RED");
+    expect(data[0].toolCallId).toBe("tc-red-1");
+  });
+
+  it("GET /api/tool-calls/stream pushes ToolCallRecord updates via SSE", async () => {
+    const eventsPromise = collectSSEEvents(`${baseUrl}/api/tool-calls/stream`, 2, 2000);
+
+    await sleep(100);
+
+    _getAuditLog().logClassification("s1", "exec", { command: "ls" }, "GREEN", "tc-sse-001");
+
+    const events = await eventsPromise;
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    // events[0] is the connected event "{}", events[1] is the ToolCallRecord
+    const record = JSON.parse(events[1]);
+    expect(record.toolCallId).toBe("tc-sse-001");
+    expect(record.toolName).toBe("exec");
+    expect(record.tier).toBe("GREEN");
+    expect(record.finalStatus).toBe("allowed");
+  });
+
+  it("logIntentContext uses eventType intent_context, not tool_classified", async () => {
+    const auditLog = _getAuditLog();
+    // Set log level to debug so logIntentContext fires
+    auditLog.setLoggingConfig({ level: "debug", auditJsonl: false });
+
+    auditLog.logIntentContext("s1", "exec", {
+      userGoal: "test goal",
+      stepIndex: 0,
+      turnNumber: 1,
+      recentToolCalls: [],
+    }, 3, "tc-intent-1");
+
+    const entries = auditLog.getRecentEntries();
+    const intentEntries = entries.filter(e => e.toolCallId === "tc-intent-1");
+    expect(intentEntries.length).toBe(1);
+    expect(intentEntries[0].eventType).toBe("intent_context");
+  });
+
+  it("async audit events aggregate into existing ToolCallRecord", async () => {
+    const auditLog = _getAuditLog();
+    const tcId = "tc-async-001";
+
+    auditLog.logClassification("s1", "exec", { command: "wget something" }, "YELLOW", tcId);
+    auditLog.logAsyncEnqueue("s1", "exec", 1, tcId);
+
+    // Check pending state
+    let res = await fetch(`${baseUrl}/api/tool-calls`);
+    let data = await res.json() as any[];
+    const rec = data.find((r: any) => r.toolCallId === tcId);
+    expect(rec).toBeDefined();
+    expect(rec.asyncAuditStatus).toBe("enqueued");
+
+    // Complete async audit
+    auditLog.logAsyncAuditComplete("s1", "exec", "SAFE", "looks fine", 150, tcId);
+
+    res = await fetch(`${baseUrl}/api/tool-calls`);
+    data = await res.json() as any[];
+    const updated = data.find((r: any) => r.toolCallId === tcId);
+    expect(updated.asyncAuditStatus).toBe("complete");
+    expect(updated.asyncAudit.decision).toBe("SAFE");
+    expect(updated.asyncAudit.durationMs).toBe(150);
+  });
+
   it("stopDashboard() cleans up server", async () => {
     await stopDashboard();
     try {

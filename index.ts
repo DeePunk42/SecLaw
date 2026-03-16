@@ -544,15 +544,15 @@ export async function afterToolCall(
     return;
   }
 
-  // Re-classify to check tier; GREEN calls skip async audit entirely
+  // Re-classify to check tier
   const intentCtx = getIntentContext(sessionKey);
   const ruleResult = ruleEngine.classify(toolName, params, intentCtx,
     ctx.workspacePath ?? workspacePath);
-  if (ruleResult.tier === "GREEN") {
-    return; // GREEN — no audit needed
+  if (ruleResult.tier !== "YELLOW") {
+    return; // GREEN → no audit needed; RED → already audited synchronously
   }
 
-  // YELLOW + RED → enqueue for async audit
+  // YELLOW → enqueue for async audit
   asyncQueue.enqueue({
     toolName,
     params,

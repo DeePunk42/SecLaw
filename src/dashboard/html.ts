@@ -375,8 +375,8 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       parts.push(phaseHtml('Intent Context', escapeHtml(JSON.stringify(rec.intentContext, null, 2))));
     }
 
-    // Sync LLM Audit
-    if (rec.syncAudit) {
+    // Sync LLM Audit — only RED calls go through sync audit
+    if (rec.tier === 'RED' && rec.syncAudit) {
       var syncBody = 'Decision: ' + escapeHtml(rec.syncAudit.decision);
       if (rec.syncAudit.reason) syncBody += '\\nReason: ' + escapeHtml(rec.syncAudit.reason);
       if (rec.syncAudit.durationMs !== undefined) syncBody += '\\nDuration: ' + rec.syncAudit.durationMs + 'ms';
@@ -403,13 +403,9 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       }
     }
 
-    // Override
-    if (rec.overridePin && rec.overrideUsed) {
-      parts.push(phaseHtml('Override', 'PIN: <span class="tc-pin">' + escapeHtml(rec.overridePin) + '</span> <span class="tc-status overridden">APPROVED</span>'));
-    } else if (rec.finalStatus === 'blocked' && rec.overridePin) {
+    // Override — shown inline in status badge; awaiting-approval still needs its own phase
+    if (rec.finalStatus === 'blocked' && rec.overridePin) {
       parts.push(phaseHtml('Override', 'PIN: <span class="tc-pin">' + escapeHtml(rec.overridePin) + '</span> <span class="blink" style="color:var(--yellow)">awaiting approval</span>'));
-    } else if (rec.overrideUsed) {
-      parts.push(phaseHtml('Override', '<span class="tc-status overridden">APPROVED</span>'));
     }
 
     // Params
