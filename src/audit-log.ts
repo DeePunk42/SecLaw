@@ -586,30 +586,32 @@ export class AuditLog {
     maxRecentCalls?: number,
     toolCallId?: string,
   ): void {
-    if (!this.shouldLog("debug")) return;
+    // Console output gated by debug level
+    if (this.shouldLog("debug")) {
+      const n = maxRecentCalls ?? 3;
+      const recentSlice = ctx.recentToolCalls.slice(-n);
 
-    const n = maxRecentCalls ?? 3;
-    const recentSlice = ctx.recentToolCalls.slice(-n);
-
-    this.debug(`🔍 ──── intent context ────`);
-    this.debug(`  userGoal   : ${ctx.userGoal || "(empty)"}`);
-    this.debug(`  senderLabel: ${ctx.senderLabel || "(unknown)"}`);
-    this.debug(`  channelId  : ${ctx.channelId || "(unknown)"}`);
-    this.debug(`  trigger    : ${ctx.trigger || "(unknown)"}`);
-    this.debug(`  agentId    : ${ctx.agentId || "(unknown)"}`);
-    this.debug(`  messageProvider: ${ctx.messageProvider || "(unknown)"}`);
-    this.debug(`  turn       : ${ctx.turnNumber}  step: ${ctx.stepIndex}`);
-    if (recentSlice.length > 0) {
-      this.debug(`  recentCalls: (${recentSlice.length})`);
-      for (const call of recentSlice) {
-        const paramSnippet = this.summarizeParams(call.toolName, call.params);
-        this.debug(`    - ${call.toolName}(${paramSnippet}) → ${call.outcome}`);
+      this.debug(`🔍 ──── intent context ────`);
+      this.debug(`  userGoal   : ${ctx.userGoal || "(empty)"}`);
+      this.debug(`  senderLabel: ${ctx.senderLabel || "(unknown)"}`);
+      this.debug(`  channelId  : ${ctx.channelId || "(unknown)"}`);
+      this.debug(`  trigger    : ${ctx.trigger || "(unknown)"}`);
+      this.debug(`  agentId    : ${ctx.agentId || "(unknown)"}`);
+      this.debug(`  messageProvider: ${ctx.messageProvider || "(unknown)"}`);
+      this.debug(`  turn       : ${ctx.turnNumber}  step: ${ctx.stepIndex}`);
+      if (recentSlice.length > 0) {
+        this.debug(`  recentCalls: (${recentSlice.length})`);
+        for (const call of recentSlice) {
+          const paramSnippet = this.summarizeParams(call.toolName, call.params);
+          this.debug(`    - ${call.toolName}(${paramSnippet}) → ${call.outcome}`);
+        }
+      } else {
+        this.debug(`  recentCalls: (none)`);
       }
-    } else {
-      this.debug(`  recentCalls: (none)`);
+      this.debug(`────────────────────────`);
     }
-    this.debug(`────────────────────────`);
 
+    // Always log for ToolCallRecord aggregation + SSE push
     this.log({
       timestamp: new Date().toISOString(),
       eventType: "intent_context",

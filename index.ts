@@ -380,6 +380,7 @@ export async function beforeToolCall(
   const sessionKey = ctx.sessionKey ?? "default";
   const wsPath = ctx.workspacePath ?? workspacePath;
   const toolCallId = event.toolCallId ?? ctx.toolCallId ?? crypto.randomUUID();
+  sessionState.setLastToolCallId(sessionKey, toolCallId);
 
   auditLog.logBeforeToolCallStart(sessionKey, toolName, params);
 
@@ -532,7 +533,7 @@ export async function afterToolCall(
 ): Promise<void> {
   const { toolName, params, result } = event;
   const sessionKey = ctx.sessionKey ?? "default";
-  const toolCallId = event.toolCallId ?? ctx.toolCallId;
+  const toolCallId = event.toolCallId ?? ctx.toolCallId ?? sessionState.getLastToolCallId(sessionKey) ?? undefined;
 
   onToolCallComplete(sessionKey, toolName, params, event.error ? "error" : "success");
 

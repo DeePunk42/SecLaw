@@ -527,6 +527,22 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       sseRetryTimer = null;
     }
 
+    // Re-fetch current state to catch up on any updates missed during disconnect
+    fetch('/api/tool-calls?limit=200')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (Array.isArray(data)) {
+          data.forEach(function(rec) {
+            records.set(rec.toolCallId, rec);
+            if (recordOrder.indexOf(rec.toolCallId) === -1) {
+              recordOrder.push(rec.toolCallId);
+            }
+          });
+          if (!paused) renderAll();
+        }
+      })
+      .catch(function() { /* best-effort */ });
+
     eventSource = new EventSource('/api/tool-calls/stream');
 
     eventSource.onopen = function() {

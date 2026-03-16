@@ -12,6 +12,7 @@ interface SessionState {
   pendingOverrides: Map<string, PendingOverride>;  // key = pin
   activeOverridePin: string | null;                 // confirmed pin, awaiting consumption
   lastCallOverridden: boolean;                      // set by consumeActiveOverride, cleared by afterToolCall
+  lastToolCallId: string | null;                    // set by beforeToolCall, used as fallback in afterToolCall
 }
 
 const DEFAULT_INTENT_CONTEXT: IntentContext = {
@@ -39,6 +40,7 @@ class SessionStateManager {
         pendingOverrides: new Map(),
         activeOverridePin: null,
         lastCallOverridden: false,
+        lastToolCallId: null,
       };
       this.sessions.set(sessionKey, state);
     }
@@ -231,6 +233,23 @@ class SessionStateManager {
     const was = state.lastCallOverridden;
     state.lastCallOverridden = false;
     return was;
+  }
+
+  // ─── Tool call ID tracking (for afterToolCall fallback) ───
+
+  /**
+   * Store the toolCallId generated during beforeToolCall so that
+   * afterToolCall can retrieve it even if the runtime doesn't provide one.
+   */
+  setLastToolCallId(sessionKey: string, toolCallId: string): void {
+    this.getSession(sessionKey).lastToolCallId = toolCallId;
+  }
+
+  /**
+   * Get the toolCallId from the most recent beforeToolCall.
+   */
+  getLastToolCallId(sessionKey: string): string | null {
+    return this.getSession(sessionKey).lastToolCallId;
   }
 
   /**
