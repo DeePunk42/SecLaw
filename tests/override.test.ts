@@ -522,43 +522,25 @@ describe("Integration: Override flow", () => {
     expect(retryResult!.block).toBe(true);
   });
 
-  it("SSE event is emitted on block", async () => {
-    const emittedEvents: any[] = [];
-    init({
-      workspacePath: "/workspace",
-      pluginDir: __dirname + "/..",
-      config: {
-        llm: {
-          model: "test",
-          enabled: true,
-          maxConcurrent: 2,
-          trustedSenderLabels: trustedLabels,
-        },
-        logging: { level: "error", auditJsonl: false },
-      },
-      llmCall: mockLLM,
-      emitAgentEvent: (event) => emittedEvents.push(event),
-    });
-
+  it("block result includes buttons field for channel-agnostic override UI", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Do something"));
 
     mockLLM.mockResolvedValue({
       content: '{"decision": "DANGER", "reason": "Blocked"}',
     });
 
-    await beforeToolCall(
+    const result = await beforeToolCall(
       { toolName: "exec", params: { command: "rm -rf /" } },
       ctx,
     );
 
-    // Should have emitted override_available event
-    const overrideEvent = emittedEvents.find(
-      (e) => e.stream === "security" && e.data?.type === "override_available",
-    );
-    expect(overrideEvent).toBeDefined();
-    expect(overrideEvent.data.pin).toMatch(/^\d{6}$/);
-    expect(overrideEvent.data.action).toContain("SEC_OVERRIDE:");
-    expect(overrideEvent.data.toolName).toBe("exec");
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.buttons).toBeDefined();
+    expect(result!.buttons!.length).toBe(1);
+    expect(result!.buttons![0].length).toBe(1);
+    expect(result!.buttons![0][0].text).toContain("Override");
+    expect(result!.buttons![0][0].callback_data).toMatch(/^SEC_OVERRIDE:\d{6}$/);
   });
 
   it("override-approved call skips async audit (no spurious danger flag)", async () => {

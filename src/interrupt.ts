@@ -88,30 +88,6 @@ export function resetSession(sessionKey: string): void {
 }
 
 /**
- * Emit an SSE event so button-capable platforms (e.g. Telegram) can render
- * an inline override button instead of requiring the user to type the command.
- */
-export function emitOverrideAvailable(
-  sessionKey: string,
-  pin: string,
-  toolName: string,
-  blockReason: string,
-): void {
-  if (!emitAgentEvent) return;
-  emitAgentEvent({
-    stream: "security",
-    data: {
-      type: "override_available",
-      sessionKey,
-      pin,
-      toolName,
-      blockReason,
-      action: `SEC_OVERRIDE:${pin}`,
-    },
-  });
-}
-
-/**
  * Format a danger report into a human-readable block reason string.
  */
 export function formatDangerAlert(report: DangerReport): string {

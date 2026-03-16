@@ -22,7 +22,6 @@ import {
   consumeDangerFlag,
   formatDangerAlert,
   setEmitAgentEvent,
-  emitOverrideAvailable,
   resetSession,
   type EmitAgentEventFn,
 } from "./src/interrupt.js";
@@ -48,6 +47,8 @@ export interface PluginHookBeforeToolCallResult {
   params?: Record<string, unknown>;
   block?: boolean;
   blockReason?: string;
+  /** Channel-agnostic button spec. Gateway renders per channel type. */
+  buttons?: Array<Array<{ text: string; callback_data: string }>>;
 }
 
 /** OpenClaw PluginHookAfterToolCallEvent */
@@ -156,6 +157,12 @@ function formatOverrideHint(pin: string): string {
   ].join("\n");
 }
 
+function overrideButtons(pin: string): Array<Array<{ text: string; callback_data: string }>> {
+  return [
+    [{ text: "⚠️ Confirm Override", callback_data: `SEC_OVERRIDE:${pin}` }],
+  ];
+}
+
 // ─── Standalone Init (for testing / direct use) ───
 
 export interface PluginInitContext {
@@ -227,8 +234,11 @@ export async function beforeToolCall(
     const blockReason = formatDangerAlert(dangerReport);
     auditLog.logBlock(sessionKey, toolName, blockReason, "async");
     const pin = registerPendingOverride(sessionKey, toolName, params);
-    emitOverrideAvailable(sessionKey, pin, toolName, blockReason);
-    return { block: true, blockReason: blockReason + formatOverrideHint(pin) };
+    return {
+      block: true,
+      blockReason: blockReason + formatOverrideHint(pin),
+      buttons: overrideButtons(pin),
+    };
   }
 
   // 2. Classify via unified rule engine
@@ -255,8 +265,11 @@ export async function beforeToolCall(
       const reason = `YELLOW operation blocked: LLM audit disabled (fail_closed policy)`;
       auditLog.logBlock(sessionKey, toolName, reason, "sync");
       const pin = registerPendingOverride(sessionKey, toolName, params);
-      emitOverrideAvailable(sessionKey, pin, toolName, reason);
-      return { block: true, blockReason: `[SecAgent] ${reason}` + formatOverrideHint(pin) };
+      return {
+        block: true,
+        blockReason: `[SecAgent] ${reason}` + formatOverrideHint(pin),
+        buttons: overrideButtons(pin),
+      };
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
     auditLog.logAllow(sessionKey, toolName, "LLM disabled, YELLOW → pass-through (fail_open)");
@@ -290,10 +303,10 @@ export async function beforeToolCall(
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
     const pin = registerPendingOverride(sessionKey, toolName, params);
     const blockReason = `[SecAgent] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
-    emitOverrideAvailable(sessionKey, pin, toolName, blockReason);
     return {
       block: true,
       blockReason: blockReason + formatOverrideHint(pin),
+      buttons: overrideButtons(pin),
     };
   }
 

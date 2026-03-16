@@ -37,7 +37,7 @@ Tool Call (before_tool_call)
       │
       └─ YELLOW → Synchronous LLM audit (with rule context)
           ├─ SAFE → Allow execution
-          └─ DANGER → BLOCK + register override PIN + emit SSE event
+          └─ DANGER → BLOCK + register override PIN + return buttons
 ```
 
 ## Module Structure
@@ -52,7 +52,7 @@ src/
   audit-log.ts              Console + JSONL logging, log level filtering
   intent-context.ts         Intent accumulator (userGoal, message source, tool calls)
   session-state.ts          Per-session state manager (danger flags, audit cache, override state)
-  interrupt.ts              Danger flag management, override SSE events, interrupt mechanism
+  interrupt.ts              Danger flag management, interrupt mechanism
   patterns/                 Command/URL/path analysis utilities
 rules/
   default.yaml              28 built-in security rules
@@ -156,9 +156,13 @@ When a tool call is blocked (sync DANGER, async danger flag, or fail_closed poli
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }` with PIN in the hint
-2. **SSE event** — `emitOverrideAvailable()` fires `override_available` event for button-capable platforms (Telegram inline buttons, etc.)
-3. **User confirms** — Sends `SEC_OVERRIDE:<pin>` (text or button callback)
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons }` with PIN in the hint
+2. **Channel-agnostic buttons** — The `buttons` field in the return value is a structured button spec (`Array<Array<{ text, callback_data }>>`). The gateway renders it per channel type:
+   - **Telegram**: inline keyboard via message action `buttons` field
+   - **Slack**: converted to `[[slack_buttons: ...]]` text directive
+   - **Discord**: converted to Discord components v2 buttons
+   - **Web/CLI/other**: ignored; the text `blockReason` already contains the `SEC_OVERRIDE:<pin>` instruction
+3. **User confirms** — Sends `SEC_OVERRIDE:<pin>` (text input or button callback — Telegram callbacks deliver `callback_data` as text)
 4. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 
@@ -357,7 +361,7 @@ Or via plugin config `rules.extra` array.
 
 ## OpenClaw Plugin Integration
 
-SecAgent registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (override buttons, danger notifications).
+SecAgent registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Override buttons are delivered via the `buttons` field in `beforeToolCall` return values, not via SSE.
 
 ### Registered Hooks
 
