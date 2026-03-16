@@ -31,6 +31,7 @@ import {
   onUserMessage,
   updateSource,
 } from "./src/intent-context.js";
+import { startDashboard, stopDashboard } from "./src/dashboard/server.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
 
@@ -206,6 +207,100 @@ export function init(ctx: PluginInitContext): void {
   if (ctx.emitAgentEvent) {
     setEmitAgentEvent(ctx.emitAgentEvent);
   }
+
+  // Start dashboard if enabled (fire-and-forget, don't block init)
+  if (config.dashboard?.enabled) {
+    startDashboard(config.dashboard, {
+      getConfig: () => config,
+      updateConfig,
+      getAuditLog: () => auditLog,
+      getRuleEngine: () => ruleEngine,
+      getAsyncQueue: () => asyncQueue,
+    }).catch(() => {
+      // Best-effort — dashboard failure shouldn't block the plugin
+    });
+  }
+}
+
+// ─── Runtime Config Update ───
+
+function updateConfig(
+  partial: Partial<SecAgentConfig>,
+): { ok: boolean; errors?: string[] } {
+  const errors: string[] = [];
+
+  // Validate & apply llm changes
+  if (partial.llm) {
+    if (partial.llm.model !== undefined) {
+      if (typeof partial.llm.model !== "string" || partial.llm.model.length === 0) {
+        errors.push("llm.model must be a non-empty string");
+      }
+    }
+    if (partial.llm.enabled !== undefined) {
+      if (typeof partial.llm.enabled !== "boolean") {
+        errors.push("llm.enabled must be a boolean");
+      }
+    }
+    if (partial.llm.maxConcurrent !== undefined) {
+      if (typeof partial.llm.maxConcurrent !== "number" || partial.llm.maxConcurrent < 1 || partial.llm.maxConcurrent > 10) {
+        errors.push("llm.maxConcurrent must be a number between 1 and 10");
+      }
+    }
+    if (partial.llm.trustedSenderLabels !== undefined) {
+      if (!Array.isArray(partial.llm.trustedSenderLabels)) {
+        errors.push("llm.trustedSenderLabels must be an array of strings");
+      }
+    }
+  }
+
+  // Validate & apply timeout changes
+  if (partial.timeouts) {
+    if (partial.timeouts.syncAuditMs !== undefined) {
+      if (typeof partial.timeouts.syncAuditMs !== "number" || partial.timeouts.syncAuditMs < 1000 || partial.timeouts.syncAuditMs > 120000) {
+        errors.push("timeouts.syncAuditMs must be between 1000 and 120000");
+      }
+    }
+    if (partial.timeouts.asyncAuditMs !== undefined) {
+      if (typeof partial.timeouts.asyncAuditMs !== "number" || partial.timeouts.asyncAuditMs < 1000 || partial.timeouts.asyncAuditMs > 120000) {
+        errors.push("timeouts.asyncAuditMs must be between 1000 and 120000");
+      }
+    }
+    if (partial.timeouts.syncTimeoutPolicy !== undefined) {
+      if (partial.timeouts.syncTimeoutPolicy !== "fail_closed" && partial.timeouts.syncTimeoutPolicy !== "fail_open") {
+        errors.push("timeouts.syncTimeoutPolicy must be 'fail_closed' or 'fail_open'");
+      }
+    }
+  }
+
+  // Validate & apply logging changes
+  if (partial.logging) {
+    if (partial.logging.level !== undefined) {
+      if (!["debug", "info", "warn", "error"].includes(partial.logging.level)) {
+        errors.push("logging.level must be one of: debug, info, warn, error");
+      }
+    }
+    if (partial.logging.auditJsonl !== undefined) {
+      if (typeof partial.logging.auditJsonl !== "boolean") {
+        errors.push("logging.auditJsonl must be a boolean");
+      }
+    }
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  // Apply changes
+  if (partial.llm) {
+    config.llm = { ...config.llm, ...partial.llm };
+  }
+  if (partial.timeouts) {
+    config.timeouts = { ...config.timeouts, ...partial.timeouts };
+  }
+  if (partial.logging) {
+    config.logging = { ...config.logging, ...partial.logging };
+    auditLog.setLoggingConfig(config.logging);
+  }
+
+  return { ok: true };
 }
 
 // ─── Hook Handlers ───
@@ -253,16 +348,21 @@ export async function beforeToolCall(
 
   auditLog.logClassification(sessionKey, toolName, params, ruleResult.tier);
 
-  // 3. GREEN → allow execution, async audit will handle it
+  // 3. GREEN → allow execution, no audit at all
   if (ruleResult.tier === "GREEN") {
     return undefined;
   }
 
-  // 4. YELLOW → synchronous LLM audit with rule context
+  // 4. YELLOW → allow execution, afterToolCall will handle async audit
+  if (ruleResult.tier === "YELLOW") {
+    return undefined;
+  }
+
+  // 5. RED → synchronous LLM audit with rule context
   if (!config.llm.enabled) {
     // LLM disabled — apply timeout policy
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
-      const reason = `YELLOW operation blocked: LLM audit disabled (fail_closed policy)`;
+      const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
       auditLog.logBlock(sessionKey, toolName, reason, "sync");
       const pin = registerPendingOverride(sessionKey, toolName, params);
       return {
@@ -272,7 +372,7 @@ export async function beforeToolCall(
       };
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
-    auditLog.logAllow(sessionKey, toolName, "LLM disabled, YELLOW → pass-through (fail_open)");
+    auditLog.logAllow(sessionKey, toolName, "LLM disabled, RED → pass-through (fail_open)");
     return undefined;
   }
 
@@ -330,7 +430,15 @@ export async function afterToolCall(
     return;
   }
 
+  // Re-classify to check tier; GREEN calls skip async audit entirely
   const intentCtx = getIntentContext(sessionKey);
+  const ruleResult = ruleEngine.classify(toolName, params, intentCtx,
+    ctx.workspacePath ?? workspacePath);
+  if (ruleResult.tier === "GREEN") {
+    return; // GREEN — no audit needed
+  }
+
+  // YELLOW + RED → enqueue for async audit
   asyncQueue.enqueue({
     toolName,
     params,
@@ -381,7 +489,7 @@ function register(api: OpenClawPluginApi): void {
     } else {
       api.logger.error("[sec-agent] ⚠️ LLM enabled but no endpoint configured -- " +
         "set llm.endpoint and llm.apiKey in plugin config. " +
-        "YELLOW operations will pass without real LLM audit.");
+        "RED operations will pass without real LLM audit.");
     }
   }
 
@@ -390,6 +498,10 @@ function register(api: OpenClawPluginApi): void {
     `llm=${config.llm.enabled ? config.llm.model : "disabled"}`,
     `policy=${config.timeouts.syncTimeoutPolicy}`,
   );
+
+  if (config.dashboard?.enabled) {
+    api.logger.info(`[sec-agent] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`);
+  }
 
   // ─── Core hooks ───
   api.on("before_tool_call", beforeToolCall, { priority: 9999 });
@@ -510,6 +622,8 @@ export function _getLLMAuditor(): LLMAuditor { return llmAuditor; }
 export function _getAsyncQueue(): AsyncAuditQueue { return asyncQueue; }
 export function _getAuditLog(): AuditLog { return auditLog; }
 export { computeParamsFingerprint as _computeParamsFingerprint };
+export { stopDashboard } from "./src/dashboard/server.js";
+export { updateConfig as _updateConfig };
 
 // ─── Default Export (OpenClaw plugin format) ───
 
@@ -523,6 +637,7 @@ const plugin = {
       llm: { type: "object" as const },
       timeouts: { type: "object" as const },
       logging: { type: "object" as const },
+      dashboard: { type: "object" as const },
     },
   },
   register,

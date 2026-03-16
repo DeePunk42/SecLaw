@@ -29,7 +29,7 @@ export interface AuditLogEntry {
   sessionKey: string;
   toolName?: string;
   params?: Record<string, unknown>;
-  tier?: "YELLOW" | "GREEN";
+  tier?: "GREEN" | "YELLOW" | "RED";
   ruleId?: string;
   decision?: string;
   reason?: string;
@@ -46,6 +46,8 @@ export interface ExternalLogger {
   error: (message: string) => void;
 }
 
+export type AuditLogSubscriber = (entry: AuditLogEntry) => void;
+
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 type LogLevel = keyof typeof LOG_LEVELS;
 
@@ -56,6 +58,9 @@ export class AuditLog {
   private logStream: fs.WriteStream | null = null;
   private logLevel: number;
   private ext: ExternalLogger | null = null;
+  private subscribers: AuditLogSubscriber[] = [];
+  private recentEntries: AuditLogEntry[] = [];
+  private static readonly MAX_RECENT = 500;
 
   constructor(config: LoggingConfig) {
     this.config = config;
@@ -67,6 +72,39 @@ export class AuditLog {
    */
   setExternalLogger(logger: ExternalLogger): void {
     this.ext = logger;
+  }
+
+  /**
+   * Register a subscriber to receive new log entries in real time.
+   */
+  subscribe(fn: AuditLogSubscriber): void {
+    this.subscribers.push(fn);
+  }
+
+  /**
+   * Remove a previously registered subscriber.
+   */
+  unsubscribe(fn: AuditLogSubscriber): void {
+    const idx = this.subscribers.indexOf(fn);
+    if (idx !== -1) this.subscribers.splice(idx, 1);
+  }
+
+  /**
+   * Return the most recent N log entries from the ring buffer.
+   */
+  getRecentEntries(limit?: number): AuditLogEntry[] {
+    if (limit === undefined || limit >= this.recentEntries.length) {
+      return [...this.recentEntries];
+    }
+    return this.recentEntries.slice(-limit);
+  }
+
+  /**
+   * Update logging config at runtime (used by dashboard config editor).
+   */
+  setLoggingConfig(newConfig: LoggingConfig): void {
+    this.config = newConfig;
+    this.logLevel = LOG_LEVELS[newConfig.level] ?? LOG_LEVELS.info;
   }
 
   /**
@@ -120,6 +158,16 @@ export class AuditLog {
   // ─── JSONL file logging ───
 
   log(entry: AuditLogEntry): void {
+    // Ring buffer + subscriber notification always active (independent of JSONL)
+    this.recentEntries.push(entry);
+    if (this.recentEntries.length > AuditLog.MAX_RECENT) {
+      this.recentEntries.shift();
+    }
+    for (const fn of this.subscribers) {
+      try { fn(entry); } catch { /* best-effort */ }
+    }
+
+    // JSONL file write (conditional)
     if (!this.config.auditJsonl || !this.logStream) return;
 
     try {
@@ -166,14 +214,15 @@ export class AuditLog {
     sessionKey: string,
     toolName: string,
     params: Record<string, unknown>,
-    tier: "YELLOW" | "GREEN",
+    tier: "GREEN" | "YELLOW" | "RED",
   ): void {
     const paramSummary = this.summarizeParams(toolName, params);
-    // YELLOW is security-relevant → info level
-    if (tier === "YELLOW") {
-      this.info(`⚠️ YELLOW ${toolName}(${paramSummary}) -- requires sync audit`);
+    if (tier === "GREEN") {
+      this.debug(`🟢 GREEN ${toolName}(${paramSummary}) -- no audit`);
+    } else if (tier === "YELLOW") {
+      this.debug(`🟡 YELLOW ${toolName}(${paramSummary}) -- deferred to async audit`);
     } else {
-      this.debug(`✅ GREEN ${toolName}(${paramSummary}) -- deferred to async audit`);
+      this.info(`🔴 RED ${toolName}(${paramSummary}) -- requires sync audit`);
     }
 
     this.log({

@@ -2,12 +2,13 @@
 
 ## Overview
 
-SecAgent is a real-time security audit layer for AI Agent tool calls in OpenClaw. It implements a **unified rule engine** that classifies every tool call into one of two tiers:
+SecAgent is a real-time security audit layer for AI Agent tool calls in OpenClaw. It implements a **unified rule engine** that classifies every tool call into one of three tiers:
 
-- **GREEN** — Allow execution immediately, run async LLM audit in background
-- **YELLOW** — Run synchronous LLM audit before execution
+- **GREEN** — Allow execution immediately, no audit at all
+- **YELLOW** — Allow execution immediately, run async LLM audit in background
+- **RED** — Run synchronous LLM audit before execution
 
-**Default behavior: no matching rule → GREEN (allow + async audit).**
+**Default behavior: no matching rule → YELLOW (allow + async audit).**
 
 ## Architecture Flow
 
@@ -28,14 +29,16 @@ Tool Call (before_tool_call)
   ├─ Danger flag check (from previous async audit)
   │   └─ If set → BLOCK + register override PIN
   │
-  └─ Rule Engine: classify(toolName, params, intentCtx, wsPath) → GREEN / YELLOW
+  └─ Rule Engine: classify(toolName, params, intentCtx, wsPath) → GREEN / YELLOW / RED
       │
-      ├─ GREEN → Allow execution (silent)
+      ├─ GREEN → Allow execution (silent, no audit)
+      │
+      ├─ YELLOW → Allow execution
       │   └─ afterToolCall → Async audit queue (skipped for override-approved calls)
-      │       └─ Re-classify → If YELLOW → LLM audit
+      │       └─ Re-classify → If not GREEN → LLM audit
       │           └─ DANGER → Set danger flag (blocks next call)
       │
-      └─ YELLOW → Synchronous LLM audit (with rule context)
+      └─ RED → Synchronous LLM audit (with rule context)
           ├─ SAFE → Allow execution
           └─ DANGER → BLOCK + register override PIN + return buttons
 ```
@@ -46,14 +49,18 @@ Tool Call (before_tool_call)
 index.ts                    Plugin entry point, hook registration, source extraction
 src/
   config.ts                 Type definitions, configuration schema, defaults
-  rule-engine.ts            Unified rule engine (YAML rules → GREEN/YELLOW)
+  rule-engine.ts            Unified rule engine (YAML rules → GREEN/YELLOW/RED)
   llm-auditor.ts            LLM audit: prompt construction, API call, response parsing
   async-audit-queue.ts      Background audit queue with deduplication
-  audit-log.ts              Console + JSONL logging, log level filtering
+  audit-log.ts              Console + JSONL logging, log level filtering, subscriber pattern
   intent-context.ts         Intent accumulator (userGoal, message source, tool calls)
   session-state.ts          Per-session state manager (danger flags, audit cache, override state)
   interrupt.ts              Danger flag management, interrupt mechanism
   patterns/                 Command/URL/path analysis utilities
+  dashboard/
+    server.ts               HTTP server lifecycle (start/stop, routing)
+    api.ts                  REST API + SSE endpoint handlers
+    html.ts                 Embedded SPA frontend (dark theme, 4 tabs)
 rules/
   default.yaml              28 built-in security rules
 ```
@@ -65,7 +72,7 @@ rules/
 1. Rules are loaded from YAML files and sorted by priority (descending)
 2. For each tool call, rules are evaluated in priority order
 3. First matching rule wins — returns `{ tier, ruleId, reason }`
-4. If no rule matches, default is `{ tier: "GREEN" }`
+4. If no rule matches, default is `{ tier: "YELLOW" }`
 
 ### Rule Structure
 
@@ -76,7 +83,7 @@ rules/
   conditions:                     # ALL conditions must match (AND logic)
     - type: command_matches
       pattern: "rm\\s+.*-rf\\s+/"
-  tier: YELLOW                    # GREEN or YELLOW
+  tier: RED                       # GREEN, YELLOW, or RED
   reason: "Recursive delete"      # Passed to LLM as context
   priority: 10000                 # Higher = evaluated first
 ```
@@ -89,7 +96,7 @@ rules/
 | `command_starts_with` | Command starts with prefix | `prefix` |
 | `pipe_to_shell` | Command pipes to sh/bash/zsh | `value: true/false` |
 | `has_dynamic_expansion` | Contains $() or backticks | `value: true/false` |
-| `is_yellow_command` | Primary command is in dangerous set | `value: true/false` |
+| `is_dangerous_command` | Primary command is in dangerous set | `value: true/false` |
 | `reads_sensitive_files` | Command reads secrets/keys/env | `value: true/false` |
 | `is_sensitive_write_path` | Path targets .ssh/.env/etc | `value: true/false` |
 | `path_in_workspace` | All paths within workspace dir | `value: true/false` |
@@ -102,15 +109,15 @@ rules/
 
 | Range | Tier | Description |
 |-------|------|-------------|
-| 9000-10000 | YELLOW | Catastrophic patterns (rm -rf /, pipe-to-shell, credential theft) |
-| 8000 | YELLOW | Always-YELLOW tools (fs_delete, sessions_spawn, gateway) |
-| 7000-7500 | GREEN | Known-safe patterns (git, npm, docker safe ops, workspace rm) |
-| 6000-6500 | YELLOW | Parameter-level YELLOW (dangerous commands, sensitive files, SSRF) |
+| 9000-10000 | RED | Catastrophic patterns (rm -rf /, pipe-to-shell, credential theft) |
+| 8000 | RED | Always-RED tools (fs_delete, sessions_spawn, gateway) |
+| 7000-7500 | GREEN/YELLOW | Known-safe patterns (git, npm → GREEN; workspace rm, docker → YELLOW) |
+| 6000-6500 | RED | Parameter-level RED (dangerous commands, sensitive files, SSRF) |
 | 5000-5500 | GREEN | Always-GREEN tools (read, web_search, memory_*) |
-| 4000-4500 | GREEN | Parameter-level GREEN (non-dangerous commands, safe paths) |
-| 0 | GREEN | Default fallback — no rule matched |
+| 4000-4500 | YELLOW | Parameter-level YELLOW (non-dangerous commands, safe paths) |
+| 0 | YELLOW | Default fallback — no rule matched |
 
-**Key design principle:** GREEN safe patterns (7000+) override parameter-level YELLOW (6000+), ensuring `git status` and `npm install` are not over-classified. Catastrophic YELLOW (9000+) always wins.
+**Key design principle:** GREEN safe patterns (7000+) override parameter-level RED (6000+), ensuring `git status` and `npm install` are not over-classified. Catastrophic RED (9000+) always wins.
 
 ## Intent Context
 
@@ -196,7 +203,7 @@ The LLM audit prompt includes:
 
 ### Rule Context Injection
 
-When a rule triggers YELLOW classification, its `ruleId` and `reason` are passed to the LLM:
+When a rule triggers RED classification, its `ruleId` and `reason` are passed to the LLM:
 
 ```
 ## Security rule context
@@ -221,13 +228,15 @@ Each audit request is fingerprinted via SHA-256 of `{ toolName, params, userGoal
 
 ## Async Audit Queue
 
-After every tool call (`afterToolCall`), the operation is enqueued for background audit:
+After every tool call (`afterToolCall`), the operation is checked:
 
-1. **Deduplication**: fingerprint-based, skips already-queued identical operations
-2. **Re-classification**: runs `ruleEngine.classify()` again
-3. **GREEN → skip**: no further audit needed
-4. **YELLOW → LLM audit**: runs with `asyncAuditMs` timeout
-5. **DANGER → interrupt**: sets per-session danger flag, emits `security` event
+1. **GREEN → skip**: no audit at all
+2. **YELLOW/RED → enqueue** for background audit
+3. **Deduplication**: fingerprint-based, skips already-queued identical operations
+4. **Re-classification**: runs `ruleEngine.classify()` again
+5. **GREEN → skip**: no further audit needed
+6. **YELLOW/RED → LLM audit**: runs with `asyncAuditMs` timeout
+7. **DANGER → interrupt**: sets per-session danger flag, emits `security` event
 
 The danger flag blocks **all subsequent tool calls** for that session until the session is reset.
 
@@ -239,12 +248,12 @@ Controlled by `logging.level` (`debug` | `info` | `warn` | `error`):
 
 | Level | What is logged |
 |-------|---------------|
-| debug | `danger flag: none`, `GREEN exec(git status) — async audit`, intent context dump (YELLOW path only), `LLM audit: skipped (disabled)`, intent extraction source |
-| info | `YELLOW exec(rm -rf /) — sync audit`, `BLOCKED exec [sync] — reason`, `ALLOW exec — LLM audit → SAFE`, initialization messages |
+| debug | `🟢 GREEN exec(git status) -- no audit`, `🟡 YELLOW exec(ls) -- deferred to async audit`, intent context dump (RED path only), `LLM audit: skipped (disabled)`, intent extraction source |
+| info | `🔴 RED exec(rm -rf /) -- requires sync audit`, `BLOCKED exec [sync] — reason`, `ALLOW exec — LLM audit → SAFE`, initialization messages |
 | warn | `danger flag FOUND — blocking all subsequent calls` |
 | error | `DANGER exec [async] rule=CAT-001 — reason` |
 
-A GREEN tool call produces **1 line** of debug output (the classification). A YELLOW tool call with LLM audit produces **~10 lines** of debug output (classification + intent context dump + final decision).
+A GREEN tool call produces **no output** (silent). A YELLOW tool call produces **1 line** of debug output (the classification). A RED tool call with LLM audit produces **~10 lines** of debug output (classification + intent context dump + final decision).
 
 ### JSONL File
 
@@ -252,11 +261,11 @@ When `logging.auditJsonl: true`, structured events are written to `sec-agent-aud
 
 | Event Type | Trigger |
 |------------|---------|
-| `tool_classified` | Every tool call classification + intent context (YELLOW path) |
+| `tool_classified` | Every tool call classification + intent context (RED path) |
 | `rule_matched` | When a named rule matches |
 | `llm_audit` | LLM audit result |
 | `tool_blocked` | Tool call blocked |
-| `tool_allowed` | Tool call allowed (YELLOW path only) |
+| `tool_allowed` | Tool call allowed (RED path only) |
 | `danger_detected` | Async audit found danger |
 | `override_used` | Trusted sender override consumed |
 
@@ -307,27 +316,27 @@ The response is parsed from OpenAI format: `data.choices[0].message.content`.
 
 | ID | Tier | Priority | Description |
 |----|------|----------|-------------|
-| CAT-001 | YELLOW | 10000 | Catastrophic recursive delete (rm -rf /) |
-| CAT-002 | YELLOW | 10000 | Force remove root (--no-preserve-root) |
-| CAT-003 | YELLOW | 9500 | Pipe download to shell |
-| CAT-004 | YELLOW | 9500 | Data exfiltration via curl/wget |
-| CAT-005 | YELLOW | 9200 | Overwrite SSH config |
-| CAT-006 | YELLOW | 9100 | Overwrite shell profile |
-| CAT-007 | YELLOW | 9800 | Disk format/wipe |
-| CAT-008 | YELLOW | 9000 | Cron/at job creation |
-| TOOL-Y-001..005 | YELLOW | 8000 | Always-YELLOW tools (fs_delete, fs_move, sessions_spawn, sessions_send, gateway) |
-| SAFE-001 | GREEN | 7500 | Workspace-scoped delete |
+| CAT-001 | RED | 10000 | Catastrophic recursive delete (rm -rf /) |
+| CAT-002 | RED | 10000 | Force remove root (--no-preserve-root) |
+| CAT-003 | RED | 9500 | Pipe download to shell |
+| CAT-004 | RED | 9500 | Data exfiltration via curl/wget |
+| CAT-005 | RED | 9200 | Overwrite SSH config |
+| CAT-006 | RED | 9100 | Overwrite shell profile |
+| CAT-007 | RED | 9800 | Disk format/wipe |
+| CAT-008 | RED | 9000 | Cron/at job creation |
+| TOOL-Y-001..005 | RED | 8000 | Always-RED tools (fs_delete, fs_move, sessions_spawn, sessions_send, gateway) |
+| SAFE-001 | YELLOW | 7500 | Workspace-scoped delete |
 | SAFE-002 | GREEN | 7200 | Git operations |
 | SAFE-003 | GREEN | 7200 | Package manager operations |
-| SAFE-004 | GREEN | 7100 | Docker safe operations |
-| PARAM-Y-001 | YELLOW | 6500 | Dangerous command detected |
-| PARAM-Y-002 | YELLOW | 6400 | Reads sensitive files |
-| PARAM-Y-003 | YELLOW | 6300 | Sensitive file write path |
-| PARAM-Y-004..006 | YELLOW | 6100-6200 | SSRF / metadata / credential URLs |
+| SAFE-004 | YELLOW | 7100 | Docker safe operations |
+| PARAM-Y-001 | RED | 6500 | Dangerous command detected |
+| PARAM-Y-002 | RED | 6400 | Reads sensitive files |
+| PARAM-Y-003 | RED | 6300 | Sensitive file write path |
+| PARAM-Y-004..006 | RED | 6100-6200 | SSRF / metadata / credential URLs |
 | TOOL-G-001..003 | GREEN | 5500 | Always-GREEN tools (read, web_search, memory_*) |
-| PARAM-G-001 | GREEN | 4500 | Non-dangerous exec command |
-| PARAM-G-002 | GREEN | 4000 | Non-sensitive file write |
-| PARAM-G-003 | GREEN | 4000 | External URL fetch |
+| PARAM-G-001 | YELLOW | 4500 | Non-dangerous exec command |
+| PARAM-G-002 | YELLOW | 4000 | Non-sensitive file write |
+| PARAM-G-003 | YELLOW | 4000 | External URL fetch |
 
 ## Writing Custom Rules
 
@@ -341,7 +350,7 @@ Add rules to `.openclaw/sec-agent-rules.yaml` in your workspace:
   conditions:
     - type: command_matches
       pattern: "terraform\\s+destroy"
-  tier: YELLOW
+  tier: RED
   reason: "Terraform destroy requires manual review"
   priority: 9000
 
@@ -397,3 +406,47 @@ PluginHookAgentContext { agentId?, sessionKey?, ... }
 On initialization, SecAgent logs (info level):
 - LLM connection status (endpoint, model)
 - Rule count, timeout policy
+- Dashboard URL (if enabled)
+
+## Dashboard (Web UI)
+
+SecAgent includes a built-in web dashboard on port 19198 (configurable) for real-time monitoring and configuration.
+
+### Server Lifecycle
+
+- `startDashboard(config, deps)` creates an `http.Server` on `config.host:config.port`
+- `stopDashboard()` gracefully shuts down the server
+- `server.unref()` ensures the server doesn't block process exit
+- Controlled by `dashboard.enabled` config (default: `true`)
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/logs` | Recent audit log entries (query: `limit`, `tier`, `eventType`, `toolName`) |
+| GET | `/api/logs/stream` | SSE real-time log stream (same filter params) |
+| GET | `/api/config` | Current config (apiKey masked as `"***"`) |
+| PUT | `/api/config` | Update runtime config (apiKey/endpoint blocked) |
+| GET | `/api/health` | Health check (`{ status: "running" }`) |
+| GET | `/api/rules` | Loaded rule list |
+
+### SSE Push Mechanism
+
+- `AuditLog.subscribe(fn)` registers a callback for new log entries
+- SSE endpoint sends `event: connected` on connection, then `data: {entry}` for each new log
+- 30-second heartbeat prevents connection timeout
+- Cleanup on client disconnect via `req.on("close")`
+
+### Runtime Config Update
+
+`PUT /api/config` validates and applies changes to the running config:
+- `logging` changes propagate to `auditLog.setLoggingConfig()`
+- `timeouts` and `llm` settings update the config singleton (read at call time)
+- `apiKey` and `endpoint` are blocked from web modification (security boundary)
+
+### Audit Log Ring Buffer
+
+`AuditLog` maintains a 500-entry ring buffer independent of JSONL file output:
+- `subscribe(fn)` / `unsubscribe(fn)` — real-time subscriber pattern
+- `getRecentEntries(limit?)` — returns buffered entries for initial page load
+- Buffer always active (even when `auditJsonl: false`)

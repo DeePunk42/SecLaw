@@ -1,6 +1,6 @@
 // ─── Shared Types ───
 
-export type Tier = "YELLOW" | "GREEN";
+export type Tier = "GREEN" | "YELLOW" | "RED";
 
 export type AuditDecision = "SAFE" | "DANGER";
 
@@ -31,7 +31,7 @@ export interface RuleCondition {
     | "path_matches"
     | "url_is_internal"
     | "has_dynamic_expansion"
-    | "is_yellow_command"
+    | "is_dangerous_command"
     | "reads_sensitive_files"
     | "is_sensitive_write_path"
     | "url_is_metadata"
@@ -153,10 +153,17 @@ export interface AgentProfileConfig {
   };
 }
 
+export interface DashboardConfig {
+  enabled: boolean;
+  port: number;
+  host: string;
+}
+
 export interface SecAgentConfig {
   llm: LLMConfig;
   timeouts: TimeoutConfig;
   logging: LoggingConfig;
+  dashboard?: DashboardConfig;
   rules?: { extra?: Rule[] };
   agentProfiles?: Record<string, AgentProfileConfig>;
 }
@@ -177,6 +184,11 @@ const DEFAULT_CONFIG: SecAgentConfig = {
     level: "debug",
     auditJsonl: true,
   },
+  dashboard: {
+    enabled: true,
+    port: 19198,
+    host: "127.0.0.1",
+  },
 };
 
 export function loadConfig(partial?: Partial<SecAgentConfig>): SecAgentConfig {
@@ -185,6 +197,7 @@ export function loadConfig(partial?: Partial<SecAgentConfig>): SecAgentConfig {
     llm: { ...DEFAULT_CONFIG.llm, ...partial.llm },
     timeouts: { ...DEFAULT_CONFIG.timeouts, ...partial.timeouts },
     logging: { ...DEFAULT_CONFIG.logging, ...partial.logging },
+    dashboard: { ...DEFAULT_CONFIG.dashboard!, ...partial.dashboard },
     rules: partial.rules,
     agentProfiles: partial.agentProfiles,
   };

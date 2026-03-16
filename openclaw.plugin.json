@@ -41,6 +41,15 @@
           "extra": { "type": "array" }
         }
       },
+      "dashboard": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "port": { "type": "number" },
+          "host": { "type": "string" }
+        }
+      },
       "agentProfiles": {
         "type": "object",
         "additionalProperties": {

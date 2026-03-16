@@ -23,20 +23,21 @@ npx tsx scripts/test-dangerous.ts   # 40+ comprehensive scenarios
 
 ## Architecture
 
-SecAgent is an OpenClaw plugin that audits every AI agent tool call in real time. It classifies calls into two tiers:
+SecAgent is an OpenClaw plugin that audits every AI agent tool call in real time. It classifies calls into three tiers:
 
-- **GREEN** — Allow immediately, enqueue for background async audit
-- **YELLOW** — Block until synchronous LLM audit returns SAFE or DANGER
-- No matching rule defaults to GREEN
+- **GREEN** — Allow immediately, no audit at all
+- **YELLOW** — Allow immediately, enqueue for background async audit
+- **RED** — Block until synchronous LLM audit returns SAFE or DANGER
+- No matching rule defaults to YELLOW
 
 ### Core flow (before_tool_call hook, priority 9999)
 
 1. Check for **active override** (trusted sender confirmed a blocked operation)
 2. Check for **danger flag** (set by prior async audit) → block if present
-3. **Rule engine** classifies tool call → GREEN (allow) or YELLOW (continue to step 4)
+3. **Rule engine** classifies tool call → GREEN (allow, no audit) / YELLOW (allow, async audit) / RED (continue to step 4)
 4. **Sync LLM audit** → SAFE (allow) or DANGER (block with override hint)
 
-After tool execution (`after_tool_call`), GREEN calls are enqueued for async LLM audit. If async audit returns DANGER, a danger flag is set that blocks the next tool call.
+After tool execution (`after_tool_call`), YELLOW and RED calls are enqueued for async LLM audit. GREEN calls skip async audit entirely. If async audit returns DANGER, a danger flag is set that blocks the next tool call.
 
 ### Override mechanism
 
@@ -50,24 +51,31 @@ When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field
 | `src/config.ts` | All type definitions (`SecAgentConfig`, `Rule`, `IntentContext`, `PendingOverride`, etc.) and defaults. |
 | `src/rule-engine.ts` | Loads YAML rules, matches tool calls using 12 condition types, returns tier + rule ID. |
 | `src/llm-auditor.ts` | Builds audit prompts with intent context, calls LLM, parses SAFE/DANGER response. Fingerprint-based caching. |
-| `src/async-audit-queue.ts` | Background queue with deduplication. Re-classifies via rule engine, then LLM audits YELLOW items. |
+| `src/async-audit-queue.ts` | Background queue with deduplication. Re-classifies via rule engine, then LLM audits YELLOW/RED items. |
 | `src/session-state.ts` | Singleton `sessionState`. Per-session danger flags, intent context, audit cache, override state. |
 | `src/intent-context.ts` | Accumulates user goal, sender label, message source from hook events. Detects `SEC_OVERRIDE` commands. |
 | `src/interrupt.ts` | Danger flag lifecycle, interrupt mechanism (`triggerInterrupt` for async danger SSE). |
-| `src/audit-log.ts` | Console + JSONL structured logging. |
+| `src/audit-log.ts` | Console + JSONL structured logging, subscriber pattern + ring buffer. |
 | `src/patterns/` | `command-patterns.ts`, `path-patterns.ts`, `url-patterns.ts` — used by rule engine condition matchers. |
+| `src/dashboard/server.ts` | HTTP server lifecycle for the web dashboard (port 19198). |
+| `src/dashboard/api.ts` | REST API + SSE endpoints (`/api/logs`, `/api/config`, `/api/health`, `/api/rules`). |
+| `src/dashboard/html.ts` | Embedded SPA frontend (dark theme, 4 tabs: Audit Log, Config, Health, Rules). |
 
 ### Rules
 
 Default rules live in `rules/default.yaml` (28+ rules, priority-ordered). Workspace-specific rules go in `.openclaw/sec-agent-rules.yaml`. Extra rules can also be passed via `config.rules.extra`.
 
-Rule IDs follow prefixes: `CAT-` (catastrophic, priority 9000-10000), `TOOL-Y-` (always-YELLOW tools), `SAFE-` (known-safe patterns), `PARAM-Y-` / `PARAM-G-` (parameter-level classification), `TOOL-G-` (always-GREEN tools).
+Rule IDs follow prefixes: `CAT-` (catastrophic, priority 9000-10000), `TOOL-Y-` (always-RED tools), `SAFE-` (known-safe patterns), `PARAM-Y-` / `PARAM-G-` (parameter-level classification), `TOOL-G-` (always-GREEN tools).
 
 ### Plugin registration
 
 `register(api: OpenClawPluginApi)` hooks into: `before_tool_call` (priority 9999), `after_tool_call` (100), `before_prompt_build`, `llm_input`, `session_start`, `before_reset`, `before_compaction`.
 
 The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` for output routing, `pluginConfig` for sec-agent settings, `emitAgentEvent` for SSE (async danger notifications only), `config.workspace.dir` for workspace path.
+
+### Dashboard
+
+SecAgent starts a local web dashboard on `http://127.0.0.1:19198` by default (configurable via `dashboard` config). The dashboard provides real-time audit log viewing with SSE push, runtime config editing, and placeholder tabs for health check and rule editing. Controlled by `dashboard.enabled` (default `true`). Uses `node:http` with zero external dependencies. `server.unref()` ensures it doesn't block process exit.
 
 ## Workflow rules
 
