@@ -1,0 +1,88 @@
+{
+  "$schema": "https://openclaw.com/schema/openclaw.json",
+
+  "gateway": {
+    "bind": "loopback",
+    "port": 18789,
+
+    "controlUi": {
+      "allowedOrigins": [],
+      "dangerouslyAllowHostHeaderOriginFallback": false,
+      "allowInsecureAuth": false,
+      "dangerouslyDisableDeviceAuth": false
+    },
+
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "OPENCLAW_GATEWAY_TOKEN"
+      },
+      "rateLimit": {
+        "maxAttempts": 5,
+        "windowMs": 60000,
+        "lockoutMs": 600000,
+        "exemptLoopback": false
+      }
+    },
+
+    "trustedProxies": []
+  },
+
+  "tools": {
+    "exec": {
+      "security": "allowlist",
+      "ask": "always",
+      "safeBins": [
+        "ls", "cat", "head", "tail", "grep", "find",
+        "wc", "echo", "pwd", "whoami", "date",
+        "git"
+      ],
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    },
+
+    "fs": {
+      "workspaceOnly": true
+    },
+
+    "elevated": {
+      "enabled": false
+    }
+  },
+
+  "plugins": {
+    "allow": []
+  },
+
+  "channels": {
+    "telegram": {
+      "allowFrom": [],
+      "dmPolicy": "disabled"
+    },
+    "discord": {
+      "allowFrom": [],
+      "dmPolicy": "disabled"
+    }
+  },
+
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "all"
+      }
+    }
+  },
+
+  "discovery": {
+    "mdns": {
+      "mode": "off"
+    }
+  },
+
+  "commands": {
+    "ownerAllowFrom": []
+  }
+}

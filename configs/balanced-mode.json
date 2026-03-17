@@ -1,0 +1,90 @@
+{
+  "$schema": "https://openclaw.com/schema/openclaw.json",
+
+  "gateway": {
+    "bind": "loopback",
+    "port": 18789,
+
+    "controlUi": {
+      "allowedOrigins": [],
+      "dangerouslyAllowHostHeaderOriginFallback": false,
+      "allowInsecureAuth": false,
+      "dangerouslyDisableDeviceAuth": false
+    },
+
+    "auth": {
+      "mode": "token",
+      "token": {
+        "source": "env",
+        "provider": "default",
+        "id": "OPENCLAW_GATEWAY_TOKEN"
+      },
+      "rateLimit": {
+        "maxAttempts": 10,
+        "windowMs": 60000,
+        "lockoutMs": 300000,
+        "exemptLoopback": false
+      }
+    },
+
+    "trustedProxies": []
+  },
+
+  "tools": {
+    "exec": {
+      "security": "allowlist",
+      "ask": "on-miss",
+      "safeBins": [
+        "ls", "cat", "head", "tail", "grep", "find",
+        "wc", "echo", "pwd", "whoami", "date",
+        "git", "node", "python3",
+        "jq", "sha256sum", "diff",
+        "mkdir", "cp", "mv"
+      ],
+      "applyPatch": {
+        "workspaceOnly": true
+      }
+    },
+
+    "fs": {
+      "workspaceOnly": true
+    },
+
+    "elevated": {
+      "enabled": true
+    }
+  },
+
+  "plugins": {
+    "allow": []
+  },
+
+  "channels": {
+    "telegram": {
+      "allowFrom": [],
+      "dmPolicy": "pairing"
+    },
+    "discord": {
+      "allowFrom": [],
+      "dmPolicy": "pairing"
+    }
+  },
+
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "non-main"
+      }
+    }
+  },
+
+  "discovery": {
+    "mdns": {
+      "mode": "minimal"
+    }
+  },
+
+  "commands": {
+    "ownerAllowFrom": []
+  }
+}
