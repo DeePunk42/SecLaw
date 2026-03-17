@@ -4,19 +4,27 @@
  */
 
 import * as http from "node:http";
-import type { DashboardConfig, SecAgentConfig } from "../config.js";
+import type { DashboardConfig, SecLawConfig } from "../config.js";
 import type { AuditLog } from "../audit-log.js";
 import type { RuleEngine } from "../rule-engine.js";
 import type { AsyncAuditQueue } from "../async-audit-queue.js";
 import { handleApiRequest } from "./api.js";
 import { getDashboardHtml } from "./html.js";
 
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
 export interface DashboardDeps {
-  getConfig: () => SecAgentConfig;
-  updateConfig: (partial: Partial<SecAgentConfig>) => { ok: boolean; errors?: string[] };
+  getConfig: () => SecLawConfig;
+  updateConfig: (partial: Partial<SecLawConfig>) => { ok: boolean; errors?: string[] };
   getAuditLog: () => AuditLog;
   getRuleEngine: () => RuleEngine;
   getAsyncQueue: () => AsyncAuditQueue;
+  getAvailableModels: () => ModelOption[];
+  getWorkspacePath: () => string | undefined;
+  getVarDir: () => string;
 }
 
 let server: http.Server | null = null;
@@ -42,7 +50,7 @@ export function startDashboard(
     const srv = http.createServer((req, res) => {
       // CORS headers for local development
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
       if (req.method === "OPTIONS") {

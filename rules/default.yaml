@@ -1,4 +1,4 @@
-# ─── SecAgent Default Rules (Unified Rule Engine) ───
+# ─── SecLaw Default Rules (Unified Rule Engine) ───
 #
 # Three-tier classification: GREEN, YELLOW, RED.
 #   GREEN  → allow execution, no audit at all

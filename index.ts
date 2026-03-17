@@ -1,5 +1,5 @@
 /**
- * SecAgent Plugin Entry Point
+ * SecLaw Plugin Entry Point
  *
  * Conforms to OpenClaw plugin API — exports a default object with
  * register(api) that uses api.on() to register hook handlers.
@@ -9,9 +9,11 @@
  */
 
 import crypto from "crypto";
+import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import type { SecAgentConfig, LLMErrorInfo } from "./src/config.js";
+import type { SecLawConfig, LLMErrorInfo } from "./src/config.js";
 import { loadConfig } from "./src/config.js";
 import { RuleEngine } from "./src/rule-engine.js";
 import { LLMAuditor, type LLMCallFn } from "./src/llm-auditor.js";
@@ -31,7 +33,7 @@ import {
   onUserMessage,
   updateSource,
 } from "./src/intent-context.js";
-import { startDashboard, stopDashboard } from "./src/dashboard/server.js";
+import { startDashboard, stopDashboard, type ModelOption } from "./src/dashboard/server.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
 
@@ -71,7 +73,7 @@ export interface PluginHookToolContext {
   runId?: string;
   toolName: string;
   toolCallId?: string;
-  // Extended by SecAgent — not in upstream but consumed if present
+  // Extended by SecLaw — not in upstream but consumed if present
   workspacePath?: string;
 }
 
@@ -92,11 +94,21 @@ export interface PluginHookAgentContext {
   channelId?: string;
 }
 
-/** Minimal subset of OpenClawPluginApi used by SecAgent */
+/** Minimal subset of OpenClawPluginApi used by SecLaw */
 export interface OpenClawPluginApi {
   id: string;
   name: string;
-  config: { workspace?: { dir?: string } } & Record<string, unknown>;
+  config: {
+    workspace?: { dir?: string };
+    models?: {
+      providers?: Record<string, {
+        baseUrl: string;
+        apiKey?: string;
+        api?: string;
+        models?: Array<{ id: string; name: string; [key: string]: unknown }>;
+      }>;
+    };
+  } & Record<string, unknown>;
   pluginConfig?: Record<string, unknown>;
   logger: {
     info: (...args: unknown[]) => void;
@@ -132,8 +144,11 @@ let ruleEngine: RuleEngine;
 let llmAuditor: LLMAuditor;
 let auditLog: AuditLog;
 let asyncQueue: AsyncAuditQueue;
-let config: SecAgentConfig;
+let config: SecLawConfig;
 let workspacePath: string | undefined;
+let varDir: string;
+let availableModelsProvider: (() => ModelOption[]) | null = null;
+let gatewayApi: OpenClawPluginApi | null = null;
 
 // ─── Override helpers ───
 
@@ -200,7 +215,7 @@ function formatServiceErrorBlock(
 
   if (action === "blocked") {
     return [
-      `[SecAgent] SERVICE UNAVAILABLE — LLM security audit could not be completed`,
+      `[SecLaw] SERVICE UNAVAILABLE — LLM security audit could not be completed`,
       ``,
       `Error type: ${categoryLabel}${statusPart}`,
       `Details: ${errorInfo.message}`,
@@ -216,7 +231,7 @@ function formatServiceErrorBlock(
   }
 
   return [
-    `[SecAgent] WARNING — LLM security audit skipped due to service error`,
+    `[SecLaw] WARNING — LLM security audit skipped due to service error`,
     ``,
     `Error type: ${categoryLabel}${statusPart}`,
     `Details: ${errorInfo.message}`,
@@ -233,22 +248,27 @@ function formatServiceErrorBlock(
 // ─── Standalone Init (for testing / direct use) ───
 
 export interface PluginInitContext {
-  config?: Partial<SecAgentConfig>;
+  config?: Partial<SecLawConfig>;
   workspacePath?: string;
   pluginDir?: string;
+  varDir?: string;
   emitAgentEvent?: EmitAgentEventFn;
   llmCall?: LLMCallFn;
 }
 
 export function init(ctx: PluginInitContext): void {
   config = loadConfig(ctx.config);
+  const pluginDir = ctx.pluginDir || getDirname();
   workspacePath = ctx.workspacePath;
+  varDir = ctx.varDir || path.join(os.homedir(), ".openclaw", "seclaw");
+
+  // Merge persisted dashboard overrides (if any)
+  loadConfigOverrides();
 
   ruleEngine = new RuleEngine();
-  const pluginDir = ctx.pluginDir || getDirname();
   const defaultRulesPath = path.join(pluginDir, "rules", "default.yaml");
   const workspaceRulesPath = ctx.workspacePath
-    ? path.join(ctx.workspacePath, ".openclaw", "sec-agent-rules.yaml")
+    ? path.join(ctx.workspacePath, ".openclaw", "seclaw-rules.yaml")
     : undefined;
 
   ruleEngine.loadRules({
@@ -283,16 +303,63 @@ export function init(ctx: PluginInitContext): void {
       getAuditLog: () => auditLog,
       getRuleEngine: () => ruleEngine,
       getAsyncQueue: () => asyncQueue,
+      getAvailableModels: () => availableModelsProvider?.() ?? [],
+      getWorkspacePath: () => workspacePath,
+      getVarDir: () => varDir,
     }).catch(() => {
       // Best-effort — dashboard failure shouldn't block the plugin
     });
   }
 }
 
+// ─── Config Persistence Helpers ───
+
+function persistConfigOverrides(): void {
+  try {
+    const overrides: Record<string, unknown> = {
+      llm: {
+        model: config.llm.model,
+        enabled: config.llm.enabled,
+        maxConcurrent: config.llm.maxConcurrent,
+        trustedSenderLabels: config.llm.trustedSenderLabels,
+        retry: config.llm.retry,
+      },
+      timeouts: { ...config.timeouts },
+      logging: { ...config.logging },
+    };
+    fs.mkdirSync(varDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(varDir, "config-overrides.json"),
+      JSON.stringify(overrides, null, 2),
+    );
+  } catch (err) {
+    console.error("[seclaw] Failed to persist config overrides:", err);
+  }
+}
+
+function loadConfigOverrides(): void {
+  try {
+    const overridePath = path.join(varDir, "config-overrides.json");
+    const raw = fs.readFileSync(overridePath, "utf-8");
+    const overrides = JSON.parse(raw);
+    if (overrides.llm) {
+      config.llm = { ...config.llm, ...overrides.llm };
+    }
+    if (overrides.timeouts) {
+      config.timeouts = { ...config.timeouts, ...overrides.timeouts };
+    }
+    if (overrides.logging) {
+      config.logging = { ...config.logging, ...overrides.logging };
+    }
+  } catch {
+    // No overrides file or unreadable — use gateway config as-is
+  }
+}
+
 // ─── Runtime Config Update ───
 
 function updateConfig(
-  partial: Partial<SecAgentConfig>,
+  partial: Partial<SecLawConfig>,
 ): { ok: boolean; errors?: string[] } {
   const errors: string[] = [];
 
@@ -316,6 +383,16 @@ function updateConfig(
     if (partial.llm.trustedSenderLabels !== undefined) {
       if (!Array.isArray(partial.llm.trustedSenderLabels)) {
         errors.push("llm.trustedSenderLabels must be an array of strings");
+      }
+    }
+    // Validate provider existence for "provider/model" format models
+    if (partial.llm.model !== undefined && partial.llm.model.includes("/")) {
+      const providerName = partial.llm.model.slice(0, partial.llm.model.indexOf("/"));
+      if (gatewayApi) {
+        const provider = gatewayApi.config.models?.providers?.[providerName];
+        if (!provider) {
+          errors.push(`llm.model: provider "${providerName}" not found in gateway models.providers`);
+        }
       }
     }
   }
@@ -355,6 +432,9 @@ function updateConfig(
 
   if (errors.length > 0) return { ok: false, errors };
 
+  // Capture pre-change state for enable toggle detection
+  const wasLLMEnabled = config.llm.enabled;
+
   // Apply changes
   if (partial.llm) {
     config.llm = { ...config.llm, ...partial.llm };
@@ -366,6 +446,30 @@ function updateConfig(
     config.logging = { ...config.logging, ...partial.logging };
     auditLog.setLoggingConfig(config.logging);
   }
+
+  // Sync references that were broken by spread operator
+  if (partial.llm || partial.timeouts) {
+    llmAuditor.setConfig(config.llm, config.timeouts);
+  }
+
+  // Recreate llmCallFn when model changes at runtime (gateway mode)
+  if (partial.llm?.model && gatewayApi && config.llm.enabled) {
+    const newCallFn = createGatewayLLMCallFn(config, gatewayApi);
+    if (newCallFn) {
+      llmAuditor.setLLMCallFn(newCallFn);
+    }
+  }
+
+  // Handle llm.enabled toggled on at runtime
+  if (!wasLLMEnabled && config.llm.enabled && gatewayApi && !partial.llm?.model) {
+    const newCallFn = createGatewayLLMCallFn(config, gatewayApi);
+    if (newCallFn) {
+      llmAuditor.setLLMCallFn(newCallFn);
+    }
+  }
+
+  // Persist overrides to varDir (exclude apiKey/endpoint for security)
+  persistConfigOverrides();
 
   return { ok: true };
 }
@@ -445,7 +549,7 @@ export async function beforeToolCall(
       auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
       return {
         block: true,
-        blockReason: `[SecAgent] ${reason}` + formatOverrideHint(pin),
+        blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin),
         buttons: overrideButtons(pin),
       };
     }
@@ -515,7 +619,7 @@ export async function beforeToolCall(
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
     const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
     auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
-    const blockReason = `[SecAgent] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
+    const blockReason = `[SecLaw] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
     return {
       block: true,
       blockReason: blockReason + formatOverrideHint(pin),
@@ -579,8 +683,26 @@ export function onSessionReset(sessionKey: string): void {
 // ─── OpenClaw Plugin Registration ───
 
 function register(api: OpenClawPluginApi): void {
-  const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecAgentConfig>;
+  const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
   const wsDir = api.config.workspace?.dir;
+
+  // Build available models list from api.config.models.providers
+  availableModelsProvider = () => {
+    const providers = api.config.models?.providers;
+    if (!providers) return [];
+    const options: ModelOption[] = [];
+    for (const [providerName, provider] of Object.entries(providers)) {
+      if (provider.models) {
+        for (const m of provider.models) {
+          options.push({
+            value: `${providerName}/${m.id}`,
+            label: `${providerName} / ${m.name || m.id}`,
+          });
+        }
+      }
+    }
+    return options;
+  };
 
   init({
     config: pluginConfig,
@@ -589,33 +711,52 @@ function register(api: OpenClawPluginApi): void {
     emitAgentEvent: api.emitAgentEvent,
   });
 
-  // Route all sec-agent log output through the gateway's logger
+  // Route all seclaw log output through the gateway's logger
   auditLog.setExternalLogger(api.logger);
 
   // ─── Wire up LLM call function via gateway's OpenAI-compatible endpoint ───
+  gatewayApi = api;
   if (config.llm.enabled) {
     const llmCallFn = createGatewayLLMCallFn(config, api);
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
-      api.logger.info("[sec-agent] 🚀 LLM connected",
-        `endpoint=${config.llm.endpoint || "(gateway internal)"}`,
-        `model=${config.llm.model}`,
-      );
+      const isProviderMode = config.llm.model.includes("/");
+      if (isProviderMode) {
+        api.logger.info("[seclaw] 🚀 LLM connected via provider config",
+          `model=${config.llm.model}`,
+        );
+      } else {
+        api.logger.info("[seclaw] 🚀 LLM connected",
+          `endpoint=${config.llm.endpoint || "(gateway internal)"}`,
+          `model=${config.llm.model}`,
+        );
+      }
     } else {
-      api.logger.error("[sec-agent] ⚠️ LLM enabled but no endpoint configured -- " +
-        "set llm.endpoint and llm.apiKey in plugin config. " +
-        "RED operations will pass without real LLM audit.");
+      if (config.llm.model.includes("/")) {
+        const providerName = config.llm.model.slice(0, config.llm.model.indexOf("/"));
+        api.logger.error(`[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in models.providers -- ` +
+          "check openclaw.json configuration. " +
+          "RED operations will pass without real LLM audit.");
+      } else if (!config.llm.model) {
+        api.logger.error("[seclaw] ⚠️ LLM enabled but no model configured -- " +
+          "select a model in Dashboard or set llm.model in plugin config. " +
+          "RED operations will pass without real LLM audit.");
+      } else {
+        api.logger.error("[seclaw] ⚠️ LLM enabled but no endpoint configured -- " +
+          "set llm.endpoint and llm.apiKey in plugin config, or use provider/model format. " +
+          "RED operations will pass without real LLM audit.");
+      }
     }
   }
 
-  api.logger.info("[sec-agent] 🚀 Initialized",
+  api.logger.info("[seclaw] 🚀 Initialized",
     `rules=${ruleEngine.getRules().length}`,
     `llm=${config.llm.enabled ? config.llm.model : "disabled"}`,
     `policy=${config.timeouts.syncTimeoutPolicy}`,
   );
 
   if (config.dashboard?.enabled) {
-    api.logger.info(`[sec-agent] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`);
+    api.logger.info(`[seclaw] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`);
   }
 
   // ─── Core hooks ───
@@ -673,33 +814,65 @@ function register(api: OpenClawPluginApi): void {
 }
 
 /**
+ * Resolve endpoint and apiKey for an LLM call.
+ *
+ * If the model string contains "/" (e.g. "myapi/gpt-5.2"), resolves
+ * the provider from api.config.models.providers and constructs the endpoint.
+ * Otherwise falls back to cfg.llm.endpoint / cfg.llm.apiKey.
+ */
+function resolveProviderEndpoint(
+  model: string,
+  cfg: SecLawConfig,
+  api: OpenClawPluginApi,
+): { endpoint: string; apiKey?: string; modelId: string } | null {
+  if (model.includes("/")) {
+    const slashIdx = model.indexOf("/");
+    const providerName = model.slice(0, slashIdx);
+    const modelId = model.slice(slashIdx + 1);
+    const provider = api.config.models?.providers?.[providerName];
+    if (!provider) return null;
+    let endpoint = provider.baseUrl;
+    if (!endpoint.endsWith("/chat/completions")) {
+      endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
+    }
+    return { endpoint, apiKey: provider.apiKey, modelId };
+  }
+
+  // Fallback: legacy cfg.llm.endpoint / cfg.llm.apiKey
+  if (!cfg.llm.endpoint) return null;
+  return { endpoint: cfg.llm.endpoint, apiKey: cfg.llm.apiKey, modelId: model };
+}
+
+/**
  * Create an LLM call function that calls the gateway's OpenAI-compatible endpoint.
- * Returns null if no endpoint is configured.
+ * Returns null if no endpoint is configured and model cannot be resolved via providers.
  */
 function createGatewayLLMCallFn(
-  cfg: SecAgentConfig,
+  cfg: SecLawConfig,
   api: OpenClawPluginApi,
 ): LLMCallFn | null {
-  const endpoint = cfg.llm.endpoint;
-  const apiKey = cfg.llm.apiKey;
+  const resolved = resolveProviderEndpoint(cfg.llm.model, cfg, api);
 
-  if (!endpoint) {
+  if (!resolved) {
     return null;
   }
 
   return async (params) => {
+    // Re-resolve at call time in case config.llm.model changed at runtime
+    const current = resolveProviderEndpoint(params.model, cfg, api) ?? resolved;
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (apiKey) {
-      headers["Authorization"] = `Bearer ${apiKey}`;
+    if (current.apiKey) {
+      headers["Authorization"] = `Bearer ${current.apiKey}`;
     }
 
-    const response = await fetch(endpoint, {
+    const response = await fetch(current.endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: params.model,
+        model: current.modelId,
         messages: params.messages,
         max_tokens: params.max_tokens,
       }),
@@ -741,6 +914,8 @@ export function _getRuleEngine(): RuleEngine { return ruleEngine; }
 export function _getLLMAuditor(): LLMAuditor { return llmAuditor; }
 export function _getAsyncQueue(): AsyncAuditQueue { return asyncQueue; }
 export function _getAuditLog(): AuditLog { return auditLog; }
+export function _setVarDir(dir: string): void { varDir = dir; }
+export function _setGatewayApi(api: OpenClawPluginApi | null): void { gatewayApi = api; }
 export { computeParamsFingerprint as _computeParamsFingerprint };
 export { stopDashboard } from "./src/dashboard/server.js";
 export { updateConfig as _updateConfig };
@@ -748,8 +923,8 @@ export { updateConfig as _updateConfig };
 // ─── Default Export (OpenClaw plugin format) ───
 
 const plugin = {
-  id: "sec-agent",
-  name: "SecAgent",
+  id: "seclaw",
+  name: "SecLaw",
   description: "Real-time security audit layer for AI Agent tool calls",
   configSchema: {
     type: "object" as const,

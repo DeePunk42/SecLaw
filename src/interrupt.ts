@@ -92,7 +92,7 @@ export function resetSession(sessionKey: string): void {
  */
 export function formatDangerAlert(report: DangerReport): string {
   const lines = [
-    `[SecAgent] SECURITY ALERT — Operation blocked`,
+    `[SecLaw] SECURITY ALERT — Operation blocked`,
     ``,
     `Tool: ${report.toolName}`,
     `Reason: ${report.reason}`,

@@ -7,7 +7,7 @@
 import type {
   AuditQueueItem,
   DangerReport,
-  SecAgentConfig,
+  SecLawConfig,
 } from "./config.js";
 import { RuleEngine } from "./rule-engine.js";
 import { LLMAuditor } from "./llm-auditor.js";
@@ -20,14 +20,14 @@ export class AsyncAuditQueue {
   private ruleEngine: RuleEngine;
   private llmAuditor: LLMAuditor;
   private auditLog: AuditLog;
-  private config: SecAgentConfig;
+  private config: SecLawConfig;
   private fingerprints = new Set<string>();
 
   constructor(
     ruleEngine: RuleEngine,
     llmAuditor: LLMAuditor,
     auditLog: AuditLog,
-    config: SecAgentConfig,
+    config: SecLawConfig,
   ) {
     this.ruleEngine = ruleEngine;
     this.llmAuditor = llmAuditor;

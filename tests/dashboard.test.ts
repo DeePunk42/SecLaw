@@ -1,13 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as http from "node:http";
 import {
   init,
   _getAuditLog,
+  _getLLMAuditor,
   _getRuleEngine,
   _getAsyncQueue,
   _updateConfig,
+  _setVarDir,
+  _setGatewayApi,
   stopDashboard,
 } from "../index.js";
+import type { OpenClawPluginApi } from "../index.js";
 import { startDashboard } from "../src/dashboard/server.js";
 import type { DashboardConfig } from "../src/config.js";
 import { sessionState } from "../src/session-state.js";
@@ -88,12 +95,16 @@ function collectSSEEvents(url: string, minEvents: number, timeoutMs: number): Pr
 let baseUrl: string;
 
 describe("Dashboard", () => {
+  let dashTmpDir: string;
+
   beforeEach(async () => {
+    dashTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-dash-"));
     sessionState.clear();
     // Init plugin with dashboard disabled (we start dashboard manually with port 0)
     init({
       workspacePath: "/workspace",
       pluginDir: __dirname + "/..",
+      varDir: path.join(dashTmpDir, "var"),
       config: {
         llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-secret-key" },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
@@ -121,13 +132,14 @@ describe("Dashboard", () => {
 
   afterEach(async () => {
     await stopDashboard();
+    fs.rmSync(dashTmpDir, { recursive: true, force: true });
   });
 
   it("GET / returns HTML", async () => {
     const res = await fetch(`${baseUrl}/`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("SecAgent Dashboard");
+    expect(html).toContain("SecLaw Dashboard");
     expect(html).toContain("<!DOCTYPE html>");
   });
 
@@ -375,5 +387,287 @@ describe("Dashboard disabled", () => {
       },
     });
     expect(true).toBe(true);
+  });
+});
+
+describe("Config persistence", () => {
+  let baseUrl: string;
+  let tmpDir: string;
+  let varDir: string;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-persist-"));
+    varDir = path.join(tmpDir, ".openclaw", "seclaw");
+    sessionState.clear();
+
+    init({
+      pluginDir: tmpDir,
+      varDir,
+      config: {
+        llm: { model: "test-model", enabled: true, maxConcurrent: 2, apiKey: "sk-secret" },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "info", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+
+    const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
+    const actualPort = await startDashboard(dashboardConfig, {
+      getConfig: () => ({
+        llm: { model: "test-model", enabled: true, maxConcurrent: 2, apiKey: "sk-secret" },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+        logging: { level: "info" as const, auditJsonl: false },
+        dashboard: dashboardConfig,
+      }),
+      updateConfig: _updateConfig,
+      getAuditLog: () => _getAuditLog(),
+      getRuleEngine: () => _getRuleEngine(),
+      getAsyncQueue: () => _getAsyncQueue(),
+      getAvailableModels: () => [],
+      getWorkspacePath: () => undefined,
+      getVarDir: () => varDir,
+    });
+    baseUrl = `http://127.0.0.1:${actualPort}`;
+  });
+
+  afterEach(async () => {
+    await stopDashboard();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("PUT /api/config persists overrides to config-overrides.json", async () => {
+    const res = await fetch(`${baseUrl}/api/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm: { enabled: false } }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { ok: boolean };
+    expect(data.ok).toBe(true);
+
+    // Verify file exists in varDir
+    const overridePath = path.join(varDir, "config-overrides.json");
+    expect(fs.existsSync(overridePath)).toBe(true);
+
+    // Verify contents
+    const overrides = JSON.parse(fs.readFileSync(overridePath, "utf-8"));
+    expect(overrides.llm.enabled).toBe(false);
+    expect(overrides.llm.model).toBe("test-model");
+
+    // Verify apiKey and endpoint are NOT persisted
+    expect(overrides.llm.apiKey).toBeUndefined();
+    expect(overrides.llm.endpoint).toBeUndefined();
+  });
+
+  it("persists timeout and logging changes alongside llm", async () => {
+    await fetch(`${baseUrl}/api/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ logging: { level: "debug" }, timeouts: { syncAuditMs: 5000 } }),
+    });
+
+    const overridePath = path.join(varDir, "config-overrides.json");
+    const overrides = JSON.parse(fs.readFileSync(overridePath, "utf-8"));
+    expect(overrides.logging.level).toBe("debug");
+    expect(overrides.timeouts.syncAuditMs).toBe(5000);
+  });
+});
+
+describe("Sender labels refresh", () => {
+  let baseUrl: string;
+  let tmpDir: string;
+  let varDir: string;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-test-"));
+    varDir = path.join(tmpDir, ".openclaw", "seclaw");
+    sessionState.clear();
+
+    init({
+      pluginDir: tmpDir,
+      config: {
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-test" },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "info", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+
+    const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
+    const actualPort = await startDashboard(dashboardConfig, {
+      getConfig: () => ({
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-test" },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+        logging: { level: "info" as const, auditJsonl: false },
+        dashboard: dashboardConfig,
+      }),
+      updateConfig: _updateConfig,
+      getAuditLog: () => _getAuditLog(),
+      getRuleEngine: () => _getRuleEngine(),
+      getAsyncQueue: () => _getAsyncQueue(),
+      getAvailableModels: () => [],
+      getWorkspacePath: () => undefined,
+      getVarDir: () => varDir,
+    });
+    baseUrl = `http://127.0.0.1:${actualPort}`;
+  });
+
+  afterEach(async () => {
+    await stopDashboard();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("POST /api/sender-labels/refresh persists labels to var dir", async () => {
+    // Set a sender label on a session
+    sessionState.updateIntentContext("test-session", { senderLabel: "telegram:alice" });
+
+    // Refresh sender labels
+    const refreshRes = await fetch(`${baseUrl}/api/sender-labels/refresh`, { method: "POST" });
+    expect(refreshRes.status).toBe(200);
+    const refreshData = await refreshRes.json() as { labels: string[]; lastRefreshed: string };
+    expect(refreshData.labels).toContain("telegram:alice");
+    expect(refreshData.lastRefreshed).toBeTruthy();
+
+    // Verify file was written to var dir (not workspace)
+    const filePath = path.join(varDir, "sender-labels.json");
+    expect(fs.existsSync(filePath)).toBe(true);
+    const onDisk = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    expect(onDisk.labels).toContain("telegram:alice");
+
+    // GET /api/sender-labels should return the persisted data
+    const getRes = await fetch(`${baseUrl}/api/sender-labels`);
+    expect(getRes.status).toBe(200);
+    const getData = await getRes.json() as { labels: string[]; lastRefreshed: string };
+    expect(getData.labels).toContain("telegram:alice");
+  });
+});
+
+// ─── Runtime model change & provider validation tests ───
+
+describe("Runtime model change via updateConfig", () => {
+  let tmpDir: string;
+
+  function createMockGatewayApi(providers: Record<string, { baseUrl: string; apiKey?: string; models?: Array<{ id: string; name: string }> }>): OpenClawPluginApi {
+    return {
+      id: "test-gateway",
+      name: "Test Gateway",
+      config: {
+        workspace: { dir: "/workspace" },
+        models: { providers },
+      },
+      logger: { info: () => {}, error: () => {}, debug: () => {} },
+      on: () => {},
+      resolvePath: (p: string) => p,
+    };
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-model-"));
+    sessionState.clear();
+  });
+
+  afterEach(async () => {
+    _setGatewayApi(null);
+    await stopDashboard();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects model change to unknown provider with 400 error", () => {
+    const api = createMockGatewayApi({
+      myapi: { baseUrl: "http://localhost:4000/v1", apiKey: "sk-test", models: [{ id: "gpt-5.2", name: "GPT 5.2" }] },
+    });
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: {
+        llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "error", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+    _setGatewayApi(api);
+
+    const result = _updateConfig({ llm: { model: "bogus/gpt-5.2" } });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toBeDefined();
+    expect(result.errors!.some(e => e.includes('provider "bogus" not found'))).toBe(true);
+  });
+
+  it("accepts model change to valid provider and recreates llmCallFn", () => {
+    const api = createMockGatewayApi({
+      myapi: { baseUrl: "http://localhost:4000/v1", apiKey: "sk-test", models: [{ id: "gpt-5.2", name: "GPT 5.2" }] },
+      altapi: { baseUrl: "http://localhost:5000/v1", apiKey: "sk-alt", models: [{ id: "llama-3", name: "Llama 3" }] },
+    });
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: {
+        llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "error", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+    _setGatewayApi(api);
+
+    // Spy on setLLMCallFn to verify it's called during model change
+    const auditor = _getLLMAuditor();
+    const spy = vi.spyOn(auditor, "setLLMCallFn");
+
+    const result = _updateConfig({ llm: { model: "altapi/llama-3" } });
+    expect(result.ok).toBe(true);
+    // updateConfig should have recreated the call function for the new provider
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("recreates llmCallFn when llm.enabled is toggled on at runtime", () => {
+    const api = createMockGatewayApi({
+      myapi: { baseUrl: "http://localhost:4000/v1", apiKey: "sk-test", models: [{ id: "gpt-5.2", name: "GPT 5.2" }] },
+    });
+    // Start with LLM disabled
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: {
+        llm: { model: "myapi/gpt-5.2", enabled: false, maxConcurrent: 1 },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "error", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+    _setGatewayApi(api);
+
+    // Spy on setLLMCallFn to verify it's called when enabling LLM
+    const auditor = _getLLMAuditor();
+    const spy = vi.spyOn(auditor, "setLLMCallFn");
+
+    const result = _updateConfig({ llm: { enabled: true } });
+    expect(result.ok).toBe(true);
+    // updateConfig should have created a call function for the existing model
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("model change to non-provider format (no slash) skips provider validation", () => {
+    const api = createMockGatewayApi({
+      myapi: { baseUrl: "http://localhost:4000/v1", apiKey: "sk-test", models: [{ id: "gpt-5.2", name: "GPT 5.2" }] },
+    });
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: {
+        llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
+        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "error", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+    _setGatewayApi(api);
+
+    // Change to a model without "/" — should not trigger provider validation
+    const result = _updateConfig({ llm: { model: "gpt-4" } });
+    expect(result.ok).toBe(true);
   });
 });

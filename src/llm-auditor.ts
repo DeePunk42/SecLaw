@@ -84,6 +84,14 @@ export class LLMAuditor {
   }
 
   /**
+   * Update config references after runtime config change.
+   */
+  setConfig(config: LLMConfig, timeoutConfig: TimeoutConfig): void {
+    this.config = config;
+    this.timeoutConfig = timeoutConfig;
+  }
+
+  /**
    * Compute a fingerprint for deduplication and caching.
    */
   computeFingerprint(

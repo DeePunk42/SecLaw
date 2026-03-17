@@ -87,7 +87,7 @@ export type AuditLogSubscriber = (entry: AuditLogEntry) => void;
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 type LogLevel = keyof typeof LOG_LEVELS;
 
-const PREFIX = "[sec-agent]";
+const PREFIX = "[seclaw]";
 
 export class AuditLog {
   private config: LoggingConfig;
@@ -188,7 +188,7 @@ export class AuditLog {
       if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true });
       }
-      const logFile = path.join(logDir, "sec-agent-audit.jsonl");
+      const logFile = path.join(logDir, "seclaw-audit.jsonl");
       this.logStream = fs.createWriteStream(logFile, { flags: "a" });
     } catch {
       // Silently fail — audit log is best-effort

@@ -73,7 +73,7 @@ describe("Interrupt", () => {
 
   it("formatDangerAlert produces readable output", () => {
     const alert = formatDangerAlert(report);
-    expect(alert).toContain("[SecAgent] SECURITY ALERT");
+    expect(alert).toContain("[SecLaw] SECURITY ALERT");
     expect(alert).toContain("exec");
     expect(alert).toContain("Catastrophic deletion attempt");
     expect(alert).toContain("Do not execute this command");

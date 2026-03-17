@@ -187,7 +187,7 @@ export interface DashboardConfig {
   host: string;
 }
 
-export interface SecAgentConfig {
+export interface SecLawConfig {
   llm: LLMConfig;
   timeouts: TimeoutConfig;
   logging: LoggingConfig;
@@ -196,9 +196,9 @@ export interface SecAgentConfig {
   agentProfiles?: Record<string, AgentProfileConfig>;
 }
 
-const DEFAULT_CONFIG: SecAgentConfig = {
+const DEFAULT_CONFIG: SecLawConfig = {
   llm: {
-    model: "gpt-5",
+    model: "",
     enabled: true,
     maxConcurrent: 2,
     trustedSenderLabels: ["openclaw-control-ui"],
@@ -225,7 +225,7 @@ const DEFAULT_CONFIG: SecAgentConfig = {
   },
 };
 
-export function loadConfig(partial?: Partial<SecAgentConfig>): SecAgentConfig {
+export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
   if (!partial) return { ...DEFAULT_CONFIG };
   return {
     llm: { ...DEFAULT_CONFIG.llm, ...partial.llm },

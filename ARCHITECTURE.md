@@ -1,8 +1,8 @@
-# SecAgent Architecture
+# SecLaw Architecture
 
 ## Overview
 
-SecAgent is a real-time security audit layer for AI Agent tool calls in OpenClaw. It implements a **unified rule engine** that classifies every tool call into one of three tiers:
+SecLaw is a real-time security audit layer for AI Agent tool calls in OpenClaw. It implements a **unified rule engine** that classifies every tool call into one of three tiers:
 
 - **GREEN** — Allow execution immediately, no audit at all
 - **YELLOW** — Allow execution immediately, run async LLM audit in background
@@ -46,7 +46,8 @@ Tool Call (before_tool_call)
 ## Module Structure
 
 ```
-index.ts                    Plugin entry point, hook registration, source extraction
+index.ts                    Plugin entry point, hook registration, provider resolution,
+                            config persistence, runtime config update
 src/
   config.ts                 Type definitions, configuration schema, defaults
   rule-engine.ts            Unified rule engine (YAML rules → GREEN/YELLOW/RED)
@@ -61,6 +62,7 @@ src/
     server.ts               HTTP server lifecycle (start/stop, routing)
     api.ts                  REST API + SSE endpoint handlers
     html.ts                 Embedded SPA frontend (dark theme, 4 tabs)
+    sender-labels.ts        Sender label registry (scan JSONL logs, persist to JSON)
 rules/
   default.yaml              28 built-in security rules
 ```
@@ -121,7 +123,7 @@ rules/
 
 ## Intent Context
 
-SecAgent tracks agent intent per session to provide LLM auditors with context about what the agent is doing and why.
+SecLaw tracks agent intent per session to provide LLM auditors with context about what the agent is doing and why.
 
 ### Data Model
 
@@ -299,7 +301,7 @@ A GREEN tool call produces **no output** (silent). A YELLOW tool call produces *
 
 ### JSONL File
 
-When `logging.auditJsonl: true`, structured events are written to `sec-agent-audit.jsonl`:
+When `logging.auditJsonl: true`, structured events are written to `seclaw-audit.jsonl`:
 
 | Event Type | Trigger |
 |------------|---------|
@@ -319,18 +321,56 @@ All events carry a `toolCallId` field (when available) that links events from th
 
 ## LLM Gateway Connection
 
-In production, SecAgent connects to the gateway's OpenAI-compatible endpoint:
+SecLaw supports two connection modes for the LLM audit endpoint:
+
+### Provider Resolution (`provider/model` format)
+
+When `llm.model` contains a slash (e.g. `"myapi/gpt-5.2"`), the provider is resolved from `api.config.models.providers`:
 
 ```typescript
-// Created during register() if llm.endpoint is configured
+resolveProviderEndpoint("myapi/gpt-5.2", cfg, api)
+→ providers["myapi"].baseUrl + "/chat/completions"
+→ { endpoint, apiKey: provider.apiKey, modelId: "gpt-5.2" }
+```
+
+This is the primary mode in production — models are configured in the gateway's `openclaw.json` and presented in the dashboard model selector.
+
+### Legacy Endpoint Mode
+
+When the model string has no slash, falls back to `cfg.llm.endpoint` / `cfg.llm.apiKey`. Used for direct endpoint configuration without gateway provider management.
+
+### Call-time Re-resolution
+
+`createGatewayLLMCallFn()` re-resolves the provider at call time (not just at creation time), so runtime model changes via the dashboard take effect immediately without recreating the call function closure.
+
+### HTTP Call
+
+```typescript
 fetch(endpoint, {
   method: "POST",
   headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-  body: JSON.stringify({ model, messages, max_tokens }),
+  body: JSON.stringify({ model: modelId, messages, max_tokens }),
 });
 ```
 
 The response is parsed from OpenAI format: `data.choices[0].message.content`.
+
+## Config Persistence
+
+Dashboard config changes are persisted to `varDir/config-overrides.json` (default `~/.openclaw/seclaw/config-overrides.json`). On next startup, `loadConfigOverrides()` merges the persisted overrides on top of the gateway-provided plugin config.
+
+Persisted fields: `llm` (model, enabled, maxConcurrent, trustedSenderLabels, retry), `timeouts`, `logging`. Sensitive fields (`apiKey`, `endpoint`) are not persisted via dashboard.
+
+### Module-level State
+
+`index.ts` maintains several module-level variables that outlive individual hook calls:
+
+| Variable | Purpose |
+|----------|---------|
+| `config` | Active runtime config singleton |
+| `gatewayApi` | Gateway API reference (set in `register()`), used by `updateConfig()` for provider validation and llmCallFn recreation |
+| `varDir` | Directory for config overrides and sender label registry |
+| `availableModelsProvider` | Lazy function returning model list from gateway providers |
 
 ## Configuration
 
@@ -394,7 +434,7 @@ The response is parsed from OpenAI format: `data.choices[0].message.content`.
 
 ## Writing Custom Rules
 
-Add rules to `.openclaw/sec-agent-rules.yaml` in your workspace:
+Add rules to `.openclaw/seclaw-rules.yaml` in your workspace:
 
 ```yaml
 # Block terraform destroy
@@ -424,7 +464,7 @@ Or via plugin config `rules.extra` array.
 
 ## OpenClaw Plugin Integration
 
-SecAgent registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Override buttons are delivered via the `buttons` field in `beforeToolCall` return values, not via SSE.
+SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Override buttons are delivered via the `buttons` field in `beforeToolCall` return values, not via SSE.
 
 ### Registered Hooks
 
@@ -457,14 +497,14 @@ PluginHookAgentContext { agentId?, sessionKey?, ... }
 
 ### Startup Logging
 
-On initialization, SecAgent logs (info level):
+On initialization, SecLaw logs (info level):
 - LLM connection status (endpoint, model)
 - Rule count, timeout policy
 - Dashboard URL (if enabled)
 
 ## Dashboard (Web UI)
 
-SecAgent includes a built-in web dashboard on port 19198 (configurable) for real-time monitoring and configuration.
+SecLaw includes a built-in web dashboard on port 19198 (configurable) for real-time monitoring and configuration.
 
 ### Server Lifecycle
 
@@ -485,6 +525,9 @@ SecAgent includes a built-in web dashboard on port 19198 (configurable) for real
 | PUT | `/api/config` | Update runtime config (apiKey/endpoint blocked) |
 | GET | `/api/health` | Health check (`{ status: "running" }`) |
 | GET | `/api/rules` | Loaded rule list |
+| GET | `/api/models` | Available models from gateway providers |
+| GET | `/api/sender-labels` | Known sender labels (from persisted registry) |
+| POST | `/api/sender-labels/refresh` | Scan JSONL audit logs for new sender labels |
 
 ### ToolCallRecord Aggregation
 
@@ -526,6 +569,14 @@ The dashboard Audit Log tab shows tool calls as **grouped cards** instead of fla
 - Filters: tier, status (All/Allowed/Blocked/Overridden/Pending), tool name
 - Cards update in-place via SSE (`/api/tool-calls/stream`), preserving expanded state
 
+### Config Editor
+
+The Config tab provides a form-based editor for runtime config. Notable controls:
+
+- **Model selector**: dropdown populated from `/api/models` (gateway providers)
+- **trustedSenderLabels**: custom multi-select checkbox dropdown with "Select all" / "Clear" actions and a refresh button that scans audit logs for new sender labels via `/api/sender-labels/refresh`
+- **Dashboard settings** (port/host/enabled): read-only, requires restart
+
 ### SSE Push Mechanism
 
 - `AuditLog.subscribe(fn)` — callback for raw `AuditLogEntry` events
@@ -538,8 +589,12 @@ The dashboard Audit Log tab shows tool calls as **grouped cards** instead of fla
 
 `PUT /api/config` validates and applies changes to the running config:
 - `logging` changes propagate to `auditLog.setLoggingConfig()`
-- `timeouts` and `llm` settings update the config singleton (read at call time)
+- `timeouts` and `llm` settings update the config singleton and sync to `LLMAuditor.setConfig()`
 - `apiKey` and `endpoint` are blocked from web modification (security boundary)
+- **Provider validation**: model changes in `"provider/model"` format are validated against `gatewayApi.config.models.providers` — unknown providers return 400
+- **LLM call function recreation**: when `llm.model` changes, `createGatewayLLMCallFn()` is called again and the new function wired via `llmAuditor.setLLMCallFn()`
+- **Enable toggle**: if `llm.enabled` is toggled from false to true, the call function is created on the spot
+- **Config persistence**: changes are written to `varDir/config-overrides.json` and reloaded on next `init()`
 
 ### Audit Log Ring Buffer
 

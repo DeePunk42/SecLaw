@@ -1,11 +1,12 @@
 /**
  * Dashboard API endpoint handlers.
- * Routes: /api/logs, /api/logs/stream, /api/config, /api/health, /api/rules
+ * Routes: /api/logs, /api/logs/stream, /api/config, /api/health, /api/rules, /api/models
  */
 
 import type * as http from "node:http";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
+import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
 
 // ─── Helpers ───
 
@@ -54,6 +55,12 @@ export function handleApiRequest(
     handleHealth(res);
   } else if (path === "/api/rules" && method === "GET") {
     handleGetRules(res, deps);
+  } else if (path === "/api/models" && method === "GET") {
+    handleGetModels(res, deps);
+  } else if (path === "/api/sender-labels" && method === "GET") {
+    handleGetSenderLabels(res, deps);
+  } else if (path === "/api/sender-labels/refresh" && method === "POST") {
+    handleRefreshSenderLabels(res, deps);
   } else {
     json(res, 404, { error: "Not found" });
   }
@@ -264,4 +271,37 @@ function handleGetRules(
 ): void {
   const rules = deps.getRuleEngine().getRules();
   json(res, 200, rules);
+}
+
+// ─── GET /api/models ───
+
+function handleGetModels(
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): void {
+  json(res, 200, deps.getAvailableModels());
+}
+
+// ─── GET /api/sender-labels ───
+
+function handleGetSenderLabels(
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): void {
+  const data = readSenderLabels(deps.getVarDir());
+  json(res, 200, data);
+}
+
+// ─── POST /api/sender-labels/refresh ───
+
+async function handleRefreshSenderLabels(
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): Promise<void> {
+  try {
+    const data = await refreshSenderLabels(deps.getVarDir(), deps.getAuditLog(), deps.getWorkspacePath());
+    json(res, 200, data);
+  } catch {
+    json(res, 500, { error: "Failed to refresh sender labels" });
+  }
 }

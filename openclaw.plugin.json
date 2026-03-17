@@ -1,5 +1,5 @@
 {
-  "id": "sec-agent",
+  "id": "seclaw",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -8,11 +8,11 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "model": { "type": "string" },
+          "model": { "type": "string", "description": "Model identifier. Use 'providerName/modelId' format to auto-resolve from openclaw.json models.providers, or a plain model name with endpoint/apiKey for legacy mode." },
           "enabled": { "type": "boolean" },
           "maxConcurrent": { "type": "number" },
-          "endpoint": { "type": "string" },
-          "apiKey": { "type": "string" },
+          "endpoint": { "type": "string", "description": "Legacy fallback: direct LLM endpoint URL. Not needed when using providerName/modelId format." },
+          "apiKey": { "type": "string", "description": "Legacy fallback: API key for the direct endpoint. Not needed when using providerName/modelId format." },
           "promptRecentCalls": { "type": "number" },
           "trustedSenderLabels": { "type": "array", "items": { "type": "string" } },
           "retry": {

@@ -253,6 +253,19 @@ class SessionStateManager {
   }
 
   /**
+   * Collect all non-empty sender labels from active sessions.
+   */
+  getAllSenderLabels(): string[] {
+    const labels: string[] = [];
+    for (const state of this.sessions.values()) {
+      if (state.intentContext.senderLabel) {
+        labels.push(state.intentContext.senderLabel);
+      }
+    }
+    return labels;
+  }
+
+  /**
    * Reset a session (clear all state).
    */
   resetSession(sessionKey: string): void {

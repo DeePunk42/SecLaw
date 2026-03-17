@@ -9,7 +9,7 @@ export function getDashboardHtml(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SecAgent Dashboard</title>
+<title>SecLaw Dashboard</title>
 <style>
 :root {
   --bg: #0f1117;
@@ -169,6 +169,51 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 .toast.success { background: rgba(34,197,94,0.9); color: #fff; }
 .toast.error { background: rgba(239,68,68,0.9); color: #fff; }
 
+/* ─── Multi-Select Checkbox Dropdown ─── */
+.multi-select {
+  position: relative; flex: 1; max-width: 300px;
+}
+.multi-select-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 4px; cursor: pointer; font-size: 12px; font-family: var(--font-mono);
+  color: var(--text); min-height: 30px; user-select: none;
+}
+.multi-select-toggle:hover { border-color: var(--blue); }
+.multi-select.open .multi-select-toggle { border-color: var(--blue); border-radius: 4px 4px 0 0; }
+.multi-select-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.multi-select-arrow { margin-left: 8px; font-size: 10px; color: var(--text-dim); transition: transform 0.15s; }
+.multi-select.open .multi-select-arrow { transform: rotate(180deg); }
+.multi-select-dropdown {
+  display: none; position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--bg-input); border: 1px solid var(--blue); border-top: none;
+  border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; z-index: 50;
+}
+.multi-select.open .multi-select-dropdown { display: block; }
+.multi-select-item {
+  padding: 0;
+}
+.multi-select-item label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; cursor: pointer; font-size: 12px;
+  font-family: var(--font-mono); color: var(--text); width: 100%;
+}
+.multi-select-item label:hover { background: rgba(59,130,246,0.1); }
+.multi-select-item input[type="checkbox"] {
+  width: 14px; height: 14px; accent-color: var(--blue); flex-shrink: 0; cursor: pointer;
+}
+.multi-select-empty {
+  padding: 10px; text-align: center; font-size: 11px; color: var(--text-dim);
+}
+.multi-select-actions {
+  display: flex; gap: 8px; padding: 6px 10px;
+  border-top: 1px solid var(--border); font-size: 11px;
+}
+.multi-select-actions a {
+  color: var(--blue); cursor: pointer; text-decoration: none;
+}
+.multi-select-actions a:hover { text-decoration: underline; }
+
 /* ─── Placeholder pages ─── */
 .placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -180,7 +225,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 </head>
 <body>
 <header>
-  <h1><span class="status-dot"></span>Sec<span>Agent</span> Dashboard</h1>
+  <h1><span class="status-dot"></span>Sec<span>Law</span> Dashboard</h1>
   <span style="font-size:12px;color:var(--text-dim)">127.0.0.1</span>
 </header>
 <nav>
@@ -207,13 +252,16 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <div id="tab-config" class="tab-content">
   <div class="config-section">
     <h3>LLM</h3>
-    <div class="config-field"><label>model</label><input id="cfg-llm-model" type="text"></div>
+    <div class="config-field"><label>model</label><select id="cfg-llm-model"><option value="">— select model —</option></select></div>
     <div class="config-field"><label>enabled</label><input id="cfg-llm-enabled" type="checkbox"></div>
     <div class="config-field"><label>maxConcurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"></div>
-    <div class="config-field"><label>endpoint</label><input id="cfg-llm-endpoint" type="text" ></div>
-    <div class="config-field"><label>apiKey</label><input id="cfg-llm-apiKey" type="text"></div>
+    <details class="config-advanced">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text-dim);margin-bottom:8px">Advanced (legacy fallback)</summary>
+      <div class="config-field"><label>endpoint</label><input id="cfg-llm-endpoint" type="text"></div>
+      <div class="config-field"><label>apiKey</label><input id="cfg-llm-apiKey" type="text"></div>
+    </details>
     <div class="config-field"><label>promptRecentCalls</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"></div>
-    <div class="config-field"><label>trustedSenderLabels</label><input id="cfg-llm-trustedSenderLabels" type="text" placeholder="comma-separated"></div>
+    <div class="config-field"><label>trustedSenderLabels</label><div class="multi-select" id="cfg-llm-trustedSenderLabels"><div class="multi-select-toggle"><span class="multi-select-summary">0 selected</span><span class="multi-select-arrow">&#x25BE;</span></div><div class="multi-select-dropdown"></div></div><button id="btn-refresh-labels" type="button" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;font-size:12px;margin-left:4px" title="Refresh labels from logs">&#x21bb;</button></div>
   </div>
   <div class="config-section">
     <h3>LLM Retry</h3>
@@ -564,19 +612,143 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     };
   }
 
+  // ─── Sender Labels (Multi-Select Checkbox) ───
+  var msContainer = document.getElementById('cfg-llm-trustedSenderLabels');
+  var msToggle = msContainer.querySelector('.multi-select-toggle');
+  var msDropdown = msContainer.querySelector('.multi-select-dropdown');
+
+  msToggle.addEventListener('click', function(e) {
+    e.stopPropagation();
+    msContainer.classList.toggle('open');
+  });
+  document.addEventListener('click', function(e) {
+    if (!msContainer.contains(e.target)) msContainer.classList.remove('open');
+  });
+
+  function getSelectedLabels() {
+    return Array.from(msDropdown.querySelectorAll('input[type="checkbox"]:checked')).map(function(cb) { return cb.value; });
+  }
+
+  function updateSummary() {
+    var sel = getSelectedLabels();
+    var summary = msContainer.querySelector('.multi-select-summary');
+    if (sel.length === 0) summary.textContent = 'None selected';
+    else if (sel.length <= 2) summary.textContent = sel.join(', ');
+    else summary.textContent = sel.length + ' selected';
+  }
+
+  function renderLabelCheckboxes(allLabels, selectedLabels) {
+    msDropdown.innerHTML = '';
+    if (allLabels.length === 0) {
+      msDropdown.innerHTML = '<div class="multi-select-empty">No labels found. Click \\u21bb to scan.</div>';
+      updateSummary();
+      return;
+    }
+    // Select all / none actions
+    var actions = document.createElement('div');
+    actions.className = 'multi-select-actions';
+    var selAll = document.createElement('a');
+    selAll.textContent = 'Select all';
+    selAll.addEventListener('click', function(e) {
+      e.preventDefault();
+      msDropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) { cb.checked = true; });
+      updateSummary();
+    });
+    var selNone = document.createElement('a');
+    selNone.textContent = 'Clear';
+    selNone.addEventListener('click', function(e) {
+      e.preventDefault();
+      msDropdown.querySelectorAll('input[type="checkbox"]').forEach(function(cb) { cb.checked = false; });
+      updateSummary();
+    });
+    actions.appendChild(selAll);
+    actions.appendChild(selNone);
+    msDropdown.appendChild(actions);
+
+    allLabels.forEach(function(label) {
+      var item = document.createElement('div');
+      item.className = 'multi-select-item';
+      var lbl = document.createElement('label');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = label;
+      if (selectedLabels.indexOf(label) !== -1) cb.checked = true;
+      cb.addEventListener('change', updateSummary);
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(label));
+      item.appendChild(lbl);
+      msDropdown.appendChild(item);
+    });
+    updateSummary();
+  }
+
+  function loadSenderLabels(selectedLabels) {
+    fetch('/api/sender-labels')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var allLabels = data.labels || [];
+        selectedLabels.forEach(function(l) {
+          if (l && allLabels.indexOf(l) === -1) allLabels.push(l);
+        });
+        allLabels.sort();
+        renderLabelCheckboxes(allLabels, selectedLabels);
+      })
+      .catch(function() {
+        renderLabelCheckboxes(selectedLabels, selectedLabels);
+      });
+  }
+
+  document.getElementById('btn-refresh-labels').addEventListener('click', function() {
+    var currentSelected = getSelectedLabels();
+    fetch('/api/sender-labels/refresh', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var allLabels = data.labels || [];
+        currentSelected.forEach(function(l) {
+          if (l && allLabels.indexOf(l) === -1) allLabels.push(l);
+        });
+        allLabels.sort();
+        renderLabelCheckboxes(allLabels, currentSelected);
+        showToast('Sender labels refreshed (' + allLabels.length + ' found)', 'success');
+      })
+      .catch(function() { showToast('Failed to refresh sender labels', 'error'); });
+  });
+
   // ─── Config Editor ───
   function loadConfig() {
-    fetch('/api/config')
-      .then(function(r) { return r.json(); })
-      .then(function(cfg) {
+    Promise.all([
+      fetch('/api/config').then(function(r) { return r.json(); }),
+      fetch('/api/models').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    ]).then(function(results) {
+        var cfg = results[0];
+        var models = results[1];
+        // Populate model select
+        var sel = document.getElementById('cfg-llm-model');
+        var currentVal = cfg.llm?.model || '';
+        sel.innerHTML = '<option value="">\\u2014 select model \\u2014</option>';
+        if (Array.isArray(models)) {
+          models.forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m.value;
+            opt.textContent = m.label;
+            sel.appendChild(opt);
+          });
+        }
+        // If current model is not in the list (legacy), add it as an option
+        if (currentVal && !sel.querySelector('option[value="' + currentVal.replace(/"/g, '\\\\"') + '"]')) {
+          var opt = document.createElement('option');
+          opt.value = currentVal;
+          opt.textContent = currentVal + ' (custom)';
+          sel.appendChild(opt);
+        }
+        sel.value = currentVal;
         // LLM
-        document.getElementById('cfg-llm-model').value = cfg.llm?.model || '';
         document.getElementById('cfg-llm-enabled').checked = cfg.llm?.enabled ?? true;
         document.getElementById('cfg-llm-maxConcurrent').value = cfg.llm?.maxConcurrent || 2;
         document.getElementById('cfg-llm-endpoint').value = cfg.llm?.endpoint || '';
         document.getElementById('cfg-llm-apiKey').value = cfg.llm?.apiKey || '';
         document.getElementById('cfg-llm-promptRecentCalls').value = cfg.llm?.promptRecentCalls ?? 3;
-        document.getElementById('cfg-llm-trustedSenderLabels').value = (cfg.llm?.trustedSenderLabels || []).join(', ');
+        loadSenderLabels(cfg.llm?.trustedSenderLabels || []);
         // LLM Retry
         var retry = cfg.llm?.retry || {};
         document.getElementById('cfg-llm-retry-maxRetries').value = retry.maxRetries ?? 2;
@@ -603,8 +775,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   }
 
   document.getElementById('btn-save-config').addEventListener('click', function() {
-    var labels = document.getElementById('cfg-llm-trustedSenderLabels').value
-      .split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    var labels = getSelectedLabels();
 
     // Parse JSON textareas
     var rulesExtra, agentProfiles;

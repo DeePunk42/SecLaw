@@ -1,7 +1,7 @@
 {
-  "name": "@openclaw/sec-agent",
+  "name": "@openclaw/seclaw",
   "version": "0.1.0",
-  "description": "OpenClaw SecAgent - Real-time security audit layer for AI Agent tool calls",
+  "description": "OpenClaw SecLaw - Real-time security audit layer for AI Agent tool calls",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
