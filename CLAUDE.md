@@ -43,7 +43,7 @@ After tool execution (`after_tool_call`), YELLOW and RED calls are enqueued for 
 
 ### Override mechanism
 
-When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field is returned alongside `blockReason` for channel-agnostic inline button rendering (Telegram inline keyboard, Slack buttons, etc.). Trusted senders (`config.llm.trustedSenderLabels`) can reply `SEC_OVERRIDE:<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
+When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field is returned alongside `blockReason` for channel-agnostic inline button rendering (Telegram inline keyboard, Slack buttons, etc.). Trusted senders (`config.llm.trustedSenderLabels`) can reply `/pin<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
 
 ### Module map
 
@@ -55,7 +55,7 @@ When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field
 | `src/llm-auditor.ts` | Builds audit prompts with intent context, calls LLM, parses SAFE/DANGER response. Fingerprint-based caching. |
 | `src/async-audit-queue.ts` | Background queue with deduplication. Re-classifies via rule engine, then LLM audits YELLOW/RED items. |
 | `src/session-state.ts` | Singleton `sessionState`. Per-session danger flags, intent context, audit cache, override state. |
-| `src/intent-context.ts` | Accumulates user goal, sender label, message source from hook events. Detects `SEC_OVERRIDE` commands. |
+| `src/intent-context.ts` | Accumulates user goal, sender label, message source from hook events. Detects `/pin` override commands. |
 | `src/interrupt.ts` | Danger flag lifecycle, interrupt mechanism (`triggerInterrupt` for async danger SSE). |
 | `src/audit-log.ts` | Console + JSONL structured logging, subscriber pattern + ring buffer. |
 | `src/patterns/` | `command-patterns.ts`, `path-patterns.ts`, `url-patterns.ts` — used by rule engine condition matchers. |

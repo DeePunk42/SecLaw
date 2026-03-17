@@ -37,7 +37,7 @@ export function parseUserMessage(raw: string): { userMessage: string; senderLabe
 
 /**
  * Update context when a new user message is received.
- * When trustedSenderLabels is provided, also checks for SEC_OVERRIDE:<pin> commands.
+ * When trustedSenderLabels is provided, also checks for /pin<pin> commands.
  */
 export function onUserMessage(
   sessionKey: string,
@@ -55,7 +55,7 @@ export function onUserMessage(
     // New turn: clear any override from previous turn
     sessionState.clearTurnOverride(sessionKey);
 
-    const match = userMessage.match(/SEC_OVERRIDE:(\d{6})/);
+    const match = userMessage.match(/\/pin(\d{6})/);
     if (match) {
       const pin = match[1].toLowerCase();
       const isTrusted = senderLabel != null && trustedSenderLabels.includes(senderLabel);

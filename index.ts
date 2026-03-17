@@ -180,19 +180,33 @@ function registerPendingOverride(
   return pin;
 }
 
-function formatOverrideHint(pin: string): string {
+function formatOverrideHint(pin: string, showPin: boolean): string {
+  if (!showPin) {
+    return [
+      "",
+      "--- Override ---",
+      "This operation requires approval from a trusted operator.",
+      "Explain the risk to the user and let them decide whether to proceed.",
+    ].join("\n");
+  }
   return [
     "",
     "--- Override ---",
-    `If the user confirms this is intentional, they can reply with: SEC_OVERRIDE:${pin}`,
+    `If the user confirms this is intentional, they can reply with: /pin${pin}`,
     "Explain the risk to the user and let them decide whether to proceed.",
   ].join("\n");
 }
 
 function overrideButtons(pin: string): Array<Array<{ text: string; callback_data: string }>> {
   return [
-    [{ text: "⚠️ Confirm Override", callback_data: `SEC_OVERRIDE:${pin}` }],
+    [{ text: "⚠️ Confirm Override", callback_data: `/pin${pin}` }],
   ];
+}
+
+function isSenderTrusted(sessionKey: string): boolean {
+  const senderLabel = getIntentContext(sessionKey).senderLabel;
+  return senderLabel != null
+    && (config.llm.trustedSenderLabels ?? []).includes(senderLabel);
 }
 
 // ─── Service Error Formatting ───
@@ -490,15 +504,16 @@ export async function beforeToolCall(
 
   // 0. Check for active override grant (matches by toolName; fingerprint kept for audit only)
   if (sessionState.consumeActiveOverride(sessionKey, toolName)) {
-    auditLog.logOverrideUsed(sessionKey, toolName, toolCallId);
-    // Backtrack: also mark the original blocked card as overridden
+    // Backtrack: mark the original blocked card as overridden (dashboard update)
     const activePin = sessionState.getActiveOverridePin(sessionKey);
     if (activePin) {
       const pending = sessionState.getPendingOverride(sessionKey, activePin);
-      if (pending?.toolCallId && pending.toolCallId !== toolCallId) {
+      if (pending?.toolCallId) {
         auditLog.logOverrideUsed(sessionKey, toolName, pending.toolCallId);
       }
     }
+    // Log for JSONL audit trail only (no toolCallId → no ToolCallRecord card)
+    auditLog.logOverrideUsed(sessionKey, toolName);
     consumeDangerFlag(sessionKey);  // clear any lingering danger flag
     return undefined;  // allow
   }
@@ -510,10 +525,11 @@ export async function beforeToolCall(
     const blockReason = formatDangerAlert(dangerReport);
     const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
     auditLog.logBlock(sessionKey, toolName, blockReason, "async", toolCallId, pin);
+    const trusted = isSenderTrusted(sessionKey);
     return {
       block: true,
-      blockReason: blockReason + formatOverrideHint(pin),
-      buttons: overrideButtons(pin),
+      blockReason: blockReason + formatOverrideHint(pin, trusted),
+      ...(trusted ? { buttons: overrideButtons(pin) } : {}),
     };
   }
 
@@ -547,10 +563,11 @@ export async function beforeToolCall(
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
       const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
       auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
+      const trusted = isSenderTrusted(sessionKey);
       return {
         block: true,
-        blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin),
-        buttons: overrideButtons(pin),
+        blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, trusted),
+        ...(trusted ? { buttons: overrideButtons(pin) } : {}),
       };
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
@@ -620,10 +637,11 @@ export async function beforeToolCall(
     const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
     auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
     const blockReason = `[SecLaw] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
+    const trusted = isSenderTrusted(sessionKey);
     return {
       block: true,
-      blockReason: blockReason + formatOverrideHint(pin),
-      buttons: overrideButtons(pin),
+      blockReason: blockReason + formatOverrideHint(pin, trusted),
+      ...(trusted ? { buttons: overrideButtons(pin) } : {}),
     };
   }
 

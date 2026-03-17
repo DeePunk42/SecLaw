@@ -19,7 +19,7 @@ User Message
   │   └─ Updates userGoal / channelId / trigger / agentId / messageProvider
   │
   ├─ Override detection (if trustedSenderLabels configured)
-  │   └─ SEC_OVERRIDE:<pin> from trusted sender → activate override
+  │   └─ /pin<pin> from trusted sender → activate override
   │
 Tool Call (before_tool_call)
   │
@@ -161,17 +161,17 @@ This ensures `userGoal` contains only the user's actual instruction, reducing LL
 
 ## Trusted Sender Override
 
-When a tool call is blocked (sync DANGER, async danger flag, or fail_closed policy), a 6-digit decimal PIN is generated and included in the `blockReason`. Trusted senders can reply `SEC_OVERRIDE:<pin>` to unblock the operation.
+When a tool call is blocked (sync DANGER, async danger flag, or fail_closed policy), a 6-digit decimal PIN is generated and included in the `blockReason`. Trusted senders can reply `/pin<pin>` to unblock the operation.
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons }` with PIN in the hint
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons? }`. If sender is trusted, PIN is shown in hint and `buttons` is included; if untrusted, hint says "requires approval from a trusted operator" with no PIN or buttons
 2. **Channel-agnostic buttons** — The `buttons` field in the return value is a structured button spec (`Array<Array<{ text, callback_data }>>`). The gateway renders it per channel type:
    - **Telegram**: inline keyboard via message action `buttons` field
    - **Slack**: converted to `[[slack_buttons: ...]]` text directive
    - **Discord**: converted to Discord components v2 buttons
-   - **Web/CLI/other**: ignored; the text `blockReason` already contains the `SEC_OVERRIDE:<pin>` instruction
-3. **User confirms** — Sends `SEC_OVERRIDE:<pin>` (text input or button callback — Telegram callbacks deliver `callback_data` as text)
+   - **Web/CLI/other**: ignored; the text `blockReason` already contains the `/pin<pin>` instruction
+3. **User confirms** — Sends `/pin<pin>` (text input or button callback — Telegram callbacks deliver `callback_data` as text)
 4. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 

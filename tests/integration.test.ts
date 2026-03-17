@@ -369,7 +369,7 @@ describe("Integration: LLM service errors", () => {
       onUserMessageEvent(sessionKey, "Build my project");
     });
 
-    it("blocks with SERVICE UNAVAILABLE and STOP, no SEC_OVERRIDE", async () => {
+    it("blocks with SERVICE UNAVAILABLE and STOP, no override hint", async () => {
       const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
       mockLLM.mockRejectedValue(error429);
 
@@ -383,7 +383,7 @@ describe("Integration: LLM service errors", () => {
       expect(result!.block).toBe(true);
       expect(result!.blockReason).toContain("SERVICE UNAVAILABLE");
       expect(result!.blockReason).toContain("STOP");
-      expect(result!.blockReason).not.toContain("SEC_OVERRIDE");
+      expect(result!.blockReason).not.toContain("--- Override ---");
       expect(result!.buttons).toBeUndefined();
     });
   });
@@ -408,7 +408,7 @@ describe("Integration: LLM service errors", () => {
       onUserMessageEvent(sessionKey, "Build my project");
     });
 
-    it("allows with WARNING and STOP, no SEC_OVERRIDE", async () => {
+    it("allows with WARNING and STOP, no override hint", async () => {
       const error429 = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
       mockLLM.mockRejectedValue(error429);
 
@@ -422,7 +422,7 @@ describe("Integration: LLM service errors", () => {
       expect(result!.block).toBe(false);
       expect(result!.blockReason).toContain("WARNING");
       expect(result!.blockReason).toContain("STOP");
-      expect(result!.blockReason).not.toContain("SEC_OVERRIDE");
+      expect(result!.blockReason).not.toContain("--- Override ---");
     });
   });
 
@@ -459,7 +459,7 @@ describe("Integration: LLM service errors", () => {
       expect(result).toBeDefined();
       expect(result!.block).toBe(true);
       expect(result!.blockReason).toContain("authentication error");
-      expect(result!.blockReason).not.toContain("SEC_OVERRIDE");
+      expect(result!.blockReason).not.toContain("--- Override ---");
     });
   });
 

@@ -164,7 +164,7 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    const msg = senderMessage("Alice (admin)", "SEC_OVERRIDE:038291");
+    const msg = senderMessage("Alice (admin)", "/pin038291");
     onUserMessage(sessionKey, msg, trustedLabels);
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
@@ -178,7 +178,7 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    const msg = senderMessage("EvilUser", "SEC_OVERRIDE:038291");
+    const msg = senderMessage("EvilUser", "/pin038291");
     onUserMessage(sessionKey, msg, trustedLabels);
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
@@ -192,7 +192,7 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    const msg = senderMessage("Alice (admin)", "SEC_OVERRIDE:999999");
+    const msg = senderMessage("Alice (admin)", "/pin999999");
     onUserMessage(sessionKey, msg, trustedLabels);
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
@@ -207,7 +207,7 @@ describe("onUserMessage override detection", () => {
     });
 
     // Plain message without Sender metadata
-    onUserMessage(sessionKey, "SEC_OVERRIDE:038291", trustedLabels);
+    onUserMessage(sessionKey, "/pin038291", trustedLabels);
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
   });
@@ -237,7 +237,7 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    const msg = senderMessage("Alice (admin)", "SEC_OVERRIDE:abcdef");
+    const msg = senderMessage("Alice (admin)", "/pinabcdef");
     onUserMessage(sessionKey, msg, trustedLabels);
 
     // Should NOT activate — regex only matches digits
@@ -252,7 +252,7 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    const msg = senderMessage("Alice (admin)", "SEC_OVERRIDE:038291");
+    const msg = senderMessage("Alice (admin)", "/pin038291");
     onUserMessage(sessionKey, msg); // no trustedSenderLabels
 
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
@@ -303,15 +303,15 @@ describe("Integration: Override flow", () => {
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("Dangerous eval command");
     expect(result!.blockReason).toContain("--- Override ---");
-    expect(result!.blockReason).toContain("SEC_OVERRIDE:");
+    expect(result!.blockReason).toContain("/pin");
 
     // Extract PIN from blockReason
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     expect(pinMatch).not.toBeNull();
     const pin = pinMatch![1];
 
     // 4. User sends override command (trusted sender)
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // 5. LLM should NOT be called for the retry (override bypasses)
     mockLLM.mockClear();
@@ -343,14 +343,14 @@ describe("Integration: Override flow", () => {
     const result = await beforeToolCall(event, ctx);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
-    expect(result!.blockReason).toContain("SEC_OVERRIDE:");
+    expect(result!.blockReason).toContain("/pin");
 
     // Extract PIN
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
     // User sends override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // Retry → allowed
     const retryResult = await beforeToolCall(event, ctx);
@@ -371,11 +371,11 @@ describe("Integration: Override flow", () => {
 
     // Block → get PIN
     const result = await beforeToolCall(event, ctx);
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
     // Override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // First call in turn → allowed
     const retry1 = await beforeToolCall(event, ctx);
@@ -409,8 +409,8 @@ describe("Integration: Override flow", () => {
 
     // Block → get PIN → Override → Allow
     const result = await beforeToolCall(event, ctx);
-    const pin = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/)![1];
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    const pin = result!.blockReason!.match(/\/pin(\d{6})/)![1];
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
     const retry1 = await beforeToolCall(event, ctx);
     expect(retry1).toBeUndefined();
 
@@ -440,11 +440,11 @@ describe("Integration: Override flow", () => {
 
     // Block with original params
     const result = await beforeToolCall(event1, ctx);
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
     // Override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // Retry with modified params (LLM simplified) → override SHOULD apply
     const event2: PluginHookBeforeToolCallEvent = {
@@ -472,11 +472,11 @@ describe("Integration: Override flow", () => {
 
     // Block with exec
     const result = await beforeToolCall(event1, ctx);
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
     // Override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // Retry with a DIFFERENT tool → override should NOT apply
     const event2: PluginHookBeforeToolCallEvent = {
@@ -506,11 +506,11 @@ describe("Integration: Override flow", () => {
     };
 
     const result = await beforeToolCall(event, ctx);
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
     // Untrusted sender tries to override
-    onUserMessageEvent(sessionKey, senderMessage("EvilUser", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("EvilUser", `/pin${pin}`));
 
     // Retry → still blocked (LLM called again)
     mockLLM.mockResolvedValue({
@@ -540,7 +540,26 @@ describe("Integration: Override flow", () => {
     expect(result!.buttons!.length).toBe(1);
     expect(result!.buttons![0].length).toBe(1);
     expect(result!.buttons![0][0].text).toContain("Override");
-    expect(result!.buttons![0][0].callback_data).toMatch(/^SEC_OVERRIDE:\d{6}$/);
+    expect(result!.buttons![0][0].callback_data).toMatch(/^\/pin\d{6}$/);
+  });
+
+  it("untrusted sender sees no PIN and no buttons", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Bob", "Do something dangerous"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Blocked"}',
+    });
+
+    const result = await beforeToolCall(
+      { toolName: "exec", params: { command: "rm -rf /" } },
+      ctx,
+    );
+
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.blockReason).toContain("requires approval from a trusted operator");
+    expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
+    expect(result!.buttons).toBeUndefined();
   });
 
   it("override-approved call skips async audit (no spurious danger flag)", async () => {
@@ -557,10 +576,10 @@ describe("Integration: Override flow", () => {
 
     // Block → get PIN
     const result = await beforeToolCall(event, ctx);
-    const pin = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/)![1];
+    const pin = result!.blockReason!.match(/\/pin(\d{6})/)![1];
 
     // Override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // Retry → allowed via override
     const retryResult = await beforeToolCall(event, ctx);
@@ -610,13 +629,13 @@ describe("Integration: fail_closed override flow", () => {
     const result = await beforeToolCall(event, ctx);
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("fail_closed");
-    expect(result!.blockReason).toContain("SEC_OVERRIDE:");
+    expect(result!.blockReason).toContain("/pin");
 
     // Extract PIN and override
-    const pinMatch = result!.blockReason!.match(/SEC_OVERRIDE:(\d{6})/);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `SEC_OVERRIDE:${pin}`));
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
 
     // Retry → allowed
     const retryResult = await beforeToolCall(event, ctx);
