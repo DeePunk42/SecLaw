@@ -1,9 +1,20 @@
 {
-  "name": "@openclaw/seclaw",
+  "name": "@deepunk/seclaw",
   "version": "0.1.0",
   "description": "OpenClaw SecLaw - Real-time security audit layer for AI Agent tool calls",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist/**",
+    "openclaw.plugin.json",
+    "rules/**",
+    "configs/**",
+    "scripts/**",
+    "templates/**"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
