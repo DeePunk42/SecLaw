@@ -557,7 +557,7 @@ describe("Integration: Override flow", () => {
 
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
-    expect(result!.blockReason).toContain("requires approval from a trusted operator");
+    expect(result!.blockReason).toContain("not in llm.trustedSenderLabels");
     expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
     expect(result!.buttons).toBeUndefined();
   });

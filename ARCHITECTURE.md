@@ -321,23 +321,19 @@ All events carry a `toolCallId` field (when available) that links events from th
 
 ## LLM Gateway Connection
 
-SecLaw supports two connection modes for the LLM audit endpoint:
+SecLaw uses provider resolution for the LLM audit endpoint:
 
 ### Provider Resolution (`provider/model` format)
 
 When `llm.model` contains a slash (e.g. `"myapi/gpt-5.2"`), the provider is resolved from `api.config.models.providers`:
 
 ```typescript
-resolveProviderEndpoint("myapi/gpt-5.2", cfg, api)
+resolveProviderEndpoint("myapi/gpt-5.2", api)
 → providers["myapi"].baseUrl + "/chat/completions"
 → { endpoint, apiKey: provider.apiKey, modelId: "gpt-5.2" }
 ```
 
 This is the primary mode in production — models are configured in the gateway's `openclaw.json` and presented in the dashboard model selector.
-
-### Legacy Endpoint Mode
-
-When the model string has no slash, falls back to `cfg.llm.endpoint` / `cfg.llm.apiKey`. Used for direct endpoint configuration without gateway provider management.
 
 ### Call-time Re-resolution
 
@@ -357,9 +353,9 @@ The response is parsed from OpenAI format: `data.choices[0].message.content`.
 
 ## Config Persistence
 
-Dashboard config changes are persisted to `varDir/config-overrides.json` (default `~/.openclaw/seclaw/config-overrides.json`). On next startup, `loadConfigOverrides()` merges the persisted overrides on top of the gateway-provided plugin config.
+Dashboard config changes are persisted directly into `~/.openclaw/openclaw.json` at `plugins.entries.seclaw.config`. `updateConfig()` writes file changes first; runtime config is applied only after successful persistence.
 
-Persisted fields: `llm` (model, enabled, maxConcurrent, trustedSenderLabels, retry), `timeouts`, `logging`. Sensitive fields (`apiKey`, `endpoint`) are not persisted via dashboard.
+If `plugins.entries.seclaw` is missing, persistence auto-creates it. Deprecated fields `llm.apiKey` and `llm.endpoint` are rejected.
 
 ### Module-level State
 
@@ -369,7 +365,7 @@ Persisted fields: `llm` (model, enabled, maxConcurrent, trustedSenderLabels, ret
 |----------|---------|
 | `config` | Active runtime config singleton |
 | `gatewayApi` | Gateway API reference (set in `register()`), used by `updateConfig()` for provider validation and llmCallFn recreation |
-| `varDir` | Directory for config overrides and sender label registry |
+| `varDir` | Directory for sender label registry |
 | `availableModelsProvider` | Lazy function returning model list from gateway providers |
 
 ## Configuration
@@ -590,11 +586,11 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 `PUT /api/config` validates and applies changes to the running config:
 - `logging` changes propagate to `auditLog.setLoggingConfig()`
 - `timeouts` and `llm` settings update the config singleton and sync to `LLMAuditor.setConfig()`
-- `apiKey` and `endpoint` are blocked from web modification (security boundary)
+- `llm.apiKey` and `llm.endpoint` are deprecated and rejected
 - **Provider validation**: model changes in `"provider/model"` format are validated against `gatewayApi.config.models.providers` — unknown providers return 400
 - **LLM call function recreation**: when `llm.model` changes, `createGatewayLLMCallFn()` is called again and the new function wired via `llmAuditor.setLLMCallFn()`
 - **Enable toggle**: if `llm.enabled` is toggled from false to true, the call function is created on the spot
-- **Config persistence**: changes are written to `varDir/config-overrides.json` and reloaded on next `init()`
+- **Config persistence**: changes are written to `~/.openclaw/openclaw.json` before runtime state is updated
 
 ### Audit Log Ring Buffer
 

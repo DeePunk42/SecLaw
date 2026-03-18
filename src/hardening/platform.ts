@@ -47,6 +47,10 @@ export function detectPlatform(): Platform {
 
 /** Get OpenClaw config directory */
 export function getOpenClawDir(): string {
+  const override = process.env.OPENCLAW_HOME;
+  if (override && override.trim()) {
+    return override;
+  }
   if (platform() === "win32") {
     return join(process.env.USERPROFILE || homedir(), ".openclaw");
   }

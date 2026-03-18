@@ -25,6 +25,7 @@ export interface DashboardDeps {
   getAvailableModels: () => ModelOption[];
   getWorkspacePath: () => string | undefined;
   getVarDir: () => string;
+  getOpenClawDir: () => string;
 }
 
 let server: http.Server | null = null;

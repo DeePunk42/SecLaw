@@ -28,26 +28,25 @@ npm run build
 
 ```json
 {
-  "plugins": [
-    {
-      "id": "seclaw",
-      "path": "./extensions/seclaw",
-      "config": {
-        "llm": {
-          "model": "your-provider/your-model",
-          "enabled": true
+  "plugins": {
+    "entries": {
+      "seclaw": {
+        "enabled": true,
+        "config": {
+          "llm": {
+            "model": "your-provider/your-model",
+            "enabled": true
+          }
         }
       }
     }
-  ]
+  }
 }
 ```
 
 **第三步：配置 LLM 审计模型**
 
-SecLaw 支持两种 LLM 连接方式：
-
-*方式 A：Provider 模式（推荐）*
+SecLaw 使用 Provider 模式（`provider/model`）：
 
 使用 `provider/model` 格式，自动从 OpenClaw 网关的 `models.providers` 配置中解析端点和密钥：
 
@@ -73,20 +72,6 @@ SecLaw 支持两种 LLM 连接方式：
         ]
       }
     }
-  }
-}
-```
-
-*方式 B：直连模式（Legacy）*
-
-直接指定端点和密钥：
-
-```json
-{
-  "llm": {
-    "model": "gpt-4o",
-    "endpoint": "https://api.openai.com/v1/chat/completions",
-    "apiKey": "sk-..."
   }
 }
 ```
@@ -204,7 +189,7 @@ http://127.0.0.1:19198
 - **日志设置**：日志级别、JSONL 开关
 - **仪表盘设置**（只读）：端口/地址/开关，修改需重启生效
 
-> 安全边界：`apiKey` 和 `endpoint` 不可通过仪表盘修改。配置变更会持久化到 `~/.openclaw/seclaw/config-overrides.json`，下次启动自动加载。
+> 配置变更会直接写入 `~/.openclaw/openclaw.json` 的 `plugins.entries.seclaw.config`。`llm.apiKey` 与 `llm.endpoint` 已废弃并移除。
 
 #### Health（健康检查）
 

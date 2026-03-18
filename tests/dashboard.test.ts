@@ -94,11 +94,37 @@ function collectSSEEvents(url: string, minEvents: number, timeoutMs: number): Pr
 
 let baseUrl: string;
 
+function writeOpenClawConfig(openClawDir: string, data: Record<string, unknown>): string {
+  fs.mkdirSync(openClawDir, { recursive: true });
+  const configPath = path.join(openClawDir, "openclaw.json");
+  fs.writeFileSync(configPath, JSON.stringify(data, null, 2), "utf-8");
+  return configPath;
+}
+
 describe("Dashboard", () => {
   let dashTmpDir: string;
+  let prevOpenClawHome: string | undefined;
+  let openClawDir: string;
 
   beforeEach(async () => {
     dashTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-dash-"));
+    openClawDir = path.join(dashTmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    writeOpenClawConfig(openClawDir, {
+      plugins: {
+        entries: {
+          seclaw: {
+            config: {
+              llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
+              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              logging: { level: "info", auditJsonl: false },
+              dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+            },
+          },
+        },
+      },
+    });
     sessionState.clear();
     // Init plugin with dashboard disabled (we start dashboard manually with port 0)
     init({
@@ -106,7 +132,7 @@ describe("Dashboard", () => {
       pluginDir: __dirname + "/..",
       varDir: path.join(dashTmpDir, "var"),
       config: {
-        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-secret-key" },
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
@@ -117,7 +143,7 @@ describe("Dashboard", () => {
     const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
     const actualPort = await startDashboard(dashboardConfig, {
       getConfig: () => ({
-        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-secret-key" },
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
         logging: { level: "info" as const, auditJsonl: false },
         dashboard: dashboardConfig,
@@ -133,6 +159,7 @@ describe("Dashboard", () => {
   afterEach(async () => {
     await stopDashboard();
     fs.rmSync(dashTmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
   });
 
   it("GET / returns HTML", async () => {
@@ -157,12 +184,13 @@ describe("Dashboard", () => {
     expect(Array.isArray(data)).toBe(true);
   });
 
-  it("GET /api/config returns config with masked apiKey", async () => {
+  it("GET /api/config returns runtime config", async () => {
     const res = await fetch(`${baseUrl}/api/config`);
     expect(res.status).toBe(200);
     const data = await res.json() as any;
     expect(data.llm.model).toBe("test-model");
-    expect(data.llm.apiKey).toBe("***");
+    expect(data.llm.apiKey).toBeUndefined();
+    expect(data.llm.endpoint).toBeUndefined();
     expect(data.llm.enabled).toBe(false);
   });
 
@@ -195,7 +223,7 @@ describe("Dashboard", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ llm: { apiKey: "new-key" } }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
   });
 
   it("PUT /api/config rejects endpoint modification", async () => {
@@ -204,7 +232,7 @@ describe("Dashboard", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ llm: { endpoint: "http://evil.com" } }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
   });
 
   it("GET /api/logs/stream establishes SSE connection", async () => {
@@ -394,17 +422,36 @@ describe("Config persistence", () => {
   let baseUrl: string;
   let tmpDir: string;
   let varDir: string;
+  let prevOpenClawHome: string | undefined;
+  let openClawDir: string;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-persist-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
     varDir = path.join(tmpDir, ".openclaw", "seclaw");
+    writeOpenClawConfig(openClawDir, {
+      plugins: {
+        entries: {
+          seclaw: {
+            config: {
+              llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
+              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              logging: { level: "info", auditJsonl: false },
+              dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+            },
+          },
+        },
+      },
+    });
     sessionState.clear();
 
     init({
       pluginDir: tmpDir,
       varDir,
       config: {
-        llm: { model: "test-model", enabled: true, maxConcurrent: 2, apiKey: "sk-secret" },
+        llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
@@ -414,7 +461,7 @@ describe("Config persistence", () => {
     const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
     const actualPort = await startDashboard(dashboardConfig, {
       getConfig: () => ({
-        llm: { model: "test-model", enabled: true, maxConcurrent: 2, apiKey: "sk-secret" },
+        llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
         logging: { level: "info" as const, auditJsonl: false },
         dashboard: dashboardConfig,
@@ -433,9 +480,10 @@ describe("Config persistence", () => {
   afterEach(async () => {
     await stopDashboard();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
   });
 
-  it("PUT /api/config persists overrides to config-overrides.json", async () => {
+  it("PUT /api/config persists into ~/.openclaw/openclaw.json", async () => {
     const res = await fetch(`${baseUrl}/api/config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -445,31 +493,27 @@ describe("Config persistence", () => {
     const data = await res.json() as { ok: boolean };
     expect(data.ok).toBe(true);
 
-    // Verify file exists in varDir
-    const overridePath = path.join(varDir, "config-overrides.json");
-    expect(fs.existsSync(overridePath)).toBe(true);
-
-    // Verify contents
-    const overrides = JSON.parse(fs.readFileSync(overridePath, "utf-8"));
-    expect(overrides.llm.enabled).toBe(false);
-    expect(overrides.llm.model).toBe("test-model");
-
-    // Verify apiKey and endpoint are NOT persisted
-    expect(overrides.llm.apiKey).toBeUndefined();
-    expect(overrides.llm.endpoint).toBeUndefined();
+    const openClawPath = path.join(openClawDir, "openclaw.json");
+    const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
+    expect(saved.plugins.entries.seclaw.config.llm.enabled).toBe(false);
+    expect(saved.plugins.entries.seclaw.config.llm.model).toBe("test-model");
+    expect(saved.plugins.entries.seclaw.config.llm.apiKey).toBeUndefined();
+    expect(saved.plugins.entries.seclaw.config.llm.endpoint).toBeUndefined();
   });
 
-  it("persists timeout and logging changes alongside llm", async () => {
+  it("creates seclaw entry when plugins has no seclaw item", async () => {
+    const openClawPath = path.join(openClawDir, "openclaw.json");
+    fs.writeFileSync(openClawPath, JSON.stringify({ plugins: { allow: [] } }, null, 2), "utf-8");
+
     await fetch(`${baseUrl}/api/config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ logging: { level: "debug" }, timeouts: { syncAuditMs: 5000 } }),
     });
 
-    const overridePath = path.join(varDir, "config-overrides.json");
-    const overrides = JSON.parse(fs.readFileSync(overridePath, "utf-8"));
-    expect(overrides.logging.level).toBe("debug");
-    expect(overrides.timeouts.syncAuditMs).toBe(5000);
+    const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
+    expect(saved.plugins.entries.seclaw.config.logging.level).toBe("debug");
+    expect(saved.plugins.entries.seclaw.config.timeouts.syncAuditMs).toBe(5000);
   });
 });
 
@@ -486,7 +530,7 @@ describe("Sender labels refresh", () => {
     init({
       pluginDir: tmpDir,
       config: {
-        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-test" },
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
@@ -496,7 +540,7 @@ describe("Sender labels refresh", () => {
     const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
     const actualPort = await startDashboard(dashboardConfig, {
       getConfig: () => ({
-        llm: { model: "test-model", enabled: false, maxConcurrent: 1, apiKey: "sk-test" },
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
         timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
         logging: { level: "info" as const, auditJsonl: false },
         dashboard: dashboardConfig,
@@ -546,6 +590,8 @@ describe("Sender labels refresh", () => {
 
 describe("Runtime model change via updateConfig", () => {
   let tmpDir: string;
+  let prevOpenClawHome: string | undefined;
+  let openClawDir: string;
 
   function createMockGatewayApi(providers: Record<string, { baseUrl: string; apiKey?: string; models?: Array<{ id: string; name: string }> }>): OpenClawPluginApi {
     return {
@@ -563,6 +609,23 @@ describe("Runtime model change via updateConfig", () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-model-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    writeOpenClawConfig(openClawDir, {
+      plugins: {
+        entries: {
+          seclaw: {
+            config: {
+              llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
+              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              logging: { level: "error", auditJsonl: false },
+              dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+            },
+          },
+        },
+      },
+    });
     sessionState.clear();
   });
 
@@ -570,6 +633,7 @@ describe("Runtime model change via updateConfig", () => {
     _setGatewayApi(null);
     await stopDashboard();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
   });
 
   it("rejects model change to unknown provider with 400 error", () => {
@@ -669,5 +733,21 @@ describe("Runtime model change via updateConfig", () => {
     // Change to a model without "/" — should not trigger provider validation
     const result = _updateConfig({ llm: { model: "gpt-4" } });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("Deprecated llm config fields", () => {
+  it("throws on init when llm.endpoint/apiKey are present", () => {
+    expect(() => init({
+      pluginDir: __dirname + "/..",
+      config: {
+        llm: {
+          model: "myapi/gpt-5.2",
+          enabled: true,
+          maxConcurrent: 1,
+          endpoint: "http://example.invalid",
+        } as any,
+      },
+    })).toThrow(/Deprecated config field/);
   });
 });

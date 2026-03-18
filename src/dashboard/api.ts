@@ -7,6 +7,27 @@ import type * as http from "node:http";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
+import {
+  detectPlatform,
+  runAllChecks,
+  generateSummary,
+  backupConfig,
+  deployConfig,
+  hardenPermissions,
+  generateBaseline,
+  hardenNpmrc,
+  initGitBackup,
+  runSchemaValidation,
+  runSecurityAudit,
+  deployChannelHint,
+  deployAgents,
+  immutableProtect,
+  configureFirewall,
+  checkDiskEncryption,
+  deployAuditScript,
+  deployVerifyHint,
+} from "../hardening/index.js";
+import type { HardenResult, HardeningReport } from "../hardening/index.js";
 
 // ─── Helpers ───
 
@@ -22,10 +43,6 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
-}
-
-function maskApiKey(value: unknown): string {
-  return typeof value === "string" && value.length > 0 ? "***" : "";
 }
 
 // ─── Main Router ───
@@ -51,6 +68,12 @@ export function handleApiRequest(
     handleGetConfig(res, deps);
   } else if (path === "/api/config" && method === "PUT") {
     handleUpdateConfig(req, res, deps);
+  } else if (path === "/api/health/scan" && method === "GET") {
+    handleHealthScan(res, deps);
+  } else if (path === "/api/health/harden" && method === "POST") {
+    handleHealthHarden(req, res, deps);
+  } else if (path === "/api/health/report" && method === "GET") {
+    handleHealthReport(res, deps);
   } else if (path === "/api/health" && method === "GET") {
     handleHealth(res);
   } else if (path === "/api/rules" && method === "GET") {
@@ -218,15 +241,7 @@ function handleGetConfig(
   deps: DashboardDeps,
 ): void {
   const config = deps.getConfig();
-  const sanitized = {
-    ...config,
-    llm: {
-      ...config.llm,
-      apiKey: maskApiKey(config.llm.apiKey),
-      endpoint: config.llm.endpoint,
-    },
-  };
-  json(res, 200, sanitized);
+  json(res, 200, config);
 }
 
 // ─── PUT /api/config ───
@@ -240,9 +255,9 @@ async function handleUpdateConfig(
     const body = await readBody(req);
     const partial = JSON.parse(body);
 
-    // Security boundary: block apiKey/endpoint changes via web
+    // Deprecated fields are no longer supported
     if (partial.llm?.apiKey !== undefined || partial.llm?.endpoint !== undefined) {
-      json(res, 403, { error: "Cannot modify apiKey or endpoint via dashboard" });
+      json(res, 400, { ok: false, errors: ["llm.apiKey and llm.endpoint are no longer supported"] });
       return;
     }
 
@@ -303,5 +318,103 @@ async function handleRefreshSenderLabels(
     json(res, 200, data);
   } catch {
     json(res, 500, { error: "Failed to refresh sender labels" });
+  }
+}
+
+// ─── GET /api/health/scan ───
+
+function handleHealthScan(
+  res: http.ServerResponse,
+  _deps: DashboardDeps,
+): void {
+  try {
+    const platform = detectPlatform();
+    const checks = runAllChecks(platform);
+    const summary = generateSummary(checks);
+    json(res, 200, { summary, checks, platform });
+  } catch (err: any) {
+    json(res, 500, { error: `Scan failed: ${err.message}` });
+  }
+}
+
+// ─── POST /api/health/harden ───
+
+const HIGH_RISK_ACTIONS = new Set([
+  "firewall",
+  "immutable-protect",
+  "deploy-config",
+  "permissions",
+]);
+
+const HARDEN_ACTIONS: Record<
+  string,
+  (mode?: "paranoid" | "balanced") => HardenResult
+> = {
+  backup: () => backupConfig(),
+  "deploy-config": (mode) => deployConfig(mode || "balanced"),
+  permissions: () => hardenPermissions(detectPlatform()),
+  baseline: () => generateBaseline(),
+  npmrc: () => hardenNpmrc(),
+  "git-backup": () => initGitBackup(),
+  validate: () => runSchemaValidation(),
+  audit: () => runSecurityAudit(),
+  "channel-hint": () => deployChannelHint(),
+  "deploy-agents": () => deployAgents(),
+  "immutable-protect": () => immutableProtect(detectPlatform()),
+  firewall: () => configureFirewall(detectPlatform()),
+  "disk-encryption": () => checkDiskEncryption(detectPlatform()),
+  "deploy-audit": () => deployAuditScript(),
+  "verify-hint": () => deployVerifyHint(),
+};
+
+async function handleHealthHarden(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  _deps: DashboardDeps,
+): Promise<void> {
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body);
+    const action: string = parsed.action;
+    const mode: "paranoid" | "balanced" | undefined = parsed.mode;
+
+    if (!action || !HARDEN_ACTIONS[action]) {
+      json(res, 400, {
+        error: `Unknown action: ${action}`,
+        available: Object.keys(HARDEN_ACTIONS),
+      });
+      return;
+    }
+
+    const result = HARDEN_ACTIONS[action](mode);
+    json(res, 200, {
+      ...result,
+      highRisk: HIGH_RISK_ACTIONS.has(action),
+    });
+  } catch (err: any) {
+    json(res, 400, { error: `Invalid request: ${err.message}` });
+  }
+}
+
+// ─── GET /api/health/report ───
+
+function handleHealthReport(
+  res: http.ServerResponse,
+  _deps: DashboardDeps,
+): void {
+  try {
+    const platform = detectPlatform();
+    const checks = runAllChecks(platform);
+    const summary = generateSummary(checks);
+    const report: HardeningReport = {
+      timestamp: new Date().toISOString(),
+      platform,
+      mode: "balanced",
+      checks,
+      summary,
+    };
+    json(res, 200, report);
+  } catch (err: any) {
+    json(res, 500, { error: `Report generation failed: ${err.message}` });
   }
 }

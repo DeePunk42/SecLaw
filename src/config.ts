@@ -152,10 +152,6 @@ export interface LLMConfig {
   model: string;
   enabled: boolean;
   maxConcurrent: number;
-  /** Gateway internal endpoint for LLM calls (e.g. "http://127.0.0.1:3000/v1/chat/completions") */
-  endpoint?: string;
-  /** Auth token for the gateway endpoint */
-  apiKey?: string;
   /** Number of recent tool calls to include in the LLM audit prompt (default 3) */
   promptRecentCalls?: number;
   /** Trusted sender labels; operations from other senders get extra scrutiny */

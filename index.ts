@@ -34,6 +34,7 @@ import {
   updateSource,
 } from "./src/intent-context.js";
 import { startDashboard, stopDashboard, type ModelOption } from "./src/dashboard/server.js";
+import { getOpenClawDir } from "./src/hardening/platform.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
 
@@ -185,8 +186,9 @@ function formatOverrideHint(pin: string, showPin: boolean): string {
     return [
       "",
       "--- Override ---",
-      "This operation requires approval from a trusted operator.",
-      "Explain the risk to the user and let them decide whether to proceed.",
+      "The current sender is not in llm.trustedSenderLabels, so override PIN approval is unavailable.",
+      "If this sender should be trusted, add it to llm.trustedSenderLabels in plugin config.",
+      "Explain the risk to the user and ask them to update plugin configuration if needed.",
     ].join("\n");
   }
   return [
@@ -271,13 +273,11 @@ export interface PluginInitContext {
 }
 
 export function init(ctx: PluginInitContext): void {
+  assertNoDeprecatedLLMConfig(ctx.config);
   config = loadConfig(ctx.config);
   const pluginDir = ctx.pluginDir || getDirname();
   workspacePath = ctx.workspacePath;
   varDir = ctx.varDir || path.join(os.homedir(), ".openclaw", "seclaw");
-
-  // Merge persisted dashboard overrides (if any)
-  loadConfigOverrides();
 
   ruleEngine = new RuleEngine();
   const defaultRulesPath = path.join(pluginDir, "rules", "default.yaml");
@@ -320,6 +320,7 @@ export function init(ctx: PluginInitContext): void {
       getAvailableModels: () => availableModelsProvider?.() ?? [],
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
+      getOpenClawDir: () => getOpenClawDir(),
     }).catch(() => {
       // Best-effort — dashboard failure shouldn't block the plugin
     });
@@ -328,45 +329,78 @@ export function init(ctx: PluginInitContext): void {
 
 // ─── Config Persistence Helpers ───
 
-function persistConfigOverrides(): void {
-  try {
-    const overrides: Record<string, unknown> = {
-      llm: {
-        model: config.llm.model,
-        enabled: config.llm.enabled,
-        maxConcurrent: config.llm.maxConcurrent,
-        trustedSenderLabels: config.llm.trustedSenderLabels,
-        retry: config.llm.retry,
-      },
-      timeouts: { ...config.timeouts },
-      logging: { ...config.logging },
-    };
-    fs.mkdirSync(varDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(varDir, "config-overrides.json"),
-      JSON.stringify(overrides, null, 2),
-    );
-  } catch (err) {
-    console.error("[seclaw] Failed to persist config overrides:", err);
-  }
+function assertNoDeprecatedLLMConfig(partial?: Partial<SecLawConfig>): void {
+  const llm = (partial as { llm?: Record<string, unknown> } | undefined)?.llm;
+  if (!llm || typeof llm !== "object") return;
+
+  const deprecated: string[] = [];
+  if ("apiKey" in llm) deprecated.push("llm.apiKey");
+  if ("endpoint" in llm) deprecated.push("llm.endpoint");
+  if (deprecated.length === 0) return;
+
+  throw new Error(
+    `[seclaw] Deprecated config field(s): ${deprecated.join(", ")}. ` +
+    "Remove them from openclaw.json and use provider/model configuration only.",
+  );
 }
 
-function loadConfigOverrides(): void {
+function upsertSecLawPluginConfig(
+  openClawConfig: Record<string, unknown>,
+  seclawConfig: SecLawConfig,
+): Record<string, unknown> {
+  const next = { ...openClawConfig };
+  const pluginsObj = (
+    next.plugins &&
+    typeof next.plugins === "object" &&
+    !Array.isArray(next.plugins)
+  )
+    ? { ...(next.plugins as Record<string, unknown>) }
+    : {};
+  const entriesObj = (
+    pluginsObj.entries &&
+    typeof pluginsObj.entries === "object" &&
+    !Array.isArray(pluginsObj.entries)
+  )
+    ? { ...(pluginsObj.entries as Record<string, unknown>) }
+    : {};
+  const seclawEntry = (
+    entriesObj.seclaw &&
+    typeof entriesObj.seclaw === "object" &&
+    !Array.isArray(entriesObj.seclaw)
+  )
+    ? { ...(entriesObj.seclaw as Record<string, unknown>) }
+    : {};
+
+  seclawEntry.config = seclawConfig;
+  entriesObj.seclaw = seclawEntry;
+  pluginsObj.entries = entriesObj;
+  next.plugins = pluginsObj;
+  return next;
+}
+
+function persistConfigToOpenClaw(nextConfig: SecLawConfig): { ok: boolean; error?: string } {
+  const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
   try {
-    const overridePath = path.join(varDir, "config-overrides.json");
-    const raw = fs.readFileSync(overridePath, "utf-8");
-    const overrides = JSON.parse(raw);
-    if (overrides.llm) {
-      config.llm = { ...config.llm, ...overrides.llm };
+    const raw = fs.readFileSync(openClawPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: `Invalid openclaw.json format at ${openClawPath}` };
     }
-    if (overrides.timeouts) {
-      config.timeouts = { ...config.timeouts, ...overrides.timeouts };
+    if (Array.isArray((parsed as Record<string, unknown>).plugins)) {
+      return {
+        ok: false,
+        error:
+          "Unsupported openclaw.json format: plugins must be an object with plugins.entries.<id>, not an array.",
+      };
     }
-    if (overrides.logging) {
-      config.logging = { ...config.logging, ...overrides.logging };
-    }
-  } catch {
-    // No overrides file or unreadable — use gateway config as-is
+    const updated = upsertSecLawPluginConfig(parsed as Record<string, unknown>, nextConfig);
+    fs.writeFileSync(openClawPath, JSON.stringify(updated, null, 2), "utf-8");
+    return { ok: true };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `Failed to persist seclaw config to ${openClawPath}: ${err.message}`,
+    };
   }
 }
 
@@ -376,6 +410,12 @@ function updateConfig(
   partial: Partial<SecLawConfig>,
 ): { ok: boolean; errors?: string[] } {
   const errors: string[] = [];
+  const llmPartial = (partial as { llm?: Record<string, unknown> }).llm;
+  if (llmPartial && typeof llmPartial === "object") {
+    if ("apiKey" in llmPartial || "endpoint" in llmPartial) {
+      errors.push("llm.apiKey and llm.endpoint are no longer supported");
+    }
+  }
 
   // Validate & apply llm changes
   if (partial.llm) {
@@ -449,15 +489,20 @@ function updateConfig(
   // Capture pre-change state for enable toggle detection
   const wasLLMEnabled = config.llm.enabled;
 
-  // Apply changes
-  if (partial.llm) {
-    config.llm = { ...config.llm, ...partial.llm };
+  const nextConfig: SecLawConfig = {
+    ...config,
+    llm: partial.llm ? { ...config.llm, ...partial.llm } : config.llm,
+    timeouts: partial.timeouts ? { ...config.timeouts, ...partial.timeouts } : config.timeouts,
+    logging: partial.logging ? { ...config.logging, ...partial.logging } : config.logging,
+  };
+
+  const persistResult = persistConfigToOpenClaw(nextConfig);
+  if (!persistResult.ok) {
+    return { ok: false, errors: [persistResult.error || "Failed to persist config"] };
   }
-  if (partial.timeouts) {
-    config.timeouts = { ...config.timeouts, ...partial.timeouts };
-  }
+
+  config = nextConfig;
   if (partial.logging) {
-    config.logging = { ...config.logging, ...partial.logging };
     auditLog.setLoggingConfig(config.logging);
   }
 
@@ -481,9 +526,6 @@ function updateConfig(
       llmAuditor.setLLMCallFn(newCallFn);
     }
   }
-
-  // Persist overrides to varDir (exclude apiKey/endpoint for security)
-  persistConfigOverrides();
 
   return { ok: true };
 }
@@ -732,23 +774,15 @@ function register(api: OpenClawPluginApi): void {
   // Route all seclaw log output through the gateway's logger
   auditLog.setExternalLogger(api.logger);
 
-  // ─── Wire up LLM call function via gateway's OpenAI-compatible endpoint ───
+  // ─── Wire up LLM call function via gateway providers ───
   gatewayApi = api;
   if (config.llm.enabled) {
     const llmCallFn = createGatewayLLMCallFn(config, api);
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
-      const isProviderMode = config.llm.model.includes("/");
-      if (isProviderMode) {
-        api.logger.info("[seclaw] 🚀 LLM connected via provider config",
-          `model=${config.llm.model}`,
-        );
-      } else {
-        api.logger.info("[seclaw] 🚀 LLM connected",
-          `endpoint=${config.llm.endpoint || "(gateway internal)"}`,
-          `model=${config.llm.model}`,
-        );
-      }
+      api.logger.info("[seclaw] 🚀 LLM connected via provider config",
+        `model=${config.llm.model}`,
+      );
     } else {
       if (config.llm.model.includes("/")) {
         const providerName = config.llm.model.slice(0, config.llm.model.indexOf("/"));
@@ -757,11 +791,11 @@ function register(api: OpenClawPluginApi): void {
           "RED operations will pass without real LLM audit.");
       } else if (!config.llm.model) {
         api.logger.error("[seclaw] ⚠️ LLM enabled but no model configured -- " +
-          "select a model in Dashboard or set llm.model in plugin config. " +
+          "set llm.model as provider/model in plugin config. " +
           "RED operations will pass without real LLM audit.");
       } else {
-        api.logger.error("[seclaw] ⚠️ LLM enabled but no endpoint configured -- " +
-          "set llm.endpoint and llm.apiKey in plugin config, or use provider/model format. " +
+        api.logger.error("[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
+          "set llm.model as provider/model in plugin config. " +
           "RED operations will pass without real LLM audit.");
       }
     }
@@ -832,15 +866,13 @@ function register(api: OpenClawPluginApi): void {
 }
 
 /**
- * Resolve endpoint and apiKey for an LLM call.
+ * Resolve provider endpoint and apiKey for an LLM call.
  *
- * If the model string contains "/" (e.g. "myapi/gpt-5.2"), resolves
- * the provider from api.config.models.providers and constructs the endpoint.
- * Otherwise falls back to cfg.llm.endpoint / cfg.llm.apiKey.
+ * The model string must contain "/" (e.g. "myapi/gpt-5.2"), where
+ * provider config is resolved from api.config.models.providers.
  */
 function resolveProviderEndpoint(
   model: string,
-  cfg: SecLawConfig,
   api: OpenClawPluginApi,
 ): { endpoint: string; apiKey?: string; modelId: string } | null {
   if (model.includes("/")) {
@@ -855,21 +887,18 @@ function resolveProviderEndpoint(
     }
     return { endpoint, apiKey: provider.apiKey, modelId };
   }
-
-  // Fallback: legacy cfg.llm.endpoint / cfg.llm.apiKey
-  if (!cfg.llm.endpoint) return null;
-  return { endpoint: cfg.llm.endpoint, apiKey: cfg.llm.apiKey, modelId: model };
+  return null;
 }
 
 /**
  * Create an LLM call function that calls the gateway's OpenAI-compatible endpoint.
- * Returns null if no endpoint is configured and model cannot be resolved via providers.
+ * Returns null when the model cannot be resolved via providers.
  */
 function createGatewayLLMCallFn(
   cfg: SecLawConfig,
   api: OpenClawPluginApi,
 ): LLMCallFn | null {
-  const resolved = resolveProviderEndpoint(cfg.llm.model, cfg, api);
+  const resolved = resolveProviderEndpoint(cfg.llm.model, api);
 
   if (!resolved) {
     return null;
@@ -877,7 +906,7 @@ function createGatewayLLMCallFn(
 
   return async (params) => {
     // Re-resolve at call time in case config.llm.model changed at runtime
-    const current = resolveProviderEndpoint(params.model, cfg, api) ?? resolved;
+    const current = resolveProviderEndpoint(params.model, api) ?? resolved;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

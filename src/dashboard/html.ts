@@ -214,6 +214,121 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 }
 .multi-select-actions a:hover { text-decoration: underline; }
 
+/* ─── Health Tab ─── */
+.health-header {
+  background: var(--bg-card); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+}
+.health-header-top {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+}
+.health-header-top h2 { font-size: 16px; font-weight: 600; }
+.health-header-top .health-actions { display: flex; gap: 8px; }
+.health-btn {
+  padding: 6px 14px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; cursor: pointer; font-size: 12px; font-family: var(--font-ui);
+}
+.health-btn:hover { background: var(--border); }
+.health-btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.health-btn.primary:hover { opacity: 0.9; }
+.score-bar-container { margin-bottom: 8px; }
+.score-bar {
+  height: 8px; border-radius: 4px; background: var(--bg-input); overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%; border-radius: 4px; transition: width 0.5s ease;
+}
+.score-label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.score-label .score-value { font-size: 28px; font-weight: 700; font-family: var(--font-mono); }
+.score-label .score-max { font-size: 14px; color: var(--text-dim); }
+
+/* Scan progress bar */
+.scan-progress { margin: 8px 0; }
+.scan-progress-text { font-size: 11px; color: var(--blue); margin-bottom: 4px; }
+.scan-progress-bar {
+  height: 4px; border-radius: 2px; background: var(--bg-input); overflow: hidden;
+}
+.scan-progress-fill {
+  height: 100%; border-radius: 2px; background: var(--blue);
+  width: 0%; transition: width 0.3s ease;
+}
+
+.health-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+.health-stats { display: flex; gap: 12px; flex-wrap: wrap; }
+.health-stat {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-family: var(--font-mono);
+}
+.health-stat .stat-icon { font-size: 14px; }
+
+/* Scanning state: dim score and stats */
+.health-header.scanning .score-value { opacity: 0.3; }
+.health-header.scanning .health-stats { opacity: 0.3; }
+.health-header.scanning .health-meta { opacity: 0.3; }
+
+.domain-cards { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.domain-card {
+  background: var(--bg-card); border-radius: 6px; overflow: hidden;
+}
+.domain-header {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer;
+  user-select: none;
+}
+.domain-header:hover { background: rgba(59,130,246,0.05); }
+.domain-arrow { font-size: 10px; color: var(--text-dim); transition: transform 0.2s; width: 12px; }
+.domain-card.expanded .domain-arrow { transform: rotate(90deg); }
+.domain-name { font-size: 13px; font-weight: 600; flex: 1; }
+.domain-score { font-size: 11px; font-family: var(--font-mono); color: var(--text-dim); }
+.domain-bar { width: 80px; height: 4px; border-radius: 2px; background: var(--bg-input); overflow: hidden; }
+.domain-bar-fill { height: 100%; border-radius: 2px; }
+.domain-checks { display: none; padding: 0 14px 10px 38px; }
+.domain-card.expanded .domain-checks { display: block; }
+
+/* Skeleton domain cards */
+.domain-card.skeleton .domain-score { color: var(--border); }
+.domain-card.skeleton .domain-bar-fill { width: 0% !important; }
+
+.check-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 4px 0;
+  font-size: 12px; border-bottom: 1px solid var(--border);
+}
+.check-item:last-child { border-bottom: none; }
+.check-icon { width: 16px; text-align: center; flex-shrink: 0; }
+.check-body { flex: 1; }
+.check-name { font-weight: 500; }
+.check-msg { color: var(--text-dim); font-size: 11px; }
+.check-fix {
+  font-size: 11px; color: var(--blue); font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+.harden-panel {
+  background: var(--bg-card); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+}
+.harden-panel h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.harden-section { margin-bottom: 12px; }
+.harden-section-title { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; }
+.harden-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.harden-btn {
+  padding: 5px 12px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; cursor: pointer; font-size: 11px; font-family: var(--font-ui);
+}
+.harden-btn:hover { background: var(--border); }
+.harden-btn.high-risk { border-color: rgba(239,68,68,0.4); color: var(--red); }
+.harden-btn.high-risk:hover { background: rgba(239,68,68,0.1); }
+.harden-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.harden-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+.harden-results {
+  background: var(--bg-card); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+}
+.harden-results h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.harden-result-item {
+  padding: 6px 0; font-size: 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+.harden-result-item:last-child { border-bottom: none; }
+.harden-result-item .rollback { font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px; }
+
 /* ─── Placeholder pages ─── */
 .placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -255,11 +370,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     <div class="config-field"><label>model</label><select id="cfg-llm-model"><option value="">— select model —</option></select></div>
     <div class="config-field"><label>enabled</label><input id="cfg-llm-enabled" type="checkbox"></div>
     <div class="config-field"><label>maxConcurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"></div>
-    <details class="config-advanced">
-      <summary style="cursor:pointer;font-size:12px;color:var(--text-dim);margin-bottom:8px">Advanced (legacy fallback)</summary>
-      <div class="config-field"><label>endpoint</label><input id="cfg-llm-endpoint" type="text"></div>
-      <div class="config-field"><label>apiKey</label><input id="cfg-llm-apiKey" type="text"></div>
-    </details>
     <div class="config-field"><label>promptRecentCalls</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"></div>
     <div class="config-field"><label>trustedSenderLabels</label><div class="multi-select" id="cfg-llm-trustedSenderLabels"><div class="multi-select-toggle"><span class="multi-select-summary">0 selected</span><span class="multi-select-arrow">&#x25BE;</span></div><div class="multi-select-dropdown"></div></div><button id="btn-refresh-labels" type="button" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;font-size:12px;margin-left:4px" title="Refresh labels from logs">&#x21bb;</button></div>
   </div>
@@ -300,9 +410,154 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 <!-- Tab 3: Health -->
 <div id="tab-health" class="tab-content">
-  <div class="placeholder">
-    <h2>Health Check</h2>
-    <p>Coming Soon — LLM connectivity, rule integrity, recent statistics</p>
+  <div id="health-content">
+    <!-- Score Header -->
+    <div class="health-header">
+      <div class="health-header-top">
+        <h2>Security Posture</h2>
+        <div class="health-actions">
+          <button class="health-btn primary" id="btn-health-scan">Scan</button>
+          <button class="health-btn" id="btn-health-report">Report</button>
+        </div>
+      </div>
+      <div class="score-bar-container">
+        <div class="score-label">
+          <span><span class="score-value" id="health-score">—</span><span class="score-max">/100</span></span>
+        </div>
+        <div class="score-bar"><div class="score-bar-fill" id="health-score-bar" style="width:0%;background:var(--green)"></div></div>
+      </div>
+      <div class="scan-progress" id="scan-progress" style="display:none">
+        <div class="scan-progress-text" id="scan-progress-text">Scanning...</div>
+        <div class="scan-progress-bar"><div class="scan-progress-fill" id="scan-progress-fill"></div></div>
+      </div>
+      <div class="health-meta" id="health-meta"></div>
+      <div class="health-stats" id="health-stats">
+        <span class="health-stat"><span class="stat-icon" style="color:var(--green)">&#x2705;</span> — pass</span>
+        <span class="health-stat"><span class="stat-icon" style="color:var(--yellow)">&#x26A0;&#xFE0F;</span> — warn</span>
+        <span class="health-stat"><span class="stat-icon" style="color:var(--red)">&#x274C;</span> — fail</span>
+        <span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">&#x23ED;&#xFE0F;</span> — skip</span>
+      </div>
+    </div>
+
+    <!-- Domain Cards -->
+    <div class="domain-cards" id="health-domains">
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">网络隔离</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">认证</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">Exec 安全</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">文件系统</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">供应链</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">Channel/PI</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">Agent</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+      <div class="domain-card skeleton">
+        <div class="domain-header">
+          <span class="domain-arrow">&#x25B8;</span>
+          <span class="domain-name">监控</span>
+          <span class="domain-score">—/—</span>
+          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hardening Actions -->
+    <div class="harden-panel">
+      <h3>Hardening Actions</h3>
+      <div class="harden-section">
+        <div class="harden-section-title">Configuration Safety</div>
+        <div class="harden-btns">
+          <button class="harden-btn" onclick="runHardenAction('backup')">Backup</button>
+          <button class="harden-btn high-risk" onclick="runHardenAction('deploy-config','balanced')">Deploy Balanced</button>
+          <button class="harden-btn high-risk" onclick="runHardenAction('deploy-config','paranoid')">Deploy Paranoid</button>
+          <button class="harden-btn" onclick="runHardenAction('validate')">Validate</button>
+        </div>
+      </div>
+      <div class="harden-section">
+        <div class="harden-section-title">File System</div>
+        <div class="harden-btns">
+          <button class="harden-btn high-risk" onclick="runHardenAction('permissions')">Permissions</button>
+          <button class="harden-btn" onclick="runHardenAction('baseline')">Baseline</button>
+          <button class="harden-btn high-risk" onclick="runHardenAction('immutable-protect')">Immutable</button>
+        </div>
+      </div>
+      <div class="harden-section">
+        <div class="harden-section-title">Supply Chain</div>
+        <div class="harden-btns">
+          <button class="harden-btn" onclick="runHardenAction('npmrc')">npmrc</button>
+        </div>
+      </div>
+      <div class="harden-section">
+        <div class="harden-section-title">Agent &amp; Monitoring</div>
+        <div class="harden-btns">
+          <button class="harden-btn" onclick="runHardenAction('deploy-agents')">Deploy AGENTS.md</button>
+          <button class="harden-btn" onclick="runHardenAction('deploy-audit')">Deploy Audit Script</button>
+          <button class="harden-btn" onclick="runHardenAction('git-backup')">Git Backup</button>
+          <button class="harden-btn" onclick="runHardenAction('audit')">Run Audit</button>
+        </div>
+      </div>
+      <div class="harden-section">
+        <div class="harden-section-title">Network &amp; System</div>
+        <div class="harden-btns">
+          <button class="harden-btn high-risk" onclick="runHardenAction('firewall')">Firewall</button>
+          <button class="harden-btn" onclick="runHardenAction('disk-encryption')">Disk Encryption</button>
+          <button class="harden-btn" onclick="runHardenAction('channel-hint')">Channel Hints</button>
+          <button class="harden-btn" onclick="runHardenAction('verify-hint')">Verify Hints</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action Results -->
+    <div class="harden-results" id="harden-results" style="display:none">
+      <h3>Action Results</h3>
+      <div id="harden-results-list"></div>
+    </div>
   </div>
 </div>
 
@@ -734,7 +989,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
             sel.appendChild(opt);
           });
         }
-        // If current model is not in the list (legacy), add it as an option
+        // If current model is not in the list, add it as an option
         if (currentVal && !sel.querySelector('option[value="' + currentVal.replace(/"/g, '\\\\"') + '"]')) {
           var opt = document.createElement('option');
           opt.value = currentVal;
@@ -745,8 +1000,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         // LLM
         document.getElementById('cfg-llm-enabled').checked = cfg.llm?.enabled ?? true;
         document.getElementById('cfg-llm-maxConcurrent').value = cfg.llm?.maxConcurrent || 2;
-        document.getElementById('cfg-llm-endpoint').value = cfg.llm?.endpoint || '';
-        document.getElementById('cfg-llm-apiKey').value = cfg.llm?.apiKey || '';
         document.getElementById('cfg-llm-promptRecentCalls').value = cfg.llm?.promptRecentCalls ?? 3;
         loadSenderLabels(cfg.llm?.trustedSenderLabels || []);
         // LLM Retry
@@ -830,6 +1083,221 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   // Load config when switching to config tab
   document.querySelector('[data-tab="config"]').addEventListener('click', loadConfig);
   if (document.querySelector('[data-tab="config"]').classList.contains('active')) loadConfig();
+
+  // ─── Health Tab ───
+  var healthLoaded = false;
+  var healthProgressTimer = null;
+
+  function stopHealthProgressTimer() {
+    if (!healthProgressTimer) return;
+    clearInterval(healthProgressTimer);
+    healthProgressTimer = null;
+  }
+
+  function setHealthInitialState() {
+    document.getElementById('health-score').textContent = '—';
+    var bar = document.getElementById('health-score-bar');
+    bar.style.width = '0%';
+    bar.style.background = 'var(--border)';
+    document.getElementById('health-meta').textContent = '';
+    document.getElementById('health-stats').innerHTML =
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--green)">\\u2705</span> — pass</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--yellow)">\\u26A0\\uFE0F</span> — warn</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--red)">\\u274C</span> — fail</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">\\u23ED\\uFE0F</span> — skip</span>';
+  }
+
+  function resetHealthScanUi() {
+    var progress = document.getElementById('scan-progress');
+    var progressText = document.getElementById('scan-progress-text');
+    var progressFill = document.getElementById('scan-progress-fill');
+    var header = document.querySelector('#tab-health .health-header');
+    var scanBtn = document.getElementById('btn-health-scan');
+    stopHealthProgressTimer();
+    header.classList.remove('scanning');
+    scanBtn.disabled = false;
+    progress.style.display = 'none';
+    progressText.textContent = 'Scanning...';
+    progressFill.style.width = '0%';
+  }
+
+  function loadHealthScan() {
+    var header = document.querySelector('#tab-health .health-header');
+    var progress = document.getElementById('scan-progress');
+    var progressText = document.getElementById('scan-progress-text');
+    var progressFill = document.getElementById('scan-progress-fill');
+    var scanBtn = document.getElementById('btn-health-scan');
+    var progressPercent = 0;
+
+    stopHealthProgressTimer();
+    header.classList.add('scanning');
+    scanBtn.disabled = true;
+    progress.style.display = 'block';
+    progressText.textContent = 'Scanning...';
+    progressFill.style.width = '0%';
+
+    healthProgressTimer = setInterval(function() {
+      progressPercent = Math.min(90, progressPercent + 2 + Math.random() * 3);
+      progressFill.style.width = Math.round(progressPercent) + '%';
+      if (progressPercent >= 90) stopHealthProgressTimer();
+    }, 100);
+
+    fetch('/api/health/scan')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) throw new Error('Scan error: ' + data.error);
+        stopHealthProgressTimer();
+        progressFill.style.width = '100%';
+        progressText.textContent = 'Scan complete';
+        setTimeout(function() {
+          progress.style.display = 'none';
+          progressText.textContent = 'Scanning...';
+          progressFill.style.width = '0%';
+        }, 500);
+        header.classList.remove('scanning');
+        scanBtn.disabled = false;
+        renderHealthScore(data.summary, data.platform || {});
+        renderDomainCards(data.checks || []);
+        healthLoaded = true;
+      })
+      .catch(function(err) {
+        resetHealthScanUi();
+        showToast(err && err.message ? err.message : 'Failed to run security scan', 'error');
+      });
+  }
+
+  function scoreColor(score) {
+    if (score >= 80) return 'var(--green)';
+    if (score >= 50) return 'var(--yellow)';
+    return 'var(--red)';
+  }
+
+  function renderHealthScore(summary, platform) {
+    document.getElementById('health-score').textContent = summary.score;
+    var bar = document.getElementById('health-score-bar');
+    bar.style.width = summary.score + '%';
+    bar.style.background = scoreColor(summary.score);
+
+    var meta = document.getElementById('health-meta');
+    var parts = [];
+    if (platform.os) parts.push('Platform: ' + platform.os);
+    if (platform.arch) parts.push('Arch: ' + platform.arch);
+    if (platform.nodeVersion) parts.push('Node: ' + platform.nodeVersion);
+    if (platform.openclawVersion) parts.push('OpenClaw: ' + platform.openclawVersion);
+    if (platform.isWSL2) parts.push('WSL2');
+    meta.textContent = parts.join(' | ');
+
+    var stats = document.getElementById('health-stats');
+    stats.innerHTML =
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--green)">\\u2705</span> ' + summary.pass + ' pass</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--yellow)">\\u26A0\\uFE0F</span> ' + summary.warn + ' warn</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--red)">\\u274C</span> ' + summary.fail + ' fail</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">\\u23ED\\uFE0F</span> ' + summary.skip + ' skip</span>';
+  }
+
+  function renderDomainCards(checks) {
+    var domains = {};
+    checks.forEach(function(c) {
+      if (!domains[c.domain]) domains[c.domain] = [];
+      domains[c.domain].push(c);
+    });
+
+    var container = document.getElementById('health-domains');
+    container.innerHTML = '';
+
+    Object.keys(domains).forEach(function(domain) {
+      var items = domains[domain];
+      var pass = items.filter(function(c) { return c.status === 'pass'; }).length;
+      var total = items.length;
+      var pct = total > 0 ? Math.round((pass / total) * 100) : 0;
+
+      var card = document.createElement('div');
+      card.className = 'domain-card';
+      card.innerHTML =
+        '<div class="domain-header">' +
+          '<span class="domain-arrow">\\u25B8</span>' +
+          '<span class="domain-name">' + escapeHtml(domain) + '</span>' +
+          '<span class="domain-score">' + pass + '/' + total + '</span>' +
+          '<div class="domain-bar"><div class="domain-bar-fill" style="width:' + pct + '%;background:' + scoreColor(pct) + '"></div></div>' +
+        '</div>' +
+        '<div class="domain-checks">' + items.map(function(c) {
+          var icon = c.status === 'pass' ? '\\u2705' : c.status === 'fail' ? '\\u274C' : c.status === 'warn' ? '\\u26A0\\uFE0F' : '\\u23ED\\uFE0F';
+          return '<div class="check-item">' +
+            '<span class="check-icon">' + icon + '</span>' +
+            '<div class="check-body">' +
+              '<span class="check-name">' + escapeHtml(c.name) + '</span>' +
+              '<div class="check-msg">' + escapeHtml(c.message) + '</div>' +
+              (c.fix ? '<div class="check-fix">fix: ' + escapeHtml(c.fix) + '</div>' : '') +
+            '</div>' +
+          '</div>';
+        }).join('') + '</div>';
+
+      card.querySelector('.domain-header').addEventListener('click', function() {
+        card.classList.toggle('expanded');
+      });
+
+      container.appendChild(card);
+    });
+  }
+
+  // Expose globally for inline onclick handlers
+  window.runHardenAction = function(action, mode) {
+    var body = { action: action };
+    if (mode) body.mode = mode;
+
+    fetch('/api/health/harden', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(result) {
+      if (result.error) { showToast('Error: ' + result.error, 'error'); return; }
+      appendHardenResult(result);
+      showToast((result.success ? '\\u2705 ' : '\\u274C ') + result.name + ': ' + (result.success ? 'Success' : 'Failed'), result.success ? 'success' : 'error');
+    })
+    .catch(function() { showToast('Harden action failed', 'error'); });
+  };
+
+  function appendHardenResult(result) {
+    var panel = document.getElementById('harden-results');
+    var list = document.getElementById('harden-results-list');
+    panel.style.display = 'block';
+
+    var icon = result.success ? '\\u2705' : '\\u274C';
+    var div = document.createElement('div');
+    div.className = 'harden-result-item';
+    div.innerHTML = icon + ' <strong>' + escapeHtml(result.name || result.id) + '</strong>: ' + escapeHtml(result.message) +
+      (result.rollback ? '<span class="rollback">rollback: ' + escapeHtml(result.rollback) + '</span>' : '');
+    list.insertBefore(div, list.firstChild);
+  }
+
+  function downloadReport() {
+    fetch('/api/health/report')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { showToast('Report error: ' + data.error, 'error'); return; }
+        var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'security-report-' + new Date().toISOString().slice(0,19).replace(/[:.]/g,'-') + '.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Report downloaded', 'success');
+      })
+      .catch(function() { showToast('Failed to generate report', 'error'); });
+  }
+
+  document.getElementById('btn-health-scan').addEventListener('click', loadHealthScan);
+  document.getElementById('btn-health-report').addEventListener('click', downloadReport);
+  setHealthInitialState();
+  resetHealthScanUi();
+
+  // Load scan on first tab switch
+  document.querySelector('[data-tab="health"]').addEventListener('click', function() {
+    if (!healthLoaded) loadHealthScan();
+  });
 })();
 </script>
 </body>
