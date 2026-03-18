@@ -33,7 +33,11 @@ import {
   onUserMessage,
   updateSource,
 } from "./src/intent-context.js";
-import { startDashboard, stopDashboard, type ModelOption } from "./src/dashboard/server.js";
+import {
+  startDashboard,
+  stopDashboard,
+  type ModelOption,
+} from "./src/dashboard/server.js";
 import { getOpenClawDir } from "./src/hardening/platform.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
@@ -102,12 +106,15 @@ export interface OpenClawPluginApi {
   config: {
     workspace?: { dir?: string };
     models?: {
-      providers?: Record<string, {
-        baseUrl: string;
-        apiKey?: string;
-        api?: string;
-        models?: Array<{ id: string; name: string; [key: string]: unknown }>;
-      }>;
+      providers?: Record<
+        string,
+        {
+          baseUrl: string;
+          apiKey?: string;
+          api?: string;
+          models?: Array<{ id: string; name: string; [key: string]: unknown }>;
+        }
+      >;
     };
   } & Record<string, unknown>;
   pluginConfig?: Record<string, unknown>;
@@ -150,18 +157,25 @@ let workspacePath: string | undefined;
 let varDir: string;
 let availableModelsProvider: (() => ModelOption[]) | null = null;
 let gatewayApi: OpenClawPluginApi | null = null;
+let managedRulesDir = "";
+
+const RULE_FILE_NAME_RE = /^[A-Za-z0-9._-]+\.(ya?ml)$/i;
 
 // ─── Override helpers ───
 
-function computeParamsFingerprint(toolName: string, params: Record<string, unknown>): string {
-  return crypto.createHash("sha256")
+function computeParamsFingerprint(
+  toolName: string,
+  params: Record<string, unknown>,
+): string {
+  return crypto
+    .createHash("sha256")
     .update(toolName + ":" + JSON.stringify(params))
     .digest("hex");
 }
 
 function generatePin(): string {
-  const n = crypto.randomInt(0, 1_000_000);      // 0–999999
-  return String(n).padStart(6, "0");              // 6-digit decimal
+  const n = crypto.randomInt(0, 1_000_000); // 0–999999
+  return String(n).padStart(6, "0"); // 6-digit decimal
 }
 
 function registerPendingOverride(
@@ -186,9 +200,8 @@ function formatOverrideHint(pin: string, showPin: boolean): string {
     return [
       "",
       "--- Override ---",
-      "The current sender is not in llm.trustedSenderLabels, so override PIN approval is unavailable.",
-      "If this sender should be trusted, add it to llm.trustedSenderLabels in plugin config.",
-      "Explain the risk to the user and ask them to update plugin configuration if needed.",
+      "The current sender is not in llm.trustedSenderLabels, so override is unavailable.",
+      "If this sender should be trusted, add it to llm.trustedSenderLabels in plugin config (dashboard recommended).",
     ].join("\n");
   }
   return [
@@ -199,16 +212,18 @@ function formatOverrideHint(pin: string, showPin: boolean): string {
   ].join("\n");
 }
 
-function overrideButtons(pin: string): Array<Array<{ text: string; callback_data: string }>> {
-  return [
-    [{ text: "⚠️ Confirm Override", callback_data: `/pin${pin}` }],
-  ];
+function overrideButtons(
+  pin: string,
+): Array<Array<{ text: string; callback_data: string }>> {
+  return [[{ text: "⚠️ Confirm Override", callback_data: `/pin${pin}` }]];
 }
 
 function isSenderTrusted(sessionKey: string): boolean {
   const senderLabel = getIntentContext(sessionKey).senderLabel;
-  return senderLabel != null
-    && (config.llm.trustedSenderLabels ?? []).includes(senderLabel);
+  return (
+    senderLabel != null &&
+    (config.llm.trustedSenderLabels ?? []).includes(senderLabel)
+  );
 }
 
 // ─── Service Error Formatting ───
@@ -272,24 +287,82 @@ export interface PluginInitContext {
   llmCall?: LLMCallFn;
 }
 
+function getManagedRulesDir(): string {
+  return path.join(getOpenClawDir(), "seclaw", "rules");
+}
+
+function listManagedRuleFiles(dir = managedRulesDir): string[] {
+  try {
+    if (!dir || !fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && RULE_FILE_NAME_RE.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+function isValidRuleFileName(name: unknown): name is string {
+  return typeof name === "string" && RULE_FILE_NAME_RE.test(name);
+}
+
+function bootstrapManagedRules(pluginDir: string): void {
+  managedRulesDir = getManagedRulesDir();
+  fs.mkdirSync(managedRulesDir, { recursive: true });
+
+  const builtInRulesDir = path.join(pluginDir, "rules");
+  if (!fs.existsSync(builtInRulesDir)) return;
+
+  const sourceFiles = fs
+    .readdirSync(builtInRulesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && RULE_FILE_NAME_RE.test(entry.name))
+    .map((entry) => entry.name);
+
+  sourceFiles.forEach((fileName) => {
+    const sourcePath = path.join(builtInRulesDir, fileName);
+    const targetPath = path.join(managedRulesDir, fileName);
+    if (!fs.existsSync(targetPath)) {
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  });
+}
+
+function resolveActiveRuleFile(): string | undefined {
+  const availableFiles = listManagedRuleFiles();
+  if (availableFiles.length === 0) return undefined;
+
+  const configured = config.rules?.activeRuleFile;
+  if (configured && availableFiles.includes(configured)) return configured;
+
+  const defaultFile = availableFiles.includes("default.yaml")
+    ? "default.yaml"
+    : availableFiles[0];
+  config.rules = { ...(config.rules || {}), activeRuleFile: defaultFile };
+  return defaultFile;
+}
+
+function reloadRuleEngineFromManagedRules(): void {
+  const activeFile = resolveActiveRuleFile();
+  if (!activeFile) {
+    ruleEngine.setRules([]);
+    return;
+  }
+  const activePath = path.join(managedRulesDir, activeFile);
+  ruleEngine.loadRules({ defaultRulesPath: activePath });
+}
+
 export function init(ctx: PluginInitContext): void {
   assertNoDeprecatedLLMConfig(ctx.config);
   config = loadConfig(ctx.config);
   const pluginDir = ctx.pluginDir || getDirname();
   workspacePath = ctx.workspacePath;
   varDir = ctx.varDir || path.join(os.homedir(), ".openclaw", "seclaw");
+  bootstrapManagedRules(pluginDir);
 
   ruleEngine = new RuleEngine();
-  const defaultRulesPath = path.join(pluginDir, "rules", "default.yaml");
-  const workspaceRulesPath = ctx.workspacePath
-    ? path.join(ctx.workspacePath, ".openclaw", "seclaw-rules.yaml")
-    : undefined;
-
-  ruleEngine.loadRules({
-    defaultRulesPath,
-    workspaceRulesPath,
-    extraRules: config.rules?.extra,
-  });
+  reloadRuleEngineFromManagedRules();
 
   llmAuditor = new LLMAuditor(config.llm, config.timeouts);
   if (ctx.llmCall) {
@@ -340,7 +413,7 @@ function assertNoDeprecatedLLMConfig(partial?: Partial<SecLawConfig>): void {
 
   throw new Error(
     `[seclaw] Deprecated config field(s): ${deprecated.join(", ")}. ` +
-    "Remove them from openclaw.json and use provider/model configuration only.",
+      "Remove them from openclaw.json and use provider/model configuration only.",
   );
 }
 
@@ -349,27 +422,24 @@ function upsertSecLawPluginConfig(
   seclawConfig: SecLawConfig,
 ): Record<string, unknown> {
   const next = { ...openClawConfig };
-  const pluginsObj = (
+  const pluginsObj =
     next.plugins &&
     typeof next.plugins === "object" &&
     !Array.isArray(next.plugins)
-  )
-    ? { ...(next.plugins as Record<string, unknown>) }
-    : {};
-  const entriesObj = (
+      ? { ...(next.plugins as Record<string, unknown>) }
+      : {};
+  const entriesObj =
     pluginsObj.entries &&
     typeof pluginsObj.entries === "object" &&
     !Array.isArray(pluginsObj.entries)
-  )
-    ? { ...(pluginsObj.entries as Record<string, unknown>) }
-    : {};
-  const seclawEntry = (
+      ? { ...(pluginsObj.entries as Record<string, unknown>) }
+      : {};
+  const seclawEntry =
     entriesObj.seclaw &&
     typeof entriesObj.seclaw === "object" &&
     !Array.isArray(entriesObj.seclaw)
-  )
-    ? { ...(entriesObj.seclaw as Record<string, unknown>) }
-    : {};
+      ? { ...(entriesObj.seclaw as Record<string, unknown>) }
+      : {};
 
   seclawEntry.config = seclawConfig;
   entriesObj.seclaw = seclawEntry;
@@ -378,13 +448,19 @@ function upsertSecLawPluginConfig(
   return next;
 }
 
-function persistConfigToOpenClaw(nextConfig: SecLawConfig): { ok: boolean; error?: string } {
+function persistConfigToOpenClaw(nextConfig: SecLawConfig): {
+  ok: boolean;
+  error?: string;
+} {
   const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
   try {
     const raw = fs.readFileSync(openClawPath, "utf-8");
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { ok: false, error: `Invalid openclaw.json format at ${openClawPath}` };
+      return {
+        ok: false,
+        error: `Invalid openclaw.json format at ${openClawPath}`,
+      };
     }
     if (Array.isArray((parsed as Record<string, unknown>).plugins)) {
       return {
@@ -393,7 +469,10 @@ function persistConfigToOpenClaw(nextConfig: SecLawConfig): { ok: boolean; error
           "Unsupported openclaw.json format: plugins must be an object with plugins.entries.<id>, not an array.",
       };
     }
-    const updated = upsertSecLawPluginConfig(parsed as Record<string, unknown>, nextConfig);
+    const updated = upsertSecLawPluginConfig(
+      parsed as Record<string, unknown>,
+      nextConfig,
+    );
     fs.writeFileSync(openClawPath, JSON.stringify(updated, null, 2), "utf-8");
     return { ok: true };
   } catch (err: any) {
@@ -406,9 +485,10 @@ function persistConfigToOpenClaw(nextConfig: SecLawConfig): { ok: boolean; error
 
 // ─── Runtime Config Update ───
 
-function updateConfig(
-  partial: Partial<SecLawConfig>,
-): { ok: boolean; errors?: string[] } {
+function updateConfig(partial: Partial<SecLawConfig>): {
+  ok: boolean;
+  errors?: string[];
+} {
   const errors: string[] = [];
   const llmPartial = (partial as { llm?: Record<string, unknown> }).llm;
   if (llmPartial && typeof llmPartial === "object") {
@@ -420,7 +500,10 @@ function updateConfig(
   // Validate & apply llm changes
   if (partial.llm) {
     if (partial.llm.model !== undefined) {
-      if (typeof partial.llm.model !== "string" || partial.llm.model.length === 0) {
+      if (
+        typeof partial.llm.model !== "string" ||
+        partial.llm.model.length === 0
+      ) {
         errors.push("llm.model must be a non-empty string");
       }
     }
@@ -430,7 +513,11 @@ function updateConfig(
       }
     }
     if (partial.llm.maxConcurrent !== undefined) {
-      if (typeof partial.llm.maxConcurrent !== "number" || partial.llm.maxConcurrent < 1 || partial.llm.maxConcurrent > 10) {
+      if (
+        typeof partial.llm.maxConcurrent !== "number" ||
+        partial.llm.maxConcurrent < 1 ||
+        partial.llm.maxConcurrent > 10
+      ) {
         errors.push("llm.maxConcurrent must be a number between 1 and 10");
       }
     }
@@ -441,11 +528,16 @@ function updateConfig(
     }
     // Validate provider existence for "provider/model" format models
     if (partial.llm.model !== undefined && partial.llm.model.includes("/")) {
-      const providerName = partial.llm.model.slice(0, partial.llm.model.indexOf("/"));
+      const providerName = partial.llm.model.slice(
+        0,
+        partial.llm.model.indexOf("/"),
+      );
       if (gatewayApi) {
         const provider = gatewayApi.config.models?.providers?.[providerName];
         if (!provider) {
-          errors.push(`llm.model: provider "${providerName}" not found in gateway models.providers`);
+          errors.push(
+            `llm.model: provider "${providerName}" not found in gateway models.providers`,
+          );
         }
       }
     }
@@ -454,18 +546,31 @@ function updateConfig(
   // Validate & apply timeout changes
   if (partial.timeouts) {
     if (partial.timeouts.syncAuditMs !== undefined) {
-      if (typeof partial.timeouts.syncAuditMs !== "number" || partial.timeouts.syncAuditMs < 1000 || partial.timeouts.syncAuditMs > 120000) {
+      if (
+        typeof partial.timeouts.syncAuditMs !== "number" ||
+        partial.timeouts.syncAuditMs < 1000 ||
+        partial.timeouts.syncAuditMs > 120000
+      ) {
         errors.push("timeouts.syncAuditMs must be between 1000 and 120000");
       }
     }
     if (partial.timeouts.asyncAuditMs !== undefined) {
-      if (typeof partial.timeouts.asyncAuditMs !== "number" || partial.timeouts.asyncAuditMs < 1000 || partial.timeouts.asyncAuditMs > 120000) {
+      if (
+        typeof partial.timeouts.asyncAuditMs !== "number" ||
+        partial.timeouts.asyncAuditMs < 1000 ||
+        partial.timeouts.asyncAuditMs > 120000
+      ) {
         errors.push("timeouts.asyncAuditMs must be between 1000 and 120000");
       }
     }
     if (partial.timeouts.syncTimeoutPolicy !== undefined) {
-      if (partial.timeouts.syncTimeoutPolicy !== "fail_closed" && partial.timeouts.syncTimeoutPolicy !== "fail_open") {
-        errors.push("timeouts.syncTimeoutPolicy must be 'fail_closed' or 'fail_open'");
+      if (
+        partial.timeouts.syncTimeoutPolicy !== "fail_closed" &&
+        partial.timeouts.syncTimeoutPolicy !== "fail_open"
+      ) {
+        errors.push(
+          "timeouts.syncTimeoutPolicy must be 'fail_closed' or 'fail_open'",
+        );
       }
     }
   }
@@ -484,6 +589,23 @@ function updateConfig(
     }
   }
 
+  // Validate rules changes
+  if (partial.rules) {
+    if (
+      partial.rules.activeRuleFile !== undefined &&
+      !isValidRuleFileName(partial.rules.activeRuleFile)
+    ) {
+      errors.push("rules.activeRuleFile must be a .yaml/.yml file name");
+    } else if (partial.rules.activeRuleFile !== undefined) {
+      const availableFiles = listManagedRuleFiles();
+      if (!availableFiles.includes(partial.rules.activeRuleFile!)) {
+        errors.push(
+          `rules.activeRuleFile not found in ${managedRulesDir || getManagedRulesDir()}`,
+        );
+      }
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   // Capture pre-change state for enable toggle detection
@@ -492,18 +614,30 @@ function updateConfig(
   const nextConfig: SecLawConfig = {
     ...config,
     llm: partial.llm ? { ...config.llm, ...partial.llm } : config.llm,
-    timeouts: partial.timeouts ? { ...config.timeouts, ...partial.timeouts } : config.timeouts,
-    logging: partial.logging ? { ...config.logging, ...partial.logging } : config.logging,
+    timeouts: partial.timeouts
+      ? { ...config.timeouts, ...partial.timeouts }
+      : config.timeouts,
+    logging: partial.logging
+      ? { ...config.logging, ...partial.logging }
+      : config.logging,
+    rules: partial.rules ? { ...(config.rules || {}), ...partial.rules } : config.rules,
   };
 
   const persistResult = persistConfigToOpenClaw(nextConfig);
   if (!persistResult.ok) {
-    return { ok: false, errors: [persistResult.error || "Failed to persist config"] };
+    return {
+      ok: false,
+      errors: [persistResult.error || "Failed to persist config"],
+    };
   }
 
   config = nextConfig;
   if (partial.logging) {
     auditLog.setLoggingConfig(config.logging);
+  }
+
+  if (partial.rules?.activeRuleFile !== undefined) {
+    reloadRuleEngineFromManagedRules();
   }
 
   // Sync references that were broken by spread operator
@@ -520,7 +654,12 @@ function updateConfig(
   }
 
   // Handle llm.enabled toggled on at runtime
-  if (!wasLLMEnabled && config.llm.enabled && gatewayApi && !partial.llm?.model) {
+  if (
+    !wasLLMEnabled &&
+    config.llm.enabled &&
+    gatewayApi &&
+    !partial.llm?.model
+  ) {
     const newCallFn = createGatewayLLMCallFn(config, gatewayApi);
     if (newCallFn) {
       llmAuditor.setLLMCallFn(newCallFn);
@@ -556,8 +695,8 @@ export async function beforeToolCall(
     }
     // Log for JSONL audit trail only (no toolCallId → no ToolCallRecord card)
     auditLog.logOverrideUsed(sessionKey, toolName);
-    consumeDangerFlag(sessionKey);  // clear any lingering danger flag
-    return undefined;  // allow
+    consumeDangerFlag(sessionKey); // clear any lingering danger flag
+    return undefined; // allow
   }
 
   // 1. Check for danger flag from async audit
@@ -565,8 +704,20 @@ export async function beforeToolCall(
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const blockReason = formatDangerAlert(dangerReport);
-    const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
-    auditLog.logBlock(sessionKey, toolName, blockReason, "async", toolCallId, pin);
+    const pin = registerPendingOverride(
+      sessionKey,
+      toolName,
+      params,
+      toolCallId,
+    );
+    auditLog.logBlock(
+      sessionKey,
+      toolName,
+      blockReason,
+      "async",
+      toolCallId,
+      pin,
+    );
     const trusted = isSenderTrusted(sessionKey);
     return {
       block: true,
@@ -580,12 +731,25 @@ export async function beforeToolCall(
   const ruleResult = ruleEngine.classify(toolName, params, intentCtx, wsPath);
 
   if (ruleResult.ruleId) {
-    auditLog.logRuleMatch(sessionKey, toolName, ruleResult.ruleId, ruleResult.tier, ruleResult.reason, toolCallId);
+    auditLog.logRuleMatch(
+      sessionKey,
+      toolName,
+      ruleResult.ruleId,
+      ruleResult.tier,
+      ruleResult.reason,
+      toolCallId,
+    );
   } else {
     auditLog.logNoRuleMatch(sessionKey, toolName);
   }
 
-  auditLog.logClassification(sessionKey, toolName, params, ruleResult.tier, toolCallId);
+  auditLog.logClassification(
+    sessionKey,
+    toolName,
+    params,
+    ruleResult.tier,
+    toolCallId,
+  );
 
   // 3. GREEN → allow execution, no audit at all
   if (ruleResult.tier === "GREEN") {
@@ -594,7 +758,13 @@ export async function beforeToolCall(
 
   // 4. YELLOW → allow execution, afterToolCall will handle async audit
   if (ruleResult.tier === "YELLOW") {
-    auditLog.logIntentContext(sessionKey, toolName, intentCtx, config.llm.promptRecentCalls, toolCallId);
+    auditLog.logIntentContext(
+      sessionKey,
+      toolName,
+      intentCtx,
+      config.llm.promptRecentCalls,
+      toolCallId,
+    );
     return undefined;
   }
 
@@ -603,7 +773,12 @@ export async function beforeToolCall(
     // LLM disabled — apply timeout policy
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
-      const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
+      const pin = registerPendingOverride(
+        sessionKey,
+        toolName,
+        params,
+        toolCallId,
+      );
       auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
       const trusted = isSenderTrusted(sessionKey);
       return {
@@ -613,12 +788,23 @@ export async function beforeToolCall(
       };
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
-    auditLog.logAllow(sessionKey, toolName, "LLM disabled, RED → pass-through (fail_open)", toolCallId);
+    auditLog.logAllow(
+      sessionKey,
+      toolName,
+      "LLM disabled, RED → pass-through (fail_open)",
+      toolCallId,
+    );
     return undefined;
   }
 
   auditLog.logLLMAuditStart(sessionKey, toolName);
-  auditLog.logIntentContext(sessionKey, toolName, intentCtx, config.llm.promptRecentCalls, toolCallId);
+  auditLog.logIntentContext(
+    sessionKey,
+    toolName,
+    intentCtx,
+    config.llm.promptRecentCalls,
+    toolCallId,
+  );
   const startTime = Date.now();
   const ruleContext = ruleResult.ruleId
     ? { ruleId: ruleResult.ruleId, reason: ruleResult.reason }
@@ -635,11 +821,21 @@ export async function beforeToolCall(
   );
   const durationMs = Date.now() - startTime;
 
-  auditLog.logLLMAudit(sessionKey, toolName, llmResult.decision, llmResult.reason, durationMs, toolCallId);
+  auditLog.logLLMAudit(
+    sessionKey,
+    toolName,
+    llmResult.decision,
+    llmResult.reason,
+    durationMs,
+    toolCallId,
+  );
   auditLog.logLLMAuditDetail(sessionKey, toolName, llmResult, durationMs);
 
   // Service error: not a security finding — handle separately
-  if (llmResult._errorInfo && llmResult._errorInfo.category !== "unknown_error") {
+  if (
+    llmResult._errorInfo &&
+    llmResult._errorInfo.category !== "unknown_error"
+  ) {
     const errorInfo = llmResult._errorInfo;
     auditLog.logLLMServiceError(sessionKey, toolName, errorInfo, toolCallId);
     const shouldBlock = llmResult.decision === "DANGER"; // determined by syncTimeoutPolicy
@@ -667,7 +863,12 @@ export async function beforeToolCall(
     } else {
       // fail_open: allow but warn the agent to stop
       const warningReason = formatServiceErrorBlock(errorInfo, "allowed");
-      auditLog.logAllow(sessionKey, toolName, `Service error (${errorInfo.category}), fail_open → allowed`, toolCallId);
+      auditLog.logAllow(
+        sessionKey,
+        toolName,
+        `Service error (${errorInfo.category}), fail_open → allowed`,
+        toolCallId,
+      );
       return { block: false, blockReason: warningReason };
     }
   }
@@ -676,7 +877,12 @@ export async function beforeToolCall(
   if (llmResult.decision === "DANGER") {
     const reason = llmResult.reason || "Blocked by LLM security audit";
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
-    const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
+    const pin = registerPendingOverride(
+      sessionKey,
+      toolName,
+      params,
+      toolCallId,
+    );
     auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
     const blockReason = `[SecLaw] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
     const trusted = isSenderTrusted(sessionKey);
@@ -697,9 +903,18 @@ export async function afterToolCall(
 ): Promise<void> {
   const { toolName, params, result } = event;
   const sessionKey = ctx.sessionKey ?? "default";
-  const toolCallId = event.toolCallId ?? ctx.toolCallId ?? sessionState.getLastToolCallId(sessionKey) ?? undefined;
+  const toolCallId =
+    event.toolCallId ??
+    ctx.toolCallId ??
+    sessionState.getLastToolCallId(sessionKey) ??
+    undefined;
 
-  onToolCallComplete(sessionKey, toolName, params, event.error ? "error" : "success");
+  onToolCallComplete(
+    sessionKey,
+    toolName,
+    params,
+    event.error ? "error" : "success",
+  );
 
   // Skip async audit for calls that were explicitly approved via override —
   // re-auditing them would just re-flag the same operation and set a spurious
@@ -710,8 +925,12 @@ export async function afterToolCall(
 
   // Re-classify to check tier
   const intentCtx = getIntentContext(sessionKey);
-  const ruleResult = ruleEngine.classify(toolName, params, intentCtx,
-    ctx.workspacePath ?? workspacePath);
+  const ruleResult = ruleEngine.classify(
+    toolName,
+    params,
+    intentCtx,
+    ctx.workspacePath ?? workspacePath,
+  );
   if (ruleResult.tier !== "YELLOW") {
     return; // GREEN → no audit needed; RED → already audited synchronously
   }
@@ -780,35 +999,48 @@ function register(api: OpenClawPluginApi): void {
     const llmCallFn = createGatewayLLMCallFn(config, api);
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
-      api.logger.info("[seclaw] 🚀 LLM connected via provider config",
+      api.logger.info(
+        "[seclaw] 🚀 LLM connected via provider config",
         `model=${config.llm.model}`,
       );
     } else {
       if (config.llm.model.includes("/")) {
-        const providerName = config.llm.model.slice(0, config.llm.model.indexOf("/"));
-        api.logger.error(`[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in models.providers -- ` +
-          "check openclaw.json configuration. " +
-          "RED operations will pass without real LLM audit.");
+        const providerName = config.llm.model.slice(
+          0,
+          config.llm.model.indexOf("/"),
+        );
+        api.logger.error(
+          `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in models.providers -- ` +
+            "check openclaw.json configuration. " +
+            "RED operations will pass without real LLM audit.",
+        );
       } else if (!config.llm.model) {
-        api.logger.error("[seclaw] ⚠️ LLM enabled but no model configured -- " +
-          "set llm.model as provider/model in plugin config. " +
-          "RED operations will pass without real LLM audit.");
+        api.logger.error(
+          "[seclaw] ⚠️ LLM enabled but no model configured -- " +
+            "set llm.model as provider/model in plugin config. " +
+            "RED operations will pass without real LLM audit.",
+        );
       } else {
-        api.logger.error("[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
-          "set llm.model as provider/model in plugin config. " +
-          "RED operations will pass without real LLM audit.");
+        api.logger.error(
+          "[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
+            "set llm.model as provider/model in plugin config. " +
+            "RED operations will pass without real LLM audit.",
+        );
       }
     }
   }
 
-  api.logger.info("[seclaw] 🚀 Initialized",
+  api.logger.info(
+    "[seclaw] 🚀 Initialized",
     `rules=${ruleEngine.getRules().length}`,
     `llm=${config.llm.enabled ? config.llm.model : "disabled"}`,
     `policy=${config.timeouts.syncTimeoutPolicy}`,
   );
 
   if (config.dashboard?.enabled) {
-    api.logger.info(`[seclaw] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`);
+    api.logger.info(
+      `[seclaw] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`,
+    );
   }
 
   // ─── Core hooks ───
@@ -819,22 +1051,22 @@ function register(api: OpenClawPluginApi): void {
   // before_prompt_build: event.prompt is the current user input for this turn,
   // event.messages is the session history (not including the current message).
   // ctx contains message source info (channelId, trigger, agentId, messageProvider).
-  api.on("before_prompt_build", (
-    event: PluginHookBeforePromptBuildEvent,
-    ctx: PluginHookAgentContext,
-  ) => {
-    const sk = ctx.sessionKey ?? "default";
-    if (typeof event.prompt === "string" && event.prompt.length > 0) {
-      onUserMessage(sk, event.prompt, config.llm.trustedSenderLabels);
-      auditLog.debug(`🧠 Intent: userGoal updated via before_prompt_build`);
-    }
-    updateSource(sk, {
-      channelId: ctx.channelId,
-      trigger: ctx.trigger,
-      agentId: ctx.agentId,
-      messageProvider: ctx.messageProvider,
-    });
-  });
+  api.on(
+    "before_prompt_build",
+    (event: PluginHookBeforePromptBuildEvent, ctx: PluginHookAgentContext) => {
+      const sk = ctx.sessionKey ?? "default";
+      if (typeof event.prompt === "string" && event.prompt.length > 0) {
+        onUserMessage(sk, event.prompt, config.llm.trustedSenderLabels);
+        auditLog.debug(`🧠 Intent: userGoal updated via before_prompt_build`);
+      }
+      updateSource(sk, {
+        channelId: ctx.channelId,
+        trigger: ctx.trigger,
+        agentId: ctx.agentId,
+        messageProvider: ctx.messageProvider,
+      });
+    },
+  );
 
   // llm_input: backup — event.prompt is also the current user input, fires later.
   api.on("llm_input", (event: any, ctx: PluginHookAgentContext) => {
@@ -928,18 +1160,22 @@ function createGatewayLLMCallFn(
     if (!response.ok) {
       if (response.status === 429) {
         const retryAfter = response.headers.get("Retry-After");
-        const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : undefined;
-        throw new LLMHttpError(response.status, response.statusText, retryAfterMs);
+        const retryAfterMs = retryAfter
+          ? parseInt(retryAfter, 10) * 1000
+          : undefined;
+        throw new LLMHttpError(
+          response.status,
+          response.statusText,
+          retryAfterMs,
+        );
       }
       throw new LLMHttpError(response.status, response.statusText);
     }
 
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     // OpenAI-compatible response format
-    const content = data?.choices?.[0]?.message?.content
-      ?? data?.content
-      ?? "";
+    const content = data?.choices?.[0]?.message?.content ?? data?.content ?? "";
 
     return { content };
   };
@@ -957,12 +1193,24 @@ function getDirname(): string {
 
 // ─── Exported for Testing ───
 
-export function _getRuleEngine(): RuleEngine { return ruleEngine; }
-export function _getLLMAuditor(): LLMAuditor { return llmAuditor; }
-export function _getAsyncQueue(): AsyncAuditQueue { return asyncQueue; }
-export function _getAuditLog(): AuditLog { return auditLog; }
-export function _setVarDir(dir: string): void { varDir = dir; }
-export function _setGatewayApi(api: OpenClawPluginApi | null): void { gatewayApi = api; }
+export function _getRuleEngine(): RuleEngine {
+  return ruleEngine;
+}
+export function _getLLMAuditor(): LLMAuditor {
+  return llmAuditor;
+}
+export function _getAsyncQueue(): AsyncAuditQueue {
+  return asyncQueue;
+}
+export function _getAuditLog(): AuditLog {
+  return auditLog;
+}
+export function _setVarDir(dir: string): void {
+  varDir = dir;
+}
+export function _setGatewayApi(api: OpenClawPluginApi | null): void {
+  gatewayApi = api;
+}
 export { computeParamsFingerprint as _computeParamsFingerprint };
 export { stopDashboard } from "./src/dashboard/server.js";
 export { updateConfig as _updateConfig };

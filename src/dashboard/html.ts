@@ -329,6 +329,46 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 .harden-result-item:last-child { border-bottom: none; }
 .harden-result-item .rollback { font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px; }
 
+/* ─── Rules Tab ─── */
+.rules-panel {
+  background: var(--bg-card); border-radius: 8px; padding: 16px 20px;
+}
+.rules-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.rules-toolbar select, .rules-toolbar button {
+  padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-ui);
+}
+.rules-toolbar button { cursor: pointer; }
+.rules-toolbar button:hover { background: var(--border); }
+.rules-toolbar button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.rules-toolbar button.primary:hover { opacity: 0.9; }
+.rules-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+.rules-list { display: flex; flex-direction: column; gap: 10px; }
+.rule-item {
+  border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--bg-input);
+}
+.rule-item-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+}
+.rule-item-title { font-size: 12px; font-weight: 600; color: var(--blue); }
+.rule-item-remove {
+  padding: 4px 8px; font-size: 11px; border: 1px solid rgba(239,68,68,0.5);
+  color: var(--red); background: rgba(239,68,68,0.08); border-radius: 4px; cursor: pointer;
+}
+.rule-item-remove:hover { background: rgba(239,68,68,0.15); }
+.rule-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.rule-field { display: flex; flex-direction: column; gap: 4px; }
+.rule-field label { font-size: 11px; color: var(--text-dim); }
+.rule-field input, .rule-field select, .rule-field textarea {
+  width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-mono);
+}
+.rule-field.full { grid-column: 1 / -1; }
+
 /* ─── Placeholder pages ─── */
 .placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -396,10 +436,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     <div class="config-field"><label>enabled</label><input id="cfg-dashboard-enabled" type="checkbox" disabled title="Requires restart"></div>
     <div class="config-field"><label>port</label><input id="cfg-dashboard-port" type="number" disabled title="Requires restart"></div>
     <div class="config-field"><label>host</label><input id="cfg-dashboard-host" type="text" disabled title="Requires restart"></div>
-  </div>
-  <div class="config-section">
-    <h3>Rules</h3>
-    <div class="config-field" style="align-items:flex-start"><label>extra</label><textarea id="cfg-rules-extra" rows="6" style="flex:1;max-width:500px;padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical" placeholder="[]"></textarea></div>
   </div>
   <div class="config-section">
     <h3>Agent Profiles</h3>
@@ -563,9 +599,17 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 <!-- Tab 4: Rules -->
 <div id="tab-rules" class="tab-content">
-  <div class="placeholder">
-    <h2>Rule Editor</h2>
-    <p>Coming Soon — Rule CRUD, YAML editor, rule testing</p>
+  <div class="rules-panel">
+    <div class="rules-toolbar">
+      <select id="rules-file-select"></select>
+      <button id="btn-rules-add">Add Rule</button>
+      <button id="btn-rules-upload">Upload YAML</button>
+      <button id="btn-rules-download">Download YAML</button>
+      <button id="btn-rules-save" class="primary">Save</button>
+      <input id="rules-upload-input" type="file" accept=".yaml,.yml" style="display:none">
+    </div>
+    <div class="rules-meta" id="rules-meta">Loading rules...</div>
+    <div class="rules-list" id="rules-list"></div>
   </div>
 </div>
 
@@ -1019,8 +1063,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         document.getElementById('cfg-dashboard-enabled').checked = cfg.dashboard?.enabled ?? true;
         document.getElementById('cfg-dashboard-port').value = cfg.dashboard?.port ?? 19198;
         document.getElementById('cfg-dashboard-host').value = cfg.dashboard?.host || '127.0.0.1';
-        // Rules extra
-        document.getElementById('cfg-rules-extra').value = cfg.rules?.extra ? JSON.stringify(cfg.rules.extra, null, 2) : '[]';
         // Agent Profiles
         document.getElementById('cfg-agentProfiles').value = cfg.agentProfiles ? JSON.stringify(cfg.agentProfiles, null, 2) : '{}';
       })
@@ -1031,13 +1073,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     var labels = getSelectedLabels();
 
     // Parse JSON textareas
-    var rulesExtra, agentProfiles;
-    try {
-      rulesExtra = JSON.parse(document.getElementById('cfg-rules-extra').value || '[]');
-    } catch(e) {
-      showToast('Invalid JSON in rules.extra', 'error');
-      return;
-    }
+    var agentProfiles;
     try {
       agentProfiles = JSON.parse(document.getElementById('cfg-agentProfiles').value || '{}');
     } catch(e) {
@@ -1068,7 +1104,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         level: document.getElementById('cfg-logging-level').value,
         auditJsonl: document.getElementById('cfg-logging-auditJsonl').checked,
       },
-      rules: { extra: rulesExtra },
       agentProfiles: agentProfiles,
     };
     fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -1297,6 +1332,335 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   // Load scan on first tab switch
   document.querySelector('[data-tab="health"]').addEventListener('click', function() {
     if (!healthLoaded) loadHealthScan();
+  });
+
+  // ─── Rules Tab ───
+  var rulesLoaded = false;
+  var rulesState = {
+    files: [],
+    activeFile: '',
+    currentFile: '',
+    originalRules: [],
+    draftRules: [],
+    dirty: false,
+  };
+
+  var rulesFileSelect = document.getElementById('rules-file-select');
+  var rulesMeta = document.getElementById('rules-meta');
+  var rulesList = document.getElementById('rules-list');
+  var btnRulesAdd = document.getElementById('btn-rules-add');
+  var btnRulesUpload = document.getElementById('btn-rules-upload');
+  var btnRulesDownload = document.getElementById('btn-rules-download');
+  var btnRulesSave = document.getElementById('btn-rules-save');
+  var rulesUploadInput = document.getElementById('rules-upload-input');
+
+  function cloneJson(v) {
+    return JSON.parse(JSON.stringify(v));
+  }
+
+  function normalizeRule(rule, idx) {
+    return {
+      id: rule && rule.id ? String(rule.id) : ('RULE-' + (idx + 1)),
+      name: rule && rule.name ? String(rule.name) : 'New Rule',
+      toolMatch: Array.isArray(rule && rule.toolMatch) ? rule.toolMatch.map(function(t) { return String(t); }) : ['*'],
+      conditions: Array.isArray(rule && rule.conditions) ? rule.conditions : [],
+      tier: (rule && (rule.tier === 'GREEN' || rule.tier === 'YELLOW' || rule.tier === 'RED')) ? rule.tier : 'YELLOW',
+      reason: rule && rule.reason ? String(rule.reason) : '',
+      priority: Number.isFinite(rule && rule.priority) ? Number(rule.priority) : 1000,
+    };
+  }
+
+  function setRulesDirty(dirty) {
+    rulesState.dirty = dirty;
+    btnRulesSave.disabled = !dirty || !rulesState.currentFile;
+    updateRulesMeta();
+  }
+
+  function updateRulesMeta() {
+    var text = '';
+    if (!rulesState.currentFile) {
+      text = 'No rule file available. Put YAML files under ~/.openclaw/seclaw/rules.';
+    } else {
+      text = 'Editing: ' + rulesState.currentFile + ' | Active: ' + (rulesState.activeFile || '(none)');
+      if (rulesState.dirty) text += ' | Unsaved changes';
+    }
+    rulesMeta.textContent = text;
+    btnRulesAdd.disabled = !rulesState.currentFile;
+    btnRulesUpload.disabled = !rulesState.currentFile;
+    btnRulesDownload.disabled = !rulesState.currentFile;
+  }
+
+  function renderRules() {
+    rulesList.innerHTML = '';
+    if (!rulesState.currentFile) {
+      updateRulesMeta();
+      return;
+    }
+    if (rulesState.draftRules.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'rule-item';
+      empty.textContent = 'No rules in this file. Click Add Rule to create one.';
+      rulesList.appendChild(empty);
+      updateRulesMeta();
+      return;
+    }
+
+    rulesState.draftRules.forEach(function(rule, idx) {
+      var item = document.createElement('div');
+      item.className = 'rule-item';
+
+      var header = document.createElement('div');
+      header.className = 'rule-item-header';
+      var title = document.createElement('div');
+      title.className = 'rule-item-title';
+      title.textContent = (idx + 1) + '. ' + rule.id;
+      var removeBtn = document.createElement('button');
+      removeBtn.className = 'rule-item-remove';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', function() {
+        rulesState.draftRules.splice(idx, 1);
+        setRulesDirty(true);
+        renderRules();
+      });
+      header.appendChild(title);
+      header.appendChild(removeBtn);
+      item.appendChild(header);
+
+      var grid = document.createElement('div');
+      grid.className = 'rule-grid';
+
+      function field(label, value, inputType, onChange, full) {
+        var container = document.createElement('div');
+        container.className = 'rule-field' + (full ? ' full' : '');
+        var lbl = document.createElement('label');
+        lbl.textContent = label;
+        var input = document.createElement(inputType === 'textarea' ? 'textarea' : 'input');
+        if (inputType !== 'textarea' && inputType !== 'text') input.type = inputType;
+        if (inputType === 'textarea') input.rows = 4;
+        input.value = value;
+        input.addEventListener('input', function() {
+          onChange(input.value, input);
+        });
+        container.appendChild(lbl);
+        container.appendChild(input);
+        return container;
+      }
+
+      grid.appendChild(field('id', rule.id, 'text', function(v) {
+        rule.id = v.trim();
+        setRulesDirty(true);
+      }));
+      grid.appendChild(field('name', rule.name, 'text', function(v) {
+        rule.name = v.trim();
+        setRulesDirty(true);
+      }));
+      grid.appendChild(field('toolMatch (comma-separated)', (rule.toolMatch || []).join(', '), 'text', function(v) {
+        rule.toolMatch = v.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+        if (rule.toolMatch.length === 0) rule.toolMatch = ['*'];
+        setRulesDirty(true);
+      }));
+      grid.appendChild(field('priority', String(rule.priority), 'number', function(v) {
+        var p = parseInt(v, 10);
+        if (!Number.isFinite(p)) p = 1000;
+        rule.priority = p;
+        setRulesDirty(true);
+      }));
+
+      var tierField = document.createElement('div');
+      tierField.className = 'rule-field';
+      var tierLabel = document.createElement('label');
+      tierLabel.textContent = 'tier';
+      var tierSelect = document.createElement('select');
+      ['GREEN', 'YELLOW', 'RED'].forEach(function(t) {
+        var opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        tierSelect.appendChild(opt);
+      });
+      tierSelect.value = rule.tier || 'YELLOW';
+      tierSelect.addEventListener('change', function() {
+        rule.tier = tierSelect.value;
+        setRulesDirty(true);
+      });
+      tierField.appendChild(tierLabel);
+      tierField.appendChild(tierSelect);
+      grid.appendChild(tierField);
+
+      grid.appendChild(field('reason', rule.reason || '', 'text', function(v) {
+        rule.reason = v;
+        setRulesDirty(true);
+      }));
+
+      grid.appendChild(field('conditions (JSON array)', JSON.stringify(rule.conditions || [], null, 2), 'textarea', function(v, input) {
+        try {
+          var parsed = JSON.parse(v || '[]');
+          if (!Array.isArray(parsed)) throw new Error('not array');
+          rule.conditions = parsed;
+          input.style.borderColor = 'var(--border)';
+          setRulesDirty(true);
+        } catch(e) {
+          input.style.borderColor = 'var(--red)';
+        }
+      }, true));
+
+      item.appendChild(grid);
+      rulesList.appendChild(item);
+    });
+
+    updateRulesMeta();
+  }
+
+  function loadRuleFile(fileName, skipDirtyPrompt) {
+    if (!fileName) return;
+    if (!skipDirtyPrompt && rulesState.dirty) {
+      var ok = window.confirm('You have unsaved rule changes. Discard them and switch file?');
+      if (!ok) {
+        rulesFileSelect.value = rulesState.currentFile;
+        return;
+      }
+    }
+    fetch('/api/rules/file?name=' + encodeURIComponent(fileName))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) { showToast(data.error, 'error'); return; }
+        rulesState.currentFile = fileName;
+        rulesState.originalRules = (data.rules || []).map(normalizeRule);
+        rulesState.draftRules = cloneJson(rulesState.originalRules);
+        setRulesDirty(false);
+        renderRules();
+      })
+      .catch(function() { showToast('Failed to load rule file', 'error'); });
+  }
+
+  function loadRuleFiles() {
+    fetch('/api/rules/files')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        rulesState.files = Array.isArray(data.files) ? data.files : [];
+        rulesState.activeFile = data.activeRuleFile || '';
+        rulesFileSelect.innerHTML = '';
+        rulesState.files.forEach(function(fileName) {
+          var opt = document.createElement('option');
+          opt.value = fileName;
+          opt.textContent = fileName + (fileName === rulesState.activeFile ? ' (active)' : '');
+          rulesFileSelect.appendChild(opt);
+        });
+
+        var target = '';
+        if (rulesState.currentFile && rulesState.files.indexOf(rulesState.currentFile) >= 0) target = rulesState.currentFile;
+        else if (rulesState.activeFile && rulesState.files.indexOf(rulesState.activeFile) >= 0) target = rulesState.activeFile;
+        else if (rulesState.files.length > 0) target = rulesState.files[0];
+
+        if (!target) {
+          rulesState.currentFile = '';
+          rulesState.originalRules = [];
+          rulesState.draftRules = [];
+          setRulesDirty(false);
+          renderRules();
+          return;
+        }
+
+        rulesFileSelect.value = target;
+        loadRuleFile(target, true);
+      })
+      .catch(function() { showToast('Failed to load rule files', 'error'); });
+  }
+
+  function saveRules() {
+    if (!rulesState.currentFile) return;
+    fetch('/api/rules/file?name=' + encodeURIComponent(rulesState.currentFile), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules: rulesState.draftRules }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error || data.ok === false) {
+          showToast((data.error || (data.errors || []).join(', ') || 'Failed to save rules'), 'error');
+          return;
+        }
+        return fetch('/api/rules/active', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: rulesState.currentFile }),
+        })
+          .then(function(r) { return r.json(); })
+          .then(function(activeData) {
+            if (activeData.error || activeData.ok === false) {
+              showToast((activeData.error || (activeData.errors || []).join(', ') || 'Failed to set active rule file'), 'error');
+              return;
+            }
+            rulesState.activeFile = rulesState.currentFile;
+            rulesState.originalRules = cloneJson(rulesState.draftRules);
+            setRulesDirty(false);
+            showToast('Rules saved', 'success');
+            loadRuleFiles();
+          });
+      })
+      .catch(function() { showToast('Failed to save rules', 'error'); });
+  }
+
+  rulesFileSelect.addEventListener('change', function() {
+    loadRuleFile(rulesFileSelect.value, false);
+  });
+
+  btnRulesAdd.addEventListener('click', function() {
+    if (!rulesState.currentFile) return;
+    rulesState.draftRules.push(normalizeRule({
+      id: 'RULE-' + Date.now(),
+      name: 'New Rule',
+      toolMatch: ['*'],
+      conditions: [],
+      tier: 'YELLOW',
+      priority: 1000,
+      reason: '',
+    }, rulesState.draftRules.length));
+    setRulesDirty(true);
+    renderRules();
+  });
+
+  btnRulesSave.addEventListener('click', saveRules);
+
+  btnRulesDownload.addEventListener('click', function() {
+    if (!rulesState.currentFile) return;
+    window.location.href = '/api/rules/file/download?name=' + encodeURIComponent(rulesState.currentFile);
+  });
+
+  btnRulesUpload.addEventListener('click', function() {
+    if (!rulesState.currentFile) return;
+    rulesUploadInput.value = '';
+    rulesUploadInput.click();
+  });
+
+  rulesUploadInput.addEventListener('change', function() {
+    var file = rulesUploadInput.files && rulesUploadInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function() {
+      var content = String(reader.result || '');
+      fetch('/api/rules/file/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: content }),
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) { showToast(data.error, 'error'); return; }
+          rulesState.draftRules = (data.rules || []).map(normalizeRule);
+          setRulesDirty(true);
+          renderRules();
+          showToast('YAML loaded (not saved yet)', 'success');
+        })
+        .catch(function() { showToast('Failed to parse uploaded YAML', 'error'); });
+    };
+    reader.readAsText(file);
+  });
+
+  document.querySelector('[data-tab="rules"]').addEventListener('click', function() {
+    if (!rulesLoaded) {
+      rulesLoaded = true;
+      loadRuleFiles();
+    }
   });
 })();
 </script>

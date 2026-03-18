@@ -46,7 +46,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "extra": { "type": "array" }
+          "activeRuleFile": { "type": "string" }
         }
       },
       "dashboard": {

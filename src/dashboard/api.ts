@@ -4,9 +4,13 @@
  */
 
 import type * as http from "node:http";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
+import type { Rule } from "../config.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   detectPlatform,
   runAllChecks,
@@ -45,6 +49,45 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
+const RULE_FILE_NAME_RE = /^[A-Za-z0-9._-]+\.(ya?ml)$/i;
+
+function getRulesDir(deps: DashboardDeps): string {
+  return path.join(deps.getOpenClawDir(), "seclaw", "rules");
+}
+
+function normalizeRuleFileName(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!RULE_FILE_NAME_RE.test(raw)) return null;
+  if (raw.includes("/") || raw.includes("\\")) return null;
+  return raw;
+}
+
+function listRuleFiles(deps: DashboardDeps): string[] {
+  const rulesDir = getRulesDir(deps);
+  if (!fs.existsSync(rulesDir)) return [];
+  return fs
+    .readdirSync(rulesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && RULE_FILE_NAME_RE.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function loadRulesFromYamlFile(filePath: string): Rule[] {
+  const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
+  if (!content.trim()) return [];
+  const parsed = parseYaml(content);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Rule file must contain a YAML array");
+  }
+  return parsed as Rule[];
+}
+
+function saveRulesToYamlFile(filePath: string, rules: Rule[]): void {
+  const content = stringifyYaml(rules);
+  const normalized = content.endsWith("\n") ? content : `${content}\n`;
+  fs.writeFileSync(filePath, normalized, "utf-8");
+}
+
 // ─── Main Router ───
 
 export function handleApiRequest(
@@ -76,6 +119,18 @@ export function handleApiRequest(
     handleHealthReport(res, deps);
   } else if (path === "/api/health" && method === "GET") {
     handleHealth(res);
+  } else if (path === "/api/rules/files" && method === "GET") {
+    handleGetRuleFiles(res, deps);
+  } else if (path === "/api/rules/file" && method === "GET") {
+    handleGetRuleFile(res, url, deps);
+  } else if (path === "/api/rules/file" && method === "PUT") {
+    handleSaveRuleFile(req, res, url, deps);
+  } else if (path === "/api/rules/file/parse" && method === "POST") {
+    handleParseRuleFile(req, res);
+  } else if (path === "/api/rules/file/download" && method === "GET") {
+    handleDownloadRuleFile(res, url, deps);
+  } else if (path === "/api/rules/active" && method === "PUT") {
+    handleSetActiveRuleFile(req, res, deps);
   } else if (path === "/api/rules" && method === "GET") {
     handleGetRules(res, deps);
   } else if (path === "/api/models" && method === "GET") {
@@ -286,6 +341,157 @@ function handleGetRules(
 ): void {
   const rules = deps.getRuleEngine().getRules();
   json(res, 200, rules);
+}
+
+// ─── GET /api/rules/files ───
+
+function handleGetRuleFiles(
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): void {
+  const files = listRuleFiles(deps);
+  const activeRuleFile = deps.getConfig().rules?.activeRuleFile || "";
+  json(res, 200, { files, activeRuleFile });
+}
+
+// ─── GET /api/rules/file?name=xxx.yaml ───
+
+function handleGetRuleFile(
+  res: http.ServerResponse,
+  url: URL,
+  deps: DashboardDeps,
+): void {
+  const fileName = normalizeRuleFileName(url.searchParams.get("name"));
+  if (!fileName) {
+    json(res, 400, { error: "Invalid rule file name" });
+    return;
+  }
+
+  const filePath = path.join(getRulesDir(deps), fileName);
+  try {
+    const rules = loadRulesFromYamlFile(filePath);
+    json(res, 200, { name: fileName, rules });
+  } catch (err: any) {
+    json(res, 400, { error: `Failed to parse rule file: ${err.message}` });
+  }
+}
+
+// ─── POST /api/rules/file/parse ───
+
+async function handleParseRuleFile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body);
+    if (typeof parsed.content !== "string") {
+      json(res, 400, { error: "content must be a string" });
+      return;
+    }
+    const yamlParsed = parseYaml(parsed.content);
+    if (!Array.isArray(yamlParsed)) {
+      json(res, 400, { error: "Rule file must contain a YAML array" });
+      return;
+    }
+    json(res, 200, { rules: yamlParsed });
+  } catch (err: any) {
+    json(res, 400, { error: `Invalid rule file: ${err.message}` });
+  }
+}
+
+// ─── PUT /api/rules/file?name=xxx.yaml ───
+
+async function handleSaveRuleFile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  deps: DashboardDeps,
+): Promise<void> {
+  const fileName = normalizeRuleFileName(url.searchParams.get("name"));
+  if (!fileName) {
+    json(res, 400, { error: "Invalid rule file name" });
+    return;
+  }
+
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body);
+    if (!Array.isArray(parsed.rules)) {
+      json(res, 400, { error: "rules must be an array" });
+      return;
+    }
+
+    const rulesDir = getRulesDir(deps);
+    fs.mkdirSync(rulesDir, { recursive: true });
+    const filePath = path.join(rulesDir, fileName);
+    saveRulesToYamlFile(filePath, parsed.rules as Rule[]);
+
+    const activeRuleFile = deps.getConfig().rules?.activeRuleFile;
+    if (activeRuleFile === fileName) {
+      const update = deps.updateConfig({ rules: { activeRuleFile: fileName } });
+      if (!update.ok) {
+        json(res, 400, { ok: false, errors: update.errors });
+        return;
+      }
+    }
+
+    json(res, 200, { ok: true });
+  } catch (err: any) {
+    json(res, 400, { error: `Failed to save rule file: ${err.message}` });
+  }
+}
+
+// ─── GET /api/rules/file/download?name=xxx.yaml ───
+
+function handleDownloadRuleFile(
+  res: http.ServerResponse,
+  url: URL,
+  deps: DashboardDeps,
+): void {
+  const fileName = normalizeRuleFileName(url.searchParams.get("name"));
+  if (!fileName) {
+    json(res, 400, { error: "Invalid rule file name" });
+    return;
+  }
+
+  const filePath = path.join(getRulesDir(deps), fileName);
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    res.writeHead(200, {
+      "Content-Type": "application/x-yaml; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+    });
+    res.end(content);
+  } catch (err: any) {
+    json(res, 404, { error: `Cannot read rule file: ${err.message}` });
+  }
+}
+
+// ─── PUT /api/rules/active ───
+
+async function handleSetActiveRuleFile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): Promise<void> {
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body);
+    const fileName = normalizeRuleFileName(parsed?.name);
+    if (!fileName) {
+      json(res, 400, { error: "Invalid rule file name" });
+      return;
+    }
+    const result = deps.updateConfig({ rules: { activeRuleFile: fileName } });
+    if (!result.ok) {
+      json(res, 400, { ok: false, errors: result.errors });
+      return;
+    }
+    json(res, 200, { ok: true });
+  } catch (err: any) {
+    json(res, 400, { error: `Failed to set active rule file: ${err.message}` });
+  }
 }
 
 // ─── GET /api/models ───

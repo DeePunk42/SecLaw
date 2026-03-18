@@ -105,6 +105,7 @@ describe("Dashboard", () => {
   let dashTmpDir: string;
   let prevOpenClawHome: string | undefined;
   let openClawDir: string;
+  let runtimeConfig: any;
 
   beforeEach(async () => {
     dashTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-dash-"));
@@ -139,19 +140,47 @@ describe("Dashboard", () => {
       },
     });
 
+    runtimeConfig = {
+      llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
+      timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+      logging: { level: "info" as const, auditJsonl: false },
+      dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      rules: { activeRuleFile: "default.yaml" },
+    };
+
     // Start dashboard on OS-assigned port
     const dashboardConfig: DashboardConfig = { enabled: true, port: 0, host: "127.0.0.1" };
     const actualPort = await startDashboard(dashboardConfig, {
-      getConfig: () => ({
-        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
-        logging: { level: "info" as const, auditJsonl: false },
-        dashboard: dashboardConfig,
-      }),
-      updateConfig: _updateConfig,
+      getConfig: () => runtimeConfig,
+      updateConfig: (partial) => {
+        const result = _updateConfig(partial);
+        if (result.ok) {
+          runtimeConfig = {
+            ...runtimeConfig,
+            llm: partial.llm ? { ...runtimeConfig.llm, ...partial.llm } : runtimeConfig.llm,
+            timeouts: partial.timeouts
+              ? { ...runtimeConfig.timeouts, ...partial.timeouts }
+              : runtimeConfig.timeouts,
+            logging: partial.logging
+              ? { ...runtimeConfig.logging, ...partial.logging }
+              : runtimeConfig.logging,
+            dashboard: partial.dashboard
+              ? { ...runtimeConfig.dashboard, ...partial.dashboard }
+              : runtimeConfig.dashboard,
+            rules: partial.rules
+              ? { ...(runtimeConfig.rules || {}), ...partial.rules }
+              : runtimeConfig.rules,
+          };
+        }
+        return result;
+      },
       getAuditLog: () => _getAuditLog(),
       getRuleEngine: () => _getRuleEngine(),
       getAsyncQueue: () => _getAsyncQueue(),
+      getAvailableModels: () => [],
+      getWorkspacePath: () => "/workspace",
+      getVarDir: () => path.join(dashTmpDir, "var"),
+      getOpenClawDir: () => openClawDir,
     });
     baseUrl = `http://127.0.0.1:${actualPort}`;
   });
@@ -283,6 +312,90 @@ describe("Dashboard", () => {
     const data = await res.json() as any[];
     expect(Array.isArray(data)).toBe(true);
     expect(data.length).toBeGreaterThan(0);
+  });
+
+  it("GET /api/rules/files returns files and active file", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/files`);
+    expect(res.status).toBe(200);
+    const data = await res.json() as { files: string[]; activeRuleFile: string };
+    expect(data.files).toContain("default.yaml");
+    expect(data.activeRuleFile).toBe("default.yaml");
+  });
+
+  it("GET /api/rules/file returns parsed YAML rules", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/file?name=default.yaml`);
+    expect(res.status).toBe(200);
+    const data = await res.json() as { name: string; rules: any[] };
+    expect(data.name).toBe("default.yaml");
+    expect(Array.isArray(data.rules)).toBe(true);
+    expect(data.rules.length).toBeGreaterThan(0);
+  });
+
+  it("POST /api/rules/file/parse validates uploaded YAML content", async () => {
+    const yaml = [
+      "- id: TEST-PARSE-001",
+      "  name: Parse Rule",
+      "  toolMatch: [exec]",
+      "  conditions: []",
+      "  tier: YELLOW",
+      "  priority: 100",
+      "",
+    ].join("\n");
+    const res = await fetch(`${baseUrl}/api/rules/file/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: yaml }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { rules: any[] };
+    expect(Array.isArray(data.rules)).toBe(true);
+    expect(data.rules[0].id).toBe("TEST-PARSE-001");
+  });
+
+  it("PUT /api/rules/file saves YAML, can download, and activate file", async () => {
+    const rules = [
+      {
+        id: "TEST-ACTIVE-001",
+        name: "Only Rule",
+        toolMatch: ["exec"],
+        conditions: [{ type: "command_matches", pattern: "^echo\\s+" }],
+        tier: "GREEN",
+        reason: "test",
+        priority: 1,
+      },
+    ];
+
+    const saveRes = await fetch(`${baseUrl}/api/rules/file?name=custom.yaml`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rules }),
+    });
+    expect(saveRes.status).toBe(200);
+    expect(await saveRes.json()).toEqual({ ok: true });
+
+    const activateRes = await fetch(`${baseUrl}/api/rules/active`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "custom.yaml" }),
+    });
+    expect(activateRes.status).toBe(200);
+    expect(await activateRes.json()).toEqual({ ok: true });
+
+    const filesRes = await fetch(`${baseUrl}/api/rules/files`);
+    const filesData = await filesRes.json() as { files: string[]; activeRuleFile: string };
+    expect(filesData.files).toContain("custom.yaml");
+    expect(filesData.activeRuleFile).toBe("custom.yaml");
+
+    const runtimeRulesRes = await fetch(`${baseUrl}/api/rules`);
+    const runtimeRules = await runtimeRulesRes.json() as Array<{ id: string }>;
+    expect(runtimeRules.length).toBe(1);
+    expect(runtimeRules[0].id).toBe("TEST-ACTIVE-001");
+
+    const downloadRes = await fetch(`${baseUrl}/api/rules/file/download?name=custom.yaml`);
+    expect(downloadRes.status).toBe(200);
+    expect(downloadRes.headers["content-type"]).toContain("application/x-yaml");
+    const text = await downloadRes.text();
+    expect(text).toContain("TEST-ACTIVE-001");
   });
 
   // ─── Tool Calls API Tests ───
@@ -473,6 +586,7 @@ describe("Config persistence", () => {
       getAvailableModels: () => [],
       getWorkspacePath: () => undefined,
       getVarDir: () => varDir,
+      getOpenClawDir: () => openClawDir,
     });
     baseUrl = `http://127.0.0.1:${actualPort}`;
   });
@@ -552,6 +666,7 @@ describe("Sender labels refresh", () => {
       getAvailableModels: () => [],
       getWorkspacePath: () => undefined,
       getVarDir: () => varDir,
+      getOpenClawDir: () => path.join(tmpDir, ".openclaw"),
     });
     baseUrl = `http://127.0.0.1:${actualPort}`;
   });
