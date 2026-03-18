@@ -7,6 +7,11 @@
   "publishConfig": {
     "access": "public"
   },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
   "files": [
     "dist/**",
     "openclaw.plugin.json",
