@@ -549,9 +549,15 @@ function updateConfig(partial: Partial<SecLawConfig>): {
       if (gatewayApi) {
         const provider = gatewayApi.config.models?.providers?.[providerName];
         if (!provider) {
-          errors.push(
-            `llm.model: provider "${providerName}" not found in gateway models.providers`,
-          );
+          // Fallback: check auth.profiles + known provider URL map
+          const authProfile = findAuthProfile(providerName);
+          const knownUrl = resolveKnownProviderUrl(providerName);
+          if (!authProfile || !knownUrl) {
+            errors.push(
+              `llm.model: provider "${providerName}" not found in gateway models.providers` +
+                (authProfile && !knownUrl ? ` (auth profile found but no known base URL for "${providerName}")` : ""),
+            );
+          }
         } else if (
           !provider.apiKey &&
           (provider.auth === "oauth" || provider.auth === "token") &&
@@ -1026,7 +1032,14 @@ function register(api: OpenClawPluginApi): void {
       const providerAuth = resolved?.auth;
       const hasStaticKey = !!resolved?.apiKey;
       const hasRuntimeAuth = !!api.runtime?.modelAuth;
-      if (!hasStaticKey && hasRuntimeAuth) {
+      const isAuthProfileFallback = resolved?.providerName &&
+        !api.config.models?.providers?.[resolved.providerName];
+      if (isAuthProfileFallback) {
+        api.logger.info(
+          `[seclaw] 🚀 LLM connected via auth profile (${providerAuth ?? "unknown"})`,
+          `model=${config.llm.model}`,
+        );
+      } else if (!hasStaticKey && hasRuntimeAuth) {
         api.logger.info(
           "[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth)",
           `model=${config.llm.model}`,
@@ -1136,11 +1149,66 @@ function register(api: OpenClawPluginApi): void {
   });
 }
 
+/** Well-known OpenAI-compatible provider base URLs, used as fallback when
+ *  a provider exists in auth.profiles but not in models.providers. */
+const KNOWN_PROVIDER_BASE_URLS: Record<string, string> = {
+  "openai":     "https://api.openai.com/v1",
+  "deepseek":   "https://api.deepseek.com",
+  "mistral":    "https://api.mistral.ai/v1",
+  "groq":       "https://api.groq.com/openai/v1",
+  "together":   "https://api.together.xyz/v1",
+  "fireworks":  "https://api.fireworks.ai/inference/v1",
+  "perplexity": "https://api.perplexity.ai",
+  "xai":        "https://api.x.ai/v1",
+};
+
+/** Resolve a base URL from KNOWN_PROVIDER_BASE_URLS using prefix matching.
+ *  e.g. "openai-codex" starts with "openai" → "https://api.openai.com/v1" */
+function resolveKnownProviderUrl(providerName: string): string | null {
+  if (KNOWN_PROVIDER_BASE_URLS[providerName]) return KNOWN_PROVIDER_BASE_URLS[providerName];
+  // Prefix match: find the longest known prefix that the provider name starts with
+  let best: string | null = null;
+  let bestLen = 0;
+  for (const known of Object.keys(KNOWN_PROVIDER_BASE_URLS)) {
+    if (providerName.startsWith(known) && known.length > bestLen) {
+      best = KNOWN_PROVIDER_BASE_URLS[known];
+      bestLen = known.length;
+    }
+  }
+  return best;
+}
+
+/** Read auth.profiles from openclaw.json. Returns null on any error. */
+function readAuthProfiles(): Record<string, { provider: string; mode: string }> | null {
+  try {
+    const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
+    const raw = fs.readFileSync(openClawPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    const profiles = parsed?.auth?.profiles;
+    if (!profiles || typeof profiles !== "object") return null;
+    return profiles as Record<string, { provider: string; mode: string }>;
+  } catch {
+    return null;
+  }
+}
+
+/** Find an auth profile entry whose `provider` field matches the given provider name. */
+function findAuthProfile(providerName: string): { provider: string; mode: string } | null {
+  const profiles = readAuthProfiles();
+  if (!profiles) return null;
+  for (const profile of Object.values(profiles)) {
+    if (profile.provider === providerName) return profile;
+  }
+  return null;
+}
+
 /**
  * Resolve provider endpoint and apiKey for an LLM call.
  *
  * The model string must contain "/" (e.g. "myapi/gpt-5.2"), where
  * provider config is resolved from api.config.models.providers.
+ * Falls back to auth.profiles + known provider URL map when the
+ * provider is not in models.providers.
  */
 function resolveProviderEndpoint(
   model: string,
@@ -1151,12 +1219,23 @@ function resolveProviderEndpoint(
     const providerName = model.slice(0, slashIdx);
     const modelId = model.slice(slashIdx + 1);
     const provider = api.config.models?.providers?.[providerName];
-    if (!provider) return null;
-    let endpoint = provider.baseUrl;
-    if (!endpoint.endsWith("/chat/completions")) {
-      endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
+    if (provider) {
+      let endpoint = provider.baseUrl;
+      if (!endpoint.endsWith("/chat/completions")) {
+        endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
+      }
+      return { endpoint, apiKey: provider.apiKey, modelId, providerName, auth: provider.auth };
     }
-    return { endpoint, apiKey: provider.apiKey, modelId, providerName, auth: provider.auth };
+    // Fallback: check auth.profiles + known provider URL map
+    const authProfile = findAuthProfile(providerName);
+    if (authProfile) {
+      const baseUrl = resolveKnownProviderUrl(providerName);
+      if (baseUrl) {
+        const endpoint = baseUrl.replace(/\/+$/, "") + "/chat/completions";
+        return { endpoint, modelId, providerName, auth: authProfile.mode };
+      }
+    }
+    return null;
   }
   return null;
 }

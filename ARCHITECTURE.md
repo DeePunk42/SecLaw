@@ -335,6 +335,31 @@ resolveProviderEndpoint("myapi/gpt-5.2", api)
 
 This is the primary mode in production — models are configured in the gateway's `openclaw.json` and presented in the dashboard model selector.
 
+### Auth Profile Fallback
+
+When a provider is **not** found in `models.providers`, `resolveProviderEndpoint()` falls back to:
+
+1. **Read `auth.profiles`** from `openclaw.json` — find a profile where `provider` matches the requested provider name
+2. **Resolve base URL** from `KNOWN_PROVIDER_BASE_URLS` — a static map of well-known OpenAI-compatible providers. Supports prefix matching (e.g. `"openai-codex"` → starts with `"openai"` → `https://api.openai.com/v1`)
+3. **Return endpoint** with `auth` set to the profile's `mode` (typically `"oauth"`) and no `apiKey` (dynamic auth via `runtime.modelAuth`)
+
+If the auth profile is found but the provider has no known base URL, resolution returns `null` (same as provider-not-found).
+
+**Known provider URL map:**
+
+| Prefix | Base URL |
+|--------|----------|
+| `openai` | `https://api.openai.com/v1` |
+| `deepseek` | `https://api.deepseek.com` |
+| `mistral` | `https://api.mistral.ai/v1` |
+| `groq` | `https://api.groq.com/openai/v1` |
+| `together` | `https://api.together.xyz/v1` |
+| `fireworks` | `https://api.fireworks.ai/inference/v1` |
+| `perplexity` | `https://api.perplexity.ai` |
+| `xai` | `https://api.x.ai/v1` |
+
+**Precedence:** `models.providers` always takes priority. Auth profile lookup only happens when the provider is absent from `models.providers`.
+
 ### Call-time Re-resolution
 
 `createGatewayLLMCallFn()` re-resolves the provider at call time (not just at creation time), so runtime model changes via the dashboard take effect immediately without recreating the call function closure.
