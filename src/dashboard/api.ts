@@ -135,6 +135,8 @@ export function handleApiRequest(
     handleGetRules(res, deps);
   } else if (path === "/api/models" && method === "GET") {
     handleGetModels(res, deps);
+  } else if (path === "/api/models/test" && method === "POST") {
+    handleTestModel(req, res, deps);
   } else if (path === "/api/sender-labels" && method === "GET") {
     handleGetSenderLabels(res, deps);
   } else if (path === "/api/sender-labels/refresh" && method === "POST") {
@@ -501,6 +503,41 @@ function handleGetModels(
   deps: DashboardDeps,
 ): void {
   json(res, 200, deps.getAvailableModels());
+}
+
+// ─── POST /api/models/test ───
+
+async function handleTestModel(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): Promise<void> {
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body) as { model?: unknown };
+    const model = typeof parsed.model === "string" ? parsed.model.trim() : "";
+    if (!model) {
+      json(res, 400, { ok: false, error: "model is required" });
+      return;
+    }
+    if (!model.includes("/")) {
+      json(res, 400, {
+        ok: false,
+        model,
+        error: "model must be in provider/model format",
+      });
+      return;
+    }
+
+    const result = await deps.testModelAvailability(model);
+    if (result.ok) {
+      json(res, 200, result);
+      return;
+    }
+    json(res, result.statusCode || 400, result);
+  } catch {
+    json(res, 400, { ok: false, error: "Invalid JSON body" });
+  }
 }
 
 // ─── GET /api/sender-labels ───

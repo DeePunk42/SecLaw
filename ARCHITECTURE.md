@@ -404,17 +404,29 @@ providers: {
 - `updateConfig()` rejects model changes to OAuth/token providers when `runtime.modelAuth` is not available
 - `register()` logs a warning when an OAuth provider has no static key and no runtime auth
 
+### API Surface Payloads
+
+`buildRequestPayload()` constructs the request body based on the resolved API surface:
+
+| API Surface | Payload Fields | Notes |
+|---|---|---|
+| `openai-completions` | `{ model, messages, max_tokens }` | Standard Chat Completions format |
+| `openai-responses` | `{ model, input, max_output_tokens }` | OpenAI Responses API; `instructions` optional, omitted |
+| `openai-codex-responses` | `{ model, instructions, input, max_output_tokens, store }` | Codex API requires `instructions`; `store: false` |
+
+**Codex `instructions` handling**: The Codex backend API (`chatgpt.com/backend-api/codex/responses`) requires an `instructions` field. `buildRequestPayload()` extracts the first `system`-role message from the messages array and uses its content as `instructions`. If no system message is present, a default `"You are a helpful assistant."` is used. System messages are excluded from the `input` array.
+
 ### HTTP Call
 
 ```typescript
 fetch(endpoint, {
   method: "POST",
   headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearerToken}` },
-  body: JSON.stringify({ model: modelId, messages, max_tokens }),
+  body: JSON.stringify(buildRequestPayload(transport, params)),
 });
 ```
 
-The response is parsed from OpenAI format: `data.choices[0].message.content`.
+The response is parsed based on API surface: Responses/Codex use `output_text` or `output[].content[].text`, Completions use `choices[0].message.content`.
 
 ## Config Persistence
 

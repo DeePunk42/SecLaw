@@ -156,6 +156,13 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   font-size: 12px; font-family: var(--font-mono);
 }
 .config-field input[type="checkbox"] { flex: none; width: 16px; height: 16px; }
+.btn-mini {
+  padding: 5px 10px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; cursor: pointer; font-size: 11px;
+  font-family: var(--font-ui);
+}
+.btn-mini:hover { border-color: var(--blue); }
+.btn-mini:disabled { opacity: 0.6; cursor: default; }
 .btn-save {
   padding: 8px 20px; background: var(--blue); border: none; color: #fff;
   border-radius: 4px; cursor: pointer; font-size: 13px; font-family: var(--font-ui);
@@ -407,7 +414,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <div id="tab-config" class="tab-content">
   <div class="config-section">
     <h3>LLM</h3>
-    <div class="config-field"><label>model</label><select id="cfg-llm-model"><option value="">— select model —</option></select></div>
+    <div class="config-field"><label>model</label><select id="cfg-llm-model"><option value="">— select model —</option></select><button id="btn-test-llm-model" class="btn-mini" type="button">Test</button></div>
     <div class="config-field"><label>enabled</label><input id="cfg-llm-enabled" type="checkbox"></div>
     <div class="config-field"><label>maxConcurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"></div>
     <div class="config-field"><label>promptRecentCalls</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"></div>
@@ -1068,6 +1075,40 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       })
       .catch(function() { showToast('Failed to load config', 'error'); });
   }
+
+  document.getElementById('btn-test-llm-model').addEventListener('click', function() {
+    var btn = document.getElementById('btn-test-llm-model');
+    var model = (document.getElementById('cfg-llm-model').value || '').trim();
+    if (!model) {
+      showToast('Please select a model first', 'error');
+      return;
+    }
+    btn.disabled = true;
+    var prevText = btn.textContent;
+    btn.textContent = 'Testing...';
+    fetch('/api/models/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: model }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok) {
+          var latency = typeof data.latencyMs === 'number' ? data.latencyMs + 'ms' : 'n/a';
+          var preview = (data.preview || '').trim();
+          var msg = 'Model test passed (' + latency + ')';
+          if (preview) msg += ': ' + preview;
+          showToast(msg, 'success');
+        } else {
+          showToast('Model test failed: ' + (data.error || 'unknown error'), 'error');
+        }
+      })
+      .catch(function() { showToast('Model test failed', 'error'); })
+      .finally(function() {
+        btn.disabled = false;
+        btn.textContent = prevText || 'Test';
+      });
+  });
 
   document.getElementById('btn-save-config').addEventListener('click', function() {
     var labels = getSelectedLabels();

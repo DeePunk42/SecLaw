@@ -22,6 +22,7 @@ function createMockGatewayApi(
       baseUrl: string;
       apiKey?: string;
       auth?: string;
+      api?: string;
       models?: Array<{ id: string; name: string }>;
     }
   >,
@@ -214,7 +215,7 @@ describe("OAuth provider auth", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(LLMHttpError);
       expect((err as LLMHttpError).statusCode).toBe(401);
-      expect((err as LLMHttpError).message).toContain("OAuth auth resolution failed");
+      expect((err as LLMHttpError).message).toContain("Auth resolution failed");
       expect((err as LLMHttpError).message).toContain("OAuth token expired");
     }
   });
@@ -430,8 +431,7 @@ describe("Auth profile fallback", () => {
     process.env.OPENCLAW_HOME = prevOpenClawHome;
   });
 
-  it("provider not in models.providers but in auth.profiles → resolves via known URL map", async () => {
-    // Write openclaw.json with auth.profiles containing openai-codex
+  it("openai-codex auth profile is accepted via implicit transport", async () => {
     writeOpenClawConfig(openClawDir, {
       plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
       auth: {
@@ -445,14 +445,16 @@ describe("Auth profile fallback", () => {
     });
 
     const resolveApiKey = vi.fn().mockResolvedValue({
-      apiKey: "oauth-token-from-profile",
+      apiKey: "oauth-token-123",
       source: "oauth",
       mode: "oauth" as const,
     });
-    // No openai-codex in models.providers
     const api = createMockGatewayApi(
       {},
-      { modelAuth: { resolveApiKeyForProvider: resolveApiKey } },
+      {
+        config: { loadConfig: () => JSON.parse(fs.readFileSync(path.join(openClawDir, "openclaw.json"), "utf-8")) },
+        modelAuth: { resolveApiKeyForProvider: resolveApiKey },
+      },
     );
 
     init({
@@ -463,15 +465,14 @@ describe("Auth profile fallback", () => {
     _setGatewayApi(api);
 
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
-
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "SAFE: ok" } }],
-        }),
+      json: () => Promise.resolve({ output_text: "SAFE: codex ok" }),
     });
     globalThis.fetch = fetchMock;
+
+    const result = _updateConfig({ llm: { model: "openai-codex/gpt-5.2" } });
+    expect(result.ok).toBe(true);
 
     await llmCallFn({
       model: "openai-codex/gpt-5.2",
@@ -479,64 +480,65 @@ describe("Auth profile fallback", () => {
       max_tokens: 100,
     });
 
-    // Should have resolved via auth profile + dynamic auth
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "openai-codex" });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    // Verify endpoint uses known OpenAI base URL
-    const url = fetchMock.mock.calls[0][0];
-    expect(url).toBe("https://api.openai.com/v1/chat/completions");
-    // Verify auth token
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai-codex" }),
+    );
+    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
     const headers = fetchMock.mock.calls[0][1].headers;
-    expect(headers["Authorization"]).toBe("Bearer oauth-token-from-profile");
+    expect(headers.originator).toBe("openclaw");
+    expect(headers["User-Agent"]).toBe("openclaw/seclaw");
+
+    // Verify codex payload includes instructions field
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.instructions).toBe("You are a helpful assistant.");
+    expect(body.store).toBe(false);
+    expect(body.input).toEqual([{ role: "user", content: "test" }]);
   });
 
-  it("prefix matching: openai-codex matches openai prefix → correct baseUrl", () => {
+  it("unknown provider remains rejected even if auth.profiles exists", () => {
     writeOpenClawConfig(openClawDir, {
       plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
       auth: {
         profiles: {
-          "openai-codex:default": {
-            provider: "openai-codex",
+          "mystery-provider:default": {
+            provider: "mystery-provider",
             mode: "oauth",
           },
         },
       },
     });
-
     const api = createMockGatewayApi(
       {},
-      { modelAuth: { resolveApiKeyForProvider: vi.fn() } },
+      {
+        config: { loadConfig: () => JSON.parse(fs.readFileSync(path.join(openClawDir, "openclaw.json"), "utf-8")) },
+        modelAuth: { resolveApiKeyForProvider: vi.fn() },
+      },
     );
-
     init({
       pluginDir: __dirname + "/..",
       varDir: tmpDir,
-      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "openai-codex/gpt-5.2" } },
+      config: BASE_CONFIG,
     });
     _setGatewayApi(api);
-
-    // updateConfig should accept this model (auth profile + known URL)
-    const result = _updateConfig({ llm: { model: "openai-codex/gpt-5.2" } });
-    expect(result.ok).toBe(true);
+    const result = _updateConfig({ llm: { model: "mystery-provider/demo-model" } });
+    expect(result.ok).toBe(false);
+    expect(result.errors!.some((e) => e.includes('provider "mystery-provider" not found'))).toBe(
+      true,
+    );
   });
 
-  it("unknown provider in auth profile → returns error, no known base URL", () => {
+  it("openai-responses provider routes request to /responses", async () => {
     writeOpenClawConfig(openClawDir, {
       plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
-      auth: {
-        profiles: {
-          "custom-llm:default": {
-            provider: "custom-llm",
-            mode: "oauth",
-          },
-        },
+    });
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        apiKey: "sk-test",
+        api: "openai-responses",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
       },
     });
-
-    const api = createMockGatewayApi(
-      {},
-      { modelAuth: { resolveApiKeyForProvider: vi.fn() } },
-    );
 
     init({
       pluginDir: __dirname + "/..",
@@ -545,11 +547,28 @@ describe("Auth profile fallback", () => {
     });
     _setGatewayApi(api);
 
-    // updateConfig should reject — auth profile exists but no known URL
-    const result = _updateConfig({ llm: { model: "custom-llm/model-v1" } });
-    expect(result.ok).toBe(false);
-    expect(result.errors).toBeDefined();
-    expect(result.errors!.some((e) => e.includes("no known base URL"))).toBe(true);
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          output_text: "SAFE: ok",
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "myapi/gpt-5.2",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toBe("http://localhost:4000/v1/responses");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.max_output_tokens).toBe(100);
+    expect(body.input[0].content).toBe("test");
   });
 
   it("models.providers takes precedence over auth profile", async () => {
@@ -610,6 +629,169 @@ describe("Auth profile fallback", () => {
   });
 });
 
+// ─── Codex payload structure tests ───
+
+describe("Codex payload structure", () => {
+  let tmpDir: string;
+  let openClawDir: string;
+  let prevOpenClawHome: string | undefined;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-codex-payload-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      auth: {
+        profiles: {
+          "openai-codex:default": {
+            provider: "openai-codex",
+            mode: "oauth",
+          },
+        },
+      },
+    });
+    sessionState.clear();
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(async () => {
+    _setGatewayApi(null);
+    await stopDashboard();
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
+  });
+
+  function setupCodexEnv() {
+    const resolveApiKey = vi.fn().mockResolvedValue({
+      apiKey: "oauth-token",
+      source: "oauth",
+      mode: "oauth" as const,
+    });
+    const api = createMockGatewayApi(
+      {},
+      {
+        config: {
+          loadConfig: () =>
+            JSON.parse(
+              fs.readFileSync(
+                path.join(openClawDir, "openclaw.json"),
+                "utf-8",
+              ),
+            ),
+        },
+        modelAuth: { resolveApiKeyForProvider: resolveApiKey },
+      },
+    );
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: {
+        ...BASE_CONFIG,
+        llm: { ...BASE_CONFIG.llm, model: "openai-codex/gpt-5.2" },
+      },
+    });
+    _setGatewayApi(api);
+    return { api, resolveApiKey };
+  }
+
+  it("uses default instructions when no system message is present", async () => {
+    const { api } = setupCodexEnv();
+    const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ output_text: "OK" }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "openai-codex/gpt-5.2",
+      messages: [{ role: "user", content: "Hello" }],
+      max_tokens: 16,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.instructions).toBe("You are a helpful assistant.");
+    expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
+    expect(body.store).toBe(false);
+    expect(body.max_output_tokens).toBe(16);
+  });
+
+  it("extracts system message into instructions field", async () => {
+    const { api } = setupCodexEnv();
+    const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ output_text: "OK" }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "openai-codex/gpt-5.2",
+      messages: [
+        { role: "system", content: "You are a security auditor." },
+        { role: "user", content: "Audit this call." },
+      ],
+      max_tokens: 200,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.instructions).toBe("You are a security auditor.");
+    expect(body.input).toEqual([
+      { role: "user", content: "Audit this call." },
+    ]);
+    expect(body.store).toBe(false);
+  });
+
+  it("openai-responses payload does NOT include instructions or store", async () => {
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+    });
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        apiKey: "sk-test",
+        api: "openai-responses",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
+      },
+    });
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: BASE_CONFIG,
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ output_text: "OK" }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "myapi/gpt-5.2",
+      messages: [
+        { role: "system", content: "System prompt" },
+        { role: "user", content: "test" },
+      ],
+      max_tokens: 100,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.instructions).toBeUndefined();
+    expect(body.store).toBeUndefined();
+    // system message is kept in input for responses surface
+    expect(body.input).toEqual([
+      { role: "system", content: "System prompt" },
+      { role: "user", content: "test" },
+    ]);
+  });
+});
+
 // ─── Helper to create an LLM call function for testing ───
 // This mirrors createGatewayLLMCallFn logic but is accessible from tests.
 
@@ -625,13 +807,21 @@ function _createTestLLMCallFn(api: OpenClawPluginApi, modelOverride?: string) {
   };
 
   // Trigger llmCallFn recreation
-  const model = modelOverride ??
-    Object.keys(api.config.models?.providers ?? {})[0] +
-    "/" +
-    (api.config.models?.providers?.[
-      Object.keys(api.config.models?.providers ?? {})[0]
-    ]?.models?.[0]?.id ?? "model");
-  _updateConfig({ llm: { model } });
+  const providerKeys = Object.keys(api.config.models?.providers ?? {});
+  const derivedModel =
+    providerKeys.length > 0
+      ? `${providerKeys[0]}/${api.config.models?.providers?.[providerKeys[0]]?.models?.[0]?.id ?? "model"}`
+      : undefined;
+  const model = modelOverride ?? derivedModel;
+  if (!model) {
+    throw new Error("Failed to derive test model; pass modelOverride explicitly");
+  }
+  const updateResult = _updateConfig({ llm: { model } });
+  if (!updateResult.ok) {
+    throw new Error(
+      `Failed to update model in test setup: ${(updateResult.errors ?? []).join("; ")}`,
+    );
+  }
 
   // Restore original
   auditor.setLLMCallFn = originalSetFn;

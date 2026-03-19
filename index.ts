@@ -110,7 +110,7 @@ export interface OpenClawPluginApi {
         string,
         {
           baseUrl: string;
-          apiKey?: string;
+          apiKey?: unknown;
           auth?: string; // "api-key" | "oauth" | "token" | "aws-sdk"
           api?: string;
           models?: Array<{ id: string; name: string; [key: string]: unknown }>;
@@ -132,6 +132,9 @@ export interface OpenClawPluginApi {
   resolvePath: (input: string) => string;
   emitAgentEvent?: EmitAgentEventFn;
   runtime?: {
+    config?: {
+      loadConfig?: () => Record<string, unknown>;
+    };
     modelAuth?: {
       resolveApiKeyForProvider: (params: {
         provider: string;
@@ -146,6 +149,14 @@ export interface OpenClawPluginApi {
   };
 }
 
+type GatewayProviderConfig = {
+  baseUrl: string;
+  apiKey?: unknown;
+  auth?: string;
+  api?: string;
+  models?: Array<{ id: string; name?: string; [key: string]: unknown }>;
+};
+
 // ─── LLMHttpError ───
 
 export class LLMHttpError extends Error {
@@ -158,6 +169,48 @@ export class LLMHttpError extends Error {
     this.statusCode = statusCode;
     this.retryAfterMs = retryAfterMs;
   }
+}
+
+type ModelCallErrorCode =
+  | "config_invalid"
+  | "auth_failed"
+  | "upstream_429"
+  | "upstream_5xx"
+  | "upstream_http_error"
+  | "network_error"
+  | "response_parse_failed"
+  | "unknown";
+
+function formatModelTestError(error: unknown): {
+  error: string;
+  statusCode?: number;
+  errorCode: ModelCallErrorCode;
+} {
+  if (error instanceof LLMHttpError) {
+    let errorCode: ModelCallErrorCode = "upstream_http_error";
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      errorCode = "auth_failed";
+    } else if (error.statusCode === 429) {
+      errorCode = "upstream_429";
+    } else if (error.statusCode >= 500) {
+      errorCode = "upstream_5xx";
+    }
+    return {
+      error: error.message,
+      statusCode: error.statusCode,
+      errorCode,
+    };
+  }
+  if (error instanceof Error) {
+    if (error.message.startsWith("config_invalid:")) {
+      return { error: error.message, errorCode: "config_invalid" };
+    }
+    if (error.message.startsWith("response_parse_failed:")) {
+      return { error: error.message, errorCode: "response_parse_failed" };
+    }
+    return { error: error.message, errorCode: "network_error" };
+  }
+  return { error: String(error), errorCode: "unknown" };
 }
 
 // ─── Plugin State ───
@@ -405,6 +458,60 @@ export function init(ctx: PluginInitContext): void {
       getRuleEngine: () => ruleEngine,
       getAsyncQueue: () => asyncQueue,
       getAvailableModels: () => availableModelsProvider?.() ?? [],
+      testModelAvailability: async (model: string) => {
+        if (!gatewayApi) {
+          return {
+            ok: false,
+            model,
+            error: "Gateway API unavailable: plugin runtime is not ready",
+            statusCode: 503,
+            errorCode: "config_invalid" as const,
+          };
+        }
+        const testCfg: SecLawConfig = {
+          ...config,
+          llm: {
+            ...config.llm,
+            model,
+            enabled: true,
+          },
+        };
+        const call = createGatewayLLMCallFn(testCfg, gatewayApi);
+        if (!call) {
+          return {
+            ok: false,
+            model,
+            error: `Failed to resolve provider endpoint for model "${model}"`,
+            statusCode: 400,
+            errorCode: "config_invalid" as const,
+          };
+        }
+        const startedAt = Date.now();
+        try {
+          const response = await call({
+            model,
+            messages: [{ role: "user", content: "Reply with OK only." }],
+            max_tokens: 16,
+          });
+          const latencyMs = Date.now() - startedAt;
+          const preview = response.content.trim().slice(0, 120);
+          return {
+            ok: true,
+            model,
+            latencyMs,
+            preview,
+          };
+        } catch (error) {
+          const formatted = formatModelTestError(error);
+          return {
+            ok: false,
+            model,
+            error: formatted.error,
+            statusCode: formatted.statusCode,
+            errorCode: formatted.errorCode,
+          };
+        }
+      },
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
@@ -547,15 +654,18 @@ function updateConfig(partial: Partial<SecLawConfig>): {
         partial.llm.model.indexOf("/"),
       );
       if (gatewayApi) {
-        const provider = gatewayApi.config.models?.providers?.[providerName];
+        const provider = findProviderConfig(
+          getMergedProviders(gatewayApi),
+          providerName,
+        );
         if (!provider) {
-          // Fallback: check auth.profiles + known provider URL map
-          const authProfile = findAuthProfile(providerName);
-          const knownUrl = resolveKnownProviderUrl(providerName);
-          if (!authProfile || !knownUrl) {
+          const implicitProbe = resolveProviderTransport(
+            `${providerName}/probe`,
+            gatewayApi,
+          );
+          if (!implicitProbe) {
             errors.push(
-              `llm.model: provider "${providerName}" not found in gateway models.providers` +
-                (authProfile && !knownUrl ? ` (auth profile found but no known base URL for "${providerName}")` : ""),
+              `llm.model: provider "${providerName}" not found in effective providers`,
             );
           }
         } else if (
@@ -993,10 +1103,10 @@ function register(api: OpenClawPluginApi): void {
   const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
   const wsDir = api.config.workspace?.dir;
 
-  // Build available models list from api.config.models.providers
+  // Build available models list from effective providers
   availableModelsProvider = () => {
-    const providers = api.config.models?.providers;
-    if (!providers) return [];
+    const providers = getMergedProviders(api);
+    if (Object.keys(providers).length === 0) return [];
     const options: ModelOption[] = [];
     for (const [providerName, provider] of Object.entries(providers)) {
       if (provider.models) {
@@ -1028,18 +1138,11 @@ function register(api: OpenClawPluginApi): void {
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
       // Determine auth mode for logging
-      const resolved = resolveProviderEndpoint(config.llm.model, api);
-      const providerAuth = resolved?.auth;
-      const hasStaticKey = !!resolved?.apiKey;
+      const resolved = resolveProviderTransport(config.llm.model, api);
+      const providerAuth = resolved?.authMode;
+      const hasStaticKey = !!resolved?.staticApiKey;
       const hasRuntimeAuth = !!api.runtime?.modelAuth;
-      const isAuthProfileFallback = resolved?.providerName &&
-        !api.config.models?.providers?.[resolved.providerName];
-      if (isAuthProfileFallback) {
-        api.logger.info(
-          `[seclaw] 🚀 LLM connected via auth profile (${providerAuth ?? "unknown"})`,
-          `model=${config.llm.model}`,
-        );
-      } else if (!hasStaticKey && hasRuntimeAuth) {
+      if (!hasStaticKey && hasRuntimeAuth) {
         api.logger.info(
           "[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth)",
           `model=${config.llm.model}`,
@@ -1062,7 +1165,7 @@ function register(api: OpenClawPluginApi): void {
           config.llm.model.indexOf("/"),
         );
         api.logger.error(
-          `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in models.providers -- ` +
+          `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in effective providers -- ` +
             "check openclaw.json configuration. " +
             "RED operations will pass without real LLM audit.",
         );
@@ -1149,138 +1252,342 @@ function register(api: OpenClawPluginApi): void {
   });
 }
 
-/** Well-known OpenAI-compatible provider base URLs, used as fallback when
- *  a provider exists in auth.profiles but not in models.providers. */
-const KNOWN_PROVIDER_BASE_URLS: Record<string, string> = {
-  "openai":     "https://api.openai.com/v1",
-  "deepseek":   "https://api.deepseek.com",
-  "mistral":    "https://api.mistral.ai/v1",
-  "groq":       "https://api.groq.com/openai/v1",
-  "together":   "https://api.together.xyz/v1",
-  "fireworks":  "https://api.fireworks.ai/inference/v1",
-  "perplexity": "https://api.perplexity.ai",
-  "xai":        "https://api.x.ai/v1",
+type ProviderApiSurface =
+  | "openai-completions"
+  | "openai-responses"
+  | "openai-codex-responses";
+
+type ResolvedProviderTransport = {
+  providerName: string;
+  modelId: string;
+  apiSurface: ProviderApiSurface;
+  endpoint: string;
+  staticApiKey?: string;
+  authMode?: string;
 };
 
-/** Resolve a base URL from KNOWN_PROVIDER_BASE_URLS using prefix matching.
- *  e.g. "openai-codex" starts with "openai" → "https://api.openai.com/v1" */
-function resolveKnownProviderUrl(providerName: string): string | null {
-  if (KNOWN_PROVIDER_BASE_URLS[providerName]) return KNOWN_PROVIDER_BASE_URLS[providerName];
-  // Prefix match: find the longest known prefix that the provider name starts with
-  let best: string | null = null;
-  let bestLen = 0;
-  for (const known of Object.keys(KNOWN_PROVIDER_BASE_URLS)) {
-    if (providerName.startsWith(known) && known.length > bestLen) {
-      best = KNOWN_PROVIDER_BASE_URLS[known];
-      bestLen = known.length;
-    }
-  }
-  return best;
-}
-
-/** Read auth.profiles from openclaw.json. Returns null on any error. */
-function readAuthProfiles(): Record<string, { provider: string; mode: string }> | null {
+function resolveRuntimeConfig(api: OpenClawPluginApi): Record<string, unknown> | undefined {
   try {
-    const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
-    const raw = fs.readFileSync(openClawPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    const profiles = parsed?.auth?.profiles;
-    if (!profiles || typeof profiles !== "object") return null;
-    return profiles as Record<string, { provider: string; mode: string }>;
+    return api.runtime?.config?.loadConfig?.();
   } catch {
-    return null;
+    return undefined;
   }
 }
 
-/** Find an auth profile entry whose `provider` field matches the given provider name. */
-function findAuthProfile(providerName: string): { provider: string; mode: string } | null {
-  const profiles = readAuthProfiles();
-  if (!profiles) return null;
-  for (const profile of Object.values(profiles)) {
-    if (profile.provider === providerName) return profile;
-  }
-  return null;
+function normalizeProviderKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/**
- * Resolve provider endpoint and apiKey for an LLM call.
- *
- * The model string must contain "/" (e.g. "myapi/gpt-5.2"), where
- * provider config is resolved from api.config.models.providers.
- * Falls back to auth.profiles + known provider URL map when the
- * provider is not in models.providers.
- */
-function resolveProviderEndpoint(
+function extractProvidersFromConfig(
+  cfg: Record<string, unknown> | undefined,
+): Record<string, GatewayProviderConfig> {
+  const models = cfg?.models;
+  if (!models || typeof models !== "object") return {};
+  const providers = (models as { providers?: unknown }).providers;
+  if (!providers || typeof providers !== "object") return {};
+  return providers as Record<string, GatewayProviderConfig>;
+}
+
+function getMergedProviders(api: OpenClawPluginApi): Record<string, GatewayProviderConfig> {
+  const fromApi = api.config.models?.providers ?? {};
+  const fromRuntime = extractProvidersFromConfig(resolveRuntimeConfig(api));
+  return { ...fromApi, ...fromRuntime };
+}
+
+function findProviderConfig(
+  providers: Record<string, GatewayProviderConfig>,
+  providerName: string,
+): GatewayProviderConfig | undefined {
+  if (providers[providerName]) return providers[providerName];
+  const normalizedTarget = normalizeProviderKey(providerName);
+  for (const [key, value] of Object.entries(providers)) {
+    if (normalizeProviderKey(key) === normalizedTarget) return value;
+  }
+  return undefined;
+}
+
+function hasAuthProfileForProvider(
+  cfg: Record<string, unknown> | undefined,
+  providerName: string,
+): { found: boolean; mode?: string } {
+  const auth = cfg?.auth;
+  if (!auth || typeof auth !== "object") return { found: false };
+  const profiles = (auth as { profiles?: unknown }).profiles;
+  if (!profiles || typeof profiles !== "object") return { found: false };
+  const target = normalizeProviderKey(providerName);
+  for (const profile of Object.values(profiles as Record<string, unknown>)) {
+    if (!profile || typeof profile !== "object") continue;
+    const p = profile as { provider?: unknown; mode?: unknown };
+    if (typeof p.provider !== "string") continue;
+    if (normalizeProviderKey(p.provider) !== target) continue;
+    return {
+      found: true,
+      mode: typeof p.mode === "string" ? p.mode : undefined,
+    };
+  }
+  return { found: false };
+}
+
+function normalizeApiSurface(apiValue: unknown): ProviderApiSurface {
+  const normalized = typeof apiValue === "string" ? apiValue.trim() : "";
+  if (
+    normalized === "openai-responses" ||
+    normalized === "openai-codex-responses"
+  ) {
+    return normalized;
+  }
+  return "openai-completions";
+}
+
+function appendEndpoint(
+  baseUrl: string,
+  endpointPath: "/chat/completions" | "/responses" | "/codex/responses",
+): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  if (trimmed.endsWith(endpointPath)) return trimmed;
+  return `${trimmed}${endpointPath}`;
+}
+
+function isHostMatch(baseUrl: string, host: string): boolean {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === host;
+  } catch {
+    return baseUrl.toLowerCase().includes(host);
+  }
+}
+
+function buildAttributionHeaders(transport: ResolvedProviderTransport): Record<string, string> {
+  const provider = normalizeProviderKey(transport.providerName);
+  const headers: Record<string, string> = {};
+  const isOpenAI =
+    provider === "openai" &&
+    (transport.apiSurface === "openai-completions" || transport.apiSurface === "openai-responses") &&
+    isHostMatch(transport.endpoint, "api.openai.com");
+  const isCodex =
+    provider === "openaicodex" &&
+    (transport.apiSurface === "openai-codex-responses" ||
+      transport.apiSurface === "openai-responses") &&
+    isHostMatch(transport.endpoint, "chatgpt.com");
+  if (isOpenAI || isCodex) {
+    headers.originator = "openclaw";
+    headers["User-Agent"] = "openclaw/seclaw";
+  }
+  return headers;
+}
+
+function resolveProviderTransport(
   model: string,
   api: OpenClawPluginApi,
-): { endpoint: string; apiKey?: string; modelId: string; providerName: string; auth?: string } | null {
-  if (model.includes("/")) {
-    const slashIdx = model.indexOf("/");
-    const providerName = model.slice(0, slashIdx);
-    const modelId = model.slice(slashIdx + 1);
-    const provider = api.config.models?.providers?.[providerName];
-    if (provider) {
-      let endpoint = provider.baseUrl;
-      if (!endpoint.endsWith("/chat/completions")) {
-        endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
-      }
-      return { endpoint, apiKey: provider.apiKey, modelId, providerName, auth: provider.auth };
-    }
-    // Fallback: check auth.profiles + known provider URL map
-    const authProfile = findAuthProfile(providerName);
-    if (authProfile) {
-      const baseUrl = resolveKnownProviderUrl(providerName);
-      if (baseUrl) {
-        const endpoint = baseUrl.replace(/\/+$/, "") + "/chat/completions";
-        return { endpoint, modelId, providerName, auth: authProfile.mode };
-      }
+): ResolvedProviderTransport | null {
+  if (!model.includes("/")) {
+    return null;
+  }
+  const slashIdx = model.indexOf("/");
+  const providerName = model.slice(0, slashIdx).trim();
+  const modelId = model.slice(slashIdx + 1).trim();
+  if (!providerName || !modelId) {
+    return null;
+  }
+
+  const providers = getMergedProviders(api);
+  const provider = findProviderConfig(providers, providerName);
+  if (!provider) {
+    const runtimeCfg = resolveRuntimeConfig(api);
+    const authProfile = hasAuthProfileForProvider(runtimeCfg, providerName);
+    if (normalizeProviderKey(providerName) === "openaicodex" && authProfile.found) {
+      return {
+        providerName,
+        modelId,
+        apiSurface: "openai-codex-responses",
+        endpoint: appendEndpoint("https://chatgpt.com/backend-api", "/codex/responses"),
+        authMode: authProfile.mode ?? "oauth",
+      };
     }
     return null;
   }
-  return null;
+
+  const modelDef = provider.models?.find((item) => item.id === modelId);
+  const apiSurface = normalizeApiSurface(
+    modelDef && typeof modelDef === "object" && "api" in modelDef
+      ? (modelDef as { api?: unknown }).api
+      : provider.api,
+  );
+  const endpoint =
+    apiSurface === "openai-codex-responses"
+      ? appendEndpoint(provider.baseUrl, "/codex/responses")
+      : apiSurface === "openai-responses"
+        ? appendEndpoint(provider.baseUrl, "/responses")
+        : appendEndpoint(provider.baseUrl, "/chat/completions");
+
+  return {
+    providerName,
+    modelId,
+    apiSurface,
+    endpoint,
+    staticApiKey: typeof provider.apiKey === "string" ? provider.apiKey : undefined,
+    authMode: provider.auth,
+  };
+}
+
+function buildRequestPayload(
+  transport: ResolvedProviderTransport,
+  params: Parameters<LLMCallFn>[0],
+): Record<string, unknown> {
+  if (transport.apiSurface === "openai-codex-responses") {
+    const systemMsg = params.messages.find((m) => m.role === "system");
+    const nonSystemMsgs = params.messages.filter((m) => m.role !== "system");
+    return {
+      model: transport.modelId,
+      instructions: systemMsg?.content || "You are a helpful assistant.",
+      input: nonSystemMsgs.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      max_output_tokens: params.max_tokens,
+      store: false,
+    };
+  }
+  if (transport.apiSurface === "openai-responses") {
+    return {
+      model: transport.modelId,
+      input: params.messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      max_output_tokens: params.max_tokens,
+    };
+  }
+  return {
+    model: transport.modelId,
+    messages: params.messages,
+    max_tokens: params.max_tokens,
+  };
+}
+
+function extractResponseOutputText(output: unknown): string {
+  if (!Array.isArray(output)) {
+    return "";
+  }
+  const textParts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const type = (block as { type?: unknown }).type;
+      const text = (block as { text?: unknown }).text;
+      if (type === "output_text" && typeof text === "string") {
+        textParts.push(text);
+      }
+    }
+  }
+  return textParts.join("\n").trim();
+}
+
+function parseResponseContent(
+  transport: ResolvedProviderTransport,
+  data: unknown,
+): string {
+  const payload = data as {
+    choices?: Array<{ message?: { content?: unknown } }>;
+    content?: unknown;
+    output_text?: unknown;
+    output?: unknown;
+  };
+  if (
+    transport.apiSurface === "openai-responses" ||
+    transport.apiSurface === "openai-codex-responses"
+  ) {
+    if (typeof payload?.output_text === "string" && payload.output_text.trim().length > 0) {
+      return payload.output_text.trim();
+    }
+    const parsedOutput = extractResponseOutputText(payload?.output);
+    if (parsedOutput) {
+      return parsedOutput;
+    }
+  }
+
+  const chatContent = payload?.choices?.[0]?.message?.content;
+  if (typeof chatContent === "string" && chatContent.trim().length > 0) {
+    return chatContent.trim();
+  }
+  if (typeof payload?.content === "string" && payload.content.trim().length > 0) {
+    return payload.content.trim();
+  }
+  throw new Error(
+    `response_parse_failed: provider ${transport.providerName} returned no parseable text content`,
+  );
+}
+
+async function resolveBearerToken(
+  transport: ResolvedProviderTransport,
+  api: OpenClawPluginApi,
+): Promise<string | undefined> {
+  const staticToken = transport.staticApiKey?.trim();
+  const dynamicRequired =
+    !staticToken || transport.authMode === "oauth" || transport.authMode === "token";
+
+  if (!dynamicRequired) {
+    return staticToken;
+  }
+
+  const resolver = api.runtime?.modelAuth?.resolveApiKeyForProvider;
+  if (!resolver) {
+    if (staticToken) return staticToken;
+    if (transport.authMode === "oauth" || transport.authMode === "token") {
+      throw new LLMHttpError(
+        401,
+        `Provider "${transport.providerName}" requires runtime auth resolution, but runtime.modelAuth is unavailable`,
+      );
+    }
+    return undefined;
+  }
+
+  try {
+    const authResult = await resolver({
+      provider: transport.providerName,
+      cfg: resolveRuntimeConfig(api),
+    });
+    const token = authResult.apiKey?.trim();
+    if (token) return token;
+    if (transport.authMode === "oauth" || transport.authMode === "token") {
+      throw new LLMHttpError(
+        401,
+        `Auth resolution returned empty token for provider "${transport.providerName}"`,
+      );
+    }
+    return staticToken;
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new LLMHttpError(
+      401,
+      `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
+    );
+  }
 }
 
 /**
- * Create an LLM call function that calls the gateway's OpenAI-compatible endpoint.
- * Returns null when the model cannot be resolved via providers.
+ * Create an LLM call function that mimics OpenClaw provider routing and payload semantics.
+ * Returns null when the model cannot be resolved via effective providers.
  */
 function createGatewayLLMCallFn(
   cfg: SecLawConfig,
   api: OpenClawPluginApi,
 ): LLMCallFn | null {
-  const resolved = resolveProviderEndpoint(cfg.llm.model, api);
+  const initial = resolveProviderTransport(cfg.llm.model, api);
 
-  if (!resolved) {
+  if (!initial) {
     return null;
   }
 
   return async (params) => {
-    // Re-resolve at call time in case config.llm.model changed at runtime
-    const current = resolveProviderEndpoint(params.model, api) ?? resolved;
-
-    // Resolve auth: use static apiKey unless dynamic auth is needed
-    let bearerToken = current.apiKey;
-    const needsDynamicAuth =
-      !bearerToken || current.auth === "oauth" || current.auth === "token";
-
-    if (needsDynamicAuth && api.runtime?.modelAuth?.resolveApiKeyForProvider) {
-      try {
-        const authResult = await api.runtime.modelAuth.resolveApiKeyForProvider({
-          provider: current.providerName,
-        });
-        if (authResult.apiKey) {
-          bearerToken = authResult.apiKey;
-        }
-      } catch (err: any) {
-        throw new LLMHttpError(
-          401,
-          `OAuth auth resolution failed for provider "${current.providerName}": ${err.message}`,
-        );
-      }
-    }
+    const current = resolveProviderTransport(params.model, api) ?? initial;
+    const bearerToken = await resolveBearerToken(current, api);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      ...buildAttributionHeaders(current),
     };
     if (bearerToken) {
       headers["Authorization"] = `Bearer ${bearerToken}`;
@@ -1289,11 +1596,7 @@ function createGatewayLLMCallFn(
     const response = await fetch(current.endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: current.modelId,
-        messages: params.messages,
-        max_tokens: params.max_tokens,
-      }),
+      body: JSON.stringify(buildRequestPayload(current, params)),
     });
 
     if (!response.ok) {
@@ -1308,13 +1611,20 @@ function createGatewayLLMCallFn(
           retryAfterMs,
         );
       }
-      throw new LLMHttpError(response.status, response.statusText);
+      let detail = response.statusText;
+      try {
+        const text = (await response.text()).trim();
+        if (text) {
+          detail = `${detail || "HTTP Error"} - ${text.slice(0, 240)}`;
+        }
+      } catch {
+        // ignore body parse failures on error responses
+      }
+      throw new LLMHttpError(response.status, detail);
     }
 
-    const data = (await response.json()) as any;
-
-    // OpenAI-compatible response format
-    const content = data?.choices?.[0]?.message?.content ?? data?.content ?? "";
+    const data = (await response.json()) as unknown;
+    const content = parseResponseContent(current, data);
 
     return { content };
   };

@@ -178,6 +178,7 @@ describe("Dashboard", () => {
       getRuleEngine: () => _getRuleEngine(),
       getAsyncQueue: () => _getAsyncQueue(),
       getAvailableModels: () => [],
+      testModelAvailability: async (model: string) => ({ ok: true, model, latencyMs: 1, preview: "OK" }),
       getWorkspacePath: () => "/workspace",
       getVarDir: () => path.join(dashTmpDir, "var"),
       getOpenClawDir: () => openClawDir,
@@ -221,6 +222,36 @@ describe("Dashboard", () => {
     expect(data.llm.apiKey).toBeUndefined();
     expect(data.llm.endpoint).toBeUndefined();
     expect(data.llm.enabled).toBe(false);
+  });
+
+  it("POST /api/models/test validates model field", async () => {
+    const res = await fetch(`${baseUrl}/api/models/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "" }),
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { ok: boolean; error: string };
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("model is required");
+  });
+
+  it("POST /api/models/test returns model test result", async () => {
+    const res = await fetch(`${baseUrl}/api/models/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "myapi/gpt-5.2" }),
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      ok: boolean;
+      model: string;
+      latencyMs: number;
+      preview: string;
+    };
+    expect(data.ok).toBe(true);
+    expect(data.model).toBe("myapi/gpt-5.2");
+    expect(data.latencyMs).toBeTypeOf("number");
   });
 
   it("PUT /api/config updates logging level", async () => {
@@ -584,6 +615,7 @@ describe("Config persistence", () => {
       getRuleEngine: () => _getRuleEngine(),
       getAsyncQueue: () => _getAsyncQueue(),
       getAvailableModels: () => [],
+      testModelAvailability: async (model: string) => ({ ok: true, model, latencyMs: 1, preview: "OK" }),
       getWorkspacePath: () => undefined,
       getVarDir: () => varDir,
       getOpenClawDir: () => openClawDir,
@@ -664,6 +696,7 @@ describe("Sender labels refresh", () => {
       getRuleEngine: () => _getRuleEngine(),
       getAsyncQueue: () => _getAsyncQueue(),
       getAvailableModels: () => [],
+      testModelAvailability: async (model: string) => ({ ok: true, model, latencyMs: 1, preview: "OK" }),
       getWorkspacePath: () => undefined,
       getVarDir: () => varDir,
       getOpenClawDir: () => path.join(tmpDir, ".openclaw"),

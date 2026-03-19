@@ -16,6 +16,16 @@ export interface ModelOption {
   label: string;
 }
 
+export interface ModelTestResult {
+  ok: boolean;
+  model: string;
+  latencyMs?: number;
+  preview?: string;
+  error?: string;
+  errorCode?: string;
+  statusCode?: number;
+}
+
 export interface DashboardDeps {
   getConfig: () => SecLawConfig;
   updateConfig: (partial: Partial<SecLawConfig>) => { ok: boolean; errors?: string[] };
@@ -23,6 +33,7 @@ export interface DashboardDeps {
   getRuleEngine: () => RuleEngine;
   getAsyncQueue: () => AsyncAuditQueue;
   getAvailableModels: () => ModelOption[];
+  testModelAvailability: (model: string) => Promise<ModelTestResult>;
   getWorkspacePath: () => string | undefined;
   getVarDir: () => string;
   getOpenClawDir: () => string;
