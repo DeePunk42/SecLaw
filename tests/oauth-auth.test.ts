@@ -527,7 +527,7 @@ describe("Auth profile fallback", () => {
     );
   });
 
-  it("openai-responses provider routes request to /responses", async () => {
+  it("openai-responses provider is overridden to /chat/completions", async () => {
     writeOpenClawConfig(openClawDir, {
       plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
     });
@@ -553,7 +553,7 @@ describe("Auth profile fallback", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          output_text: "SAFE: ok",
+          choices: [{ message: { content: "SAFE: ok" } }],
         }),
     });
     globalThis.fetch = fetchMock;
@@ -565,10 +565,10 @@ describe("Auth profile fallback", () => {
     });
 
     const url = fetchMock.mock.calls[0][0];
-    expect(url).toBe("http://localhost:4000/v1/responses");
+    expect(url).toBe("http://localhost:4000/v1/chat/completions");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.max_output_tokens).toBe(100);
-    expect(body.input[0].content).toBe("test");
+    expect(body.max_tokens).toBe(100);
+    expect(body.messages[0].content).toBe("test");
   });
 
   it("models.providers takes precedence over auth profile", async () => {
@@ -746,7 +746,7 @@ describe("Codex payload structure", () => {
     expect(body.store).toBe(false);
   });
 
-  it("openai-responses payload does NOT include instructions or store", async () => {
+  it("openai-responses provider uses completions format (messages, max_tokens)", async () => {
     writeOpenClawConfig(openClawDir, {
       plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
     });
@@ -768,7 +768,7 @@ describe("Codex payload structure", () => {
     const llmCallFn = _createTestLLMCallFn(api);
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ output_text: "OK" }),
+      json: () => Promise.resolve({ choices: [{ message: { content: "OK" } }] }),
     });
     globalThis.fetch = fetchMock;
 
@@ -781,14 +781,17 @@ describe("Codex payload structure", () => {
       max_tokens: 100,
     });
 
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toBe("http://localhost:4000/v1/chat/completions");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.instructions).toBeUndefined();
     expect(body.store).toBeUndefined();
-    // system message is kept in input for responses surface
-    expect(body.input).toEqual([
+    expect(body.input).toBeUndefined();
+    expect(body.messages).toEqual([
       { role: "system", content: "System prompt" },
       { role: "user", content: "test" },
     ]);
+    expect(body.max_tokens).toBe(100);
   });
 });
 

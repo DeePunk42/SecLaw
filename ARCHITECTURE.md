@@ -416,6 +416,8 @@ providers: {
 
 **Codex `instructions` handling**: The Codex backend API (`chatgpt.com/backend-api/codex/responses`) requires an `instructions` field. `buildRequestPayload()` extracts the first `system`-role message from the messages array and uses its content as `instructions`. If no system message is present, a default `"You are a helpful assistant."` is used. System messages are excluded from the `input` array.
 
+**Surface override for SecLaw calls**: `createGatewayLLMCallFn()` forces all non-codex providers to use the `/chat/completions` surface, regardless of what the provider declares (e.g. `openai-responses`). SecLaw's own LLM calls are simple (single user message, no streaming) and the completions format has the fewest constraints. Codex providers are excluded because `chatgpt.com/backend-api` does not support `/chat/completions`. The override uses `stripApiPath()` to remove any existing API path suffix before appending `/chat/completions`. Auth resolution (`resolveBearerToken`) still uses the original transport since auth is provider-level, not surface-level.
+
 ### HTTP Call
 
 ```typescript

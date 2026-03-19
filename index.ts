@@ -1348,6 +1348,12 @@ function appendEndpoint(
   return `${trimmed}${endpointPath}`;
 }
 
+function stripApiPath(endpoint: string): string {
+  return endpoint
+    .replace(/\/chat\/completions$/, "")
+    .replace(/\/responses$/, "");
+}
+
 function isHostMatch(baseUrl: string, host: string): boolean {
   try {
     return new URL(baseUrl).hostname.toLowerCase() === host;
@@ -1583,20 +1589,32 @@ function createGatewayLLMCallFn(
 
   return async (params) => {
     const current = resolveProviderTransport(params.model, api) ?? initial;
+
+    // Force /chat/completions for non-codex. SecLaw audit calls are simple
+    // (user messages only, no streaming) and other surfaces have extra constraints.
+    const effective: ResolvedProviderTransport =
+      current.apiSurface === "openai-codex-responses"
+        ? current
+        : {
+            ...current,
+            apiSurface: "openai-completions",
+            endpoint: appendEndpoint(stripApiPath(current.endpoint), "/chat/completions"),
+          };
+
     const bearerToken = await resolveBearerToken(current, api);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      ...buildAttributionHeaders(current),
+      ...buildAttributionHeaders(effective),
     };
     if (bearerToken) {
       headers["Authorization"] = `Bearer ${bearerToken}`;
     }
 
-    const response = await fetch(current.endpoint, {
+    const response = await fetch(effective.endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify(buildRequestPayload(current, params)),
+      body: JSON.stringify(buildRequestPayload(effective, params)),
     });
 
     if (!response.ok) {
@@ -1624,7 +1642,7 @@ function createGatewayLLMCallFn(
     }
 
     const data = (await response.json()) as unknown;
-    const content = parseResponseContent(current, data);
+    const content = parseResponseContent(effective, data);
 
     return { content };
   };
