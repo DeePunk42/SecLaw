@@ -330,7 +330,7 @@ When `llm.model` contains a slash (e.g. `"myapi/gpt-5.2"`), the provider is reso
 ```typescript
 resolveProviderEndpoint("myapi/gpt-5.2", api)
 → providers["myapi"].baseUrl + "/chat/completions"
-→ { endpoint, apiKey: provider.apiKey, modelId: "gpt-5.2" }
+→ { endpoint, apiKey: provider.apiKey, modelId: "gpt-5.2", providerName: "myapi", auth: provider.auth }
 ```
 
 This is the primary mode in production — models are configured in the gateway's `openclaw.json` and presented in the dashboard model selector.
@@ -339,12 +339,52 @@ This is the primary mode in production — models are configured in the gateway'
 
 `createGatewayLLMCallFn()` re-resolves the provider at call time (not just at creation time), so runtime model changes via the dashboard take effect immediately without recreating the call function closure.
 
+### Auth Resolution
+
+Auth is resolved **per-call** inside `createGatewayLLMCallFn()`:
+
+1. **Static `apiKey`** — if the provider has `apiKey` set and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
+2. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
+   - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
+   - Call it with `{ provider: providerName }` to get a fresh token (handles OAuth refresh automatically)
+   - Use the resolved `apiKey` as `Bearer` token
+3. **Auth failure** — if `resolveApiKeyForProvider` throws, a `LLMHttpError(401)` is raised, which maps to `auth_error` classification (not retryable)
+4. **No auth available** — if no static key AND no `runtime.modelAuth`, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
+
+The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when OAuth providers are configured:
+
+```typescript
+runtime?: {
+  modelAuth?: {
+    resolveApiKeyForProvider: (params: { provider: string }) =>
+      Promise<{ apiKey?: string; source: string; mode: "api-key" | "oauth" | "token" | "aws-sdk" }>
+  }
+}
+```
+
+Provider config also supports an `auth` field to declare the auth mode:
+
+```typescript
+providers: {
+  "openai-codex": {
+    baseUrl: "https://api.openai.com/v1",
+    auth: "oauth",  // "api-key" | "oauth" | "token" | "aws-sdk"
+    models: [{ id: "codex-v1", name: "Codex" }]
+  }
+}
+```
+
+### Validation
+
+- `updateConfig()` rejects model changes to OAuth/token providers when `runtime.modelAuth` is not available
+- `register()` logs a warning when an OAuth provider has no static key and no runtime auth
+
 ### HTTP Call
 
 ```typescript
 fetch(endpoint, {
   method: "POST",
-  headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+  headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearerToken}` },
   body: JSON.stringify({ model: modelId, messages, max_tokens }),
 });
 ```

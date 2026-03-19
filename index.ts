@@ -111,6 +111,7 @@ export interface OpenClawPluginApi {
         {
           baseUrl: string;
           apiKey?: string;
+          auth?: string; // "api-key" | "oauth" | "token" | "aws-sdk"
           api?: string;
           models?: Array<{ id: string; name: string; [key: string]: unknown }>;
         }
@@ -130,6 +131,19 @@ export interface OpenClawPluginApi {
   ) => void;
   resolvePath: (input: string) => string;
   emitAgentEvent?: EmitAgentEventFn;
+  runtime?: {
+    modelAuth?: {
+      resolveApiKeyForProvider: (params: {
+        provider: string;
+        cfg?: Record<string, unknown>;
+      }) => Promise<{
+        apiKey?: string;
+        profileId?: string;
+        source: string;
+        mode: "api-key" | "oauth" | "token" | "aws-sdk";
+      }>;
+    };
+  };
 }
 
 // ─── LLMHttpError ───
@@ -537,6 +551,14 @@ function updateConfig(partial: Partial<SecLawConfig>): {
         if (!provider) {
           errors.push(
             `llm.model: provider "${providerName}" not found in gateway models.providers`,
+          );
+        } else if (
+          !provider.apiKey &&
+          (provider.auth === "oauth" || provider.auth === "token") &&
+          !gatewayApi.runtime?.modelAuth
+        ) {
+          errors.push(
+            `llm.model: provider "${providerName}" uses ${provider.auth} auth but runtime.modelAuth is not available`,
           );
         }
       }
@@ -999,10 +1021,27 @@ function register(api: OpenClawPluginApi): void {
     const llmCallFn = createGatewayLLMCallFn(config, api);
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
-      api.logger.info(
-        "[seclaw] 🚀 LLM connected via provider config",
-        `model=${config.llm.model}`,
-      );
+      // Determine auth mode for logging
+      const resolved = resolveProviderEndpoint(config.llm.model, api);
+      const providerAuth = resolved?.auth;
+      const hasStaticKey = !!resolved?.apiKey;
+      const hasRuntimeAuth = !!api.runtime?.modelAuth;
+      if (!hasStaticKey && hasRuntimeAuth) {
+        api.logger.info(
+          "[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth)",
+          `model=${config.llm.model}`,
+        );
+      } else if (!hasStaticKey && !hasRuntimeAuth && (providerAuth === "oauth" || providerAuth === "token")) {
+        api.logger.error(
+          `[seclaw] ⚠️ LLM provider "${resolved?.providerName}" uses ${providerAuth} auth but runtime.modelAuth is not available -- ` +
+            "LLM calls will fail with 401. Ensure the gateway provides runtime.modelAuth.",
+        );
+      } else {
+        api.logger.info(
+          "[seclaw] 🚀 LLM connected via provider config",
+          `model=${config.llm.model}`,
+        );
+      }
     } else {
       if (config.llm.model.includes("/")) {
         const providerName = config.llm.model.slice(
@@ -1106,7 +1145,7 @@ function register(api: OpenClawPluginApi): void {
 function resolveProviderEndpoint(
   model: string,
   api: OpenClawPluginApi,
-): { endpoint: string; apiKey?: string; modelId: string } | null {
+): { endpoint: string; apiKey?: string; modelId: string; providerName: string; auth?: string } | null {
   if (model.includes("/")) {
     const slashIdx = model.indexOf("/");
     const providerName = model.slice(0, slashIdx);
@@ -1117,7 +1156,7 @@ function resolveProviderEndpoint(
     if (!endpoint.endsWith("/chat/completions")) {
       endpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
     }
-    return { endpoint, apiKey: provider.apiKey, modelId };
+    return { endpoint, apiKey: provider.apiKey, modelId, providerName, auth: provider.auth };
   }
   return null;
 }
@@ -1140,11 +1179,32 @@ function createGatewayLLMCallFn(
     // Re-resolve at call time in case config.llm.model changed at runtime
     const current = resolveProviderEndpoint(params.model, api) ?? resolved;
 
+    // Resolve auth: use static apiKey unless dynamic auth is needed
+    let bearerToken = current.apiKey;
+    const needsDynamicAuth =
+      !bearerToken || current.auth === "oauth" || current.auth === "token";
+
+    if (needsDynamicAuth && api.runtime?.modelAuth?.resolveApiKeyForProvider) {
+      try {
+        const authResult = await api.runtime.modelAuth.resolveApiKeyForProvider({
+          provider: current.providerName,
+        });
+        if (authResult.apiKey) {
+          bearerToken = authResult.apiKey;
+        }
+      } catch (err: any) {
+        throw new LLMHttpError(
+          401,
+          `OAuth auth resolution failed for provider "${current.providerName}": ${err.message}`,
+        );
+      }
+    }
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
-    if (current.apiKey) {
-      headers["Authorization"] = `Bearer ${current.apiKey}`;
+    if (bearerToken) {
+      headers["Authorization"] = `Bearer ${bearerToken}`;
     }
 
     const response = await fetch(current.endpoint, {
