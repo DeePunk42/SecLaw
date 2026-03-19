@@ -715,7 +715,7 @@ describe("Codex payload structure", () => {
     expect(body.store).toBe(false);
     expect(body.stream).toBe(true);
     expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
-    expect(body.max_output_tokens).toBe(16);
+    expect(body.max_output_tokens).toBeUndefined();
   });
 
   it("system message becomes instructions for codex calls", async () => {

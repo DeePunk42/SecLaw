@@ -1449,7 +1449,6 @@ function buildRequestPayload(
         role: message.role,
         content: message.content,
       })),
-      max_output_tokens: params.max_tokens,
       store: false,
       stream: true,
     };

@@ -412,7 +412,7 @@ providers: {
 |---|---|---|
 | `openai-completions` | `{ model, messages, max_tokens }` | Standard Chat Completions format |
 | `openai-responses` | `{ model, input, max_output_tokens }` | OpenAI Responses API; `instructions` optional, omitted |
-| `openai-codex-responses` | `{ model, instructions, input, max_output_tokens, store, stream }` | Codex API requires `instructions`; `store: false`, `stream: true` |
+| `openai-codex-responses` | `{ model, instructions, input, store, stream }` | Codex API requires `instructions`; `store: false`, `stream: true`; no `max_output_tokens` |
 
 **Codex `instructions` handling**: The Codex backend API (`chatgpt.com/backend-api/codex/responses`) requires an `instructions` field. `buildRequestPayload()` extracts the first `system`-role message from the messages array and uses its content as `instructions`. If no system message is present, a default `"You are a helpful assistant."` is used. System messages are excluded from the `input` array.
 
