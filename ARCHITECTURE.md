@@ -369,15 +369,16 @@ If the auth profile is found but the provider has no known base URL, resolution 
 Auth is resolved **per-call** inside `createGatewayLLMCallFn()`:
 
 1. **Static `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
-2. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
+2. **File-based / object `apiKey`** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`. This ensures auth works even when the runtime resolver is unavailable or fails.
+3. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
    - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
    - Call it with `{ provider: providerName, cfg, apiKeyRef }` to get a fresh token (handles OAuth refresh and file-based secret resolution automatically)
-   - `apiKeyRef` is the raw `apiKey` value from the provider config — it may be a string or an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers like DeepSeek)
+   - `apiKeyRef` is the raw `apiKey` value from the provider config — it may be a string or an object
    - Use the resolved `apiKey` as `Bearer` token
-3. **Auth failure** — if `resolveApiKeyForProvider` throws:
+4. **Auth failure** — if `resolveApiKeyForProvider` throws:
    - For `oauth`/`token` providers: a `LLMHttpError(401)` is raised (not retryable)
-   - For other providers (e.g. file-based secret providers): falls back to `staticApiKey` (graceful degradation)
-4. **No auth available** — if no static key AND no `runtime.modelAuth`, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
+   - For other providers (e.g. file-based secret providers): falls back to `staticApiKey` (graceful degradation). If no static key is available and an `apiKeyRef` was present, a warning is logged for diagnosability.
+5. **No auth available** — if no static key AND no `runtime.modelAuth`, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
 
 The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when OAuth providers are configured:
 

@@ -316,6 +316,63 @@ describe("OAuth provider auth", () => {
     expect(headers["Authorization"]).toBeUndefined();
   });
 
+  it("file-based apiKey: resolved via runtime config (loadConfig) when resolver unavailable", async () => {
+    const fileApiKeyRef = { source: "file", provider: "filemain", id: "deepseek-key" };
+    // No modelAuth resolver — but runtime.config.loadConfig returns resolved providers
+    const api = createMockGatewayApi(
+      {
+        deepseek: {
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: fileApiKeyRef,
+          models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+        },
+      },
+      {
+        config: {
+          loadConfig: () => ({
+            models: {
+              providers: {
+                deepseek: {
+                  baseUrl: "https://api.deepseek.com/v1",
+                  apiKey: "sk-resolved-from-runtime-config",
+                  models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+                },
+              },
+            },
+          }),
+        },
+      },
+    );
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // staticApiKey should be resolved from loadConfig, used as Authorization
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-resolved-from-runtime-config");
+  });
+
   it("no runtime + no apiKey: proceeds without Authorization header (local providers)", async () => {
     const api = createMockGatewayApi({
       localllm: {

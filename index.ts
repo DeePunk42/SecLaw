@@ -1427,12 +1427,31 @@ function resolveProviderTransport(
         ? appendEndpoint(provider.baseUrl, "/responses")
         : appendEndpoint(provider.baseUrl, "/chat/completions");
 
+  // When apiKey is not a string (e.g. file-based secret reference object),
+  // try to resolve it from the runtime config snapshot where secrets are
+  // already resolved to plain strings.
+  let resolvedApiKey: string | undefined;
+  if (typeof provider.apiKey === "string") {
+    resolvedApiKey = provider.apiKey;
+  } else if (provider.apiKey != null) {
+    try {
+      const runtimeCfg = resolveRuntimeConfig(api);
+      const runtimeProviders = extractProvidersFromConfig(runtimeCfg);
+      const runtimeProvider = findProviderConfig(runtimeProviders, providerName);
+      if (typeof runtimeProvider?.apiKey === "string") {
+        resolvedApiKey = runtimeProvider.apiKey;
+      }
+    } catch {
+      // Fall through — resolveBearerToken will attempt runtime auth resolution
+    }
+  }
+
   return {
     providerName,
     modelId,
     apiSurface,
     endpoint,
-    staticApiKey: typeof provider.apiKey === "string" ? provider.apiKey : undefined,
+    staticApiKey: resolvedApiKey,
     apiKeyRef: provider.apiKey, // keep original reference for runtime resolver
     authMode: provider.auth,
   };
@@ -1614,6 +1633,16 @@ async function resolveBearerToken(
       throw new LLMHttpError(
         401,
         `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
+      );
+    }
+    // Non-oauth providers: log warning when no static key available so silent
+    // auth failures are diagnosable (e.g. file-based secret reference that
+    // couldn't be resolved).
+    if (!staticToken && transport.apiKeyRef != null) {
+      const detail = error instanceof Error ? error.message : String(error);
+      auditLog.warn(
+        `Auth resolution for provider "${transport.providerName}" failed (${detail}), ` +
+        `and no static API key is available. LLM calls may fail with 401.`,
       );
     }
     return staticToken;
