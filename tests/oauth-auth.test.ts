@@ -483,15 +483,16 @@ describe("Auth profile fallback", () => {
     expect(resolveApiKey).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai-codex" }),
     );
-    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
+    // Codex is overridden to /responses (avoids /codex/responses stream=true requirement)
+    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/responses");
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers.originator).toBe("openclaw");
     expect(headers["User-Agent"]).toBe("openclaw/seclaw");
 
-    // Verify codex payload includes instructions field
+    // Payload uses openai-responses format (no instructions, no store)
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBe("You are a helpful assistant.");
-    expect(body.store).toBe(false);
+    expect(body.instructions).toBeUndefined();
+    expect(body.store).toBeUndefined();
     expect(body.input).toEqual([{ role: "user", content: "test" }]);
   });
 
@@ -698,7 +699,7 @@ describe("Codex payload structure", () => {
     return { api, resolveApiKey };
   }
 
-  it("uses default instructions when no system message is present", async () => {
+  it("codex is overridden to /responses format (no instructions, no store)", async () => {
     const { api } = setupCodexEnv();
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
     const fetchMock = vi.fn().mockResolvedValue({
@@ -713,14 +714,16 @@ describe("Codex payload structure", () => {
       max_tokens: 16,
     });
 
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toBe("https://chatgpt.com/backend-api/responses");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBe("You are a helpful assistant.");
+    expect(body.instructions).toBeUndefined();
+    expect(body.store).toBeUndefined();
     expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
-    expect(body.store).toBe(false);
     expect(body.max_output_tokens).toBe(16);
   });
 
-  it("extracts system message into instructions field", async () => {
+  it("system message is kept in input for overridden codex /responses calls", async () => {
     const { api } = setupCodexEnv();
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
     const fetchMock = vi.fn().mockResolvedValue({
@@ -738,12 +741,16 @@ describe("Codex payload structure", () => {
       max_tokens: 200,
     });
 
+    const url = fetchMock.mock.calls[0][0];
+    expect(url).toBe("https://chatgpt.com/backend-api/responses");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBe("You are a security auditor.");
+    expect(body.instructions).toBeUndefined();
+    expect(body.store).toBeUndefined();
+    // system message stays in input for responses surface
     expect(body.input).toEqual([
+      { role: "system", content: "You are a security auditor." },
       { role: "user", content: "Audit this call." },
     ]);
-    expect(body.store).toBe(false);
   });
 
   it("openai-responses provider uses completions format (messages, max_tokens)", async () => {

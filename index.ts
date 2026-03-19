@@ -1351,6 +1351,7 @@ function appendEndpoint(
 function stripApiPath(endpoint: string): string {
   return endpoint
     .replace(/\/chat\/completions$/, "")
+    .replace(/\/codex\/responses$/, "")
     .replace(/\/responses$/, "");
 }
 
@@ -1590,11 +1591,16 @@ function createGatewayLLMCallFn(
   return async (params) => {
     const current = resolveProviderTransport(params.model, api) ?? initial;
 
-    // Force /chat/completions for non-codex. SecLaw audit calls are simple
-    // (user messages only, no streaming) and other surfaces have extra constraints.
+    // Force simpler API surfaces for SecLaw audit calls (no streaming, single
+    // user message). Codex → /responses (avoids /codex/responses stream=true
+    // requirement), everything else → /chat/completions.
     const effective: ResolvedProviderTransport =
       current.apiSurface === "openai-codex-responses"
-        ? current
+        ? {
+            ...current,
+            apiSurface: "openai-responses",
+            endpoint: appendEndpoint(stripApiPath(current.endpoint), "/responses"),
+          }
         : {
             ...current,
             apiSurface: "openai-completions",
