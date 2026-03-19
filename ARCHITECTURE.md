@@ -368,12 +368,15 @@ If the auth profile is found but the provider has no known base URL, resolution 
 
 Auth is resolved **per-call** inside `createGatewayLLMCallFn()`:
 
-1. **Static `apiKey`** — if the provider has `apiKey` set and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
+1. **Static `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
 2. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
    - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
-   - Call it with `{ provider: providerName }` to get a fresh token (handles OAuth refresh automatically)
+   - Call it with `{ provider: providerName, cfg, apiKeyRef }` to get a fresh token (handles OAuth refresh and file-based secret resolution automatically)
+   - `apiKeyRef` is the raw `apiKey` value from the provider config — it may be a string or an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers like DeepSeek)
    - Use the resolved `apiKey` as `Bearer` token
-3. **Auth failure** — if `resolveApiKeyForProvider` throws, a `LLMHttpError(401)` is raised, which maps to `auth_error` classification (not retryable)
+3. **Auth failure** — if `resolveApiKeyForProvider` throws:
+   - For `oauth`/`token` providers: a `LLMHttpError(401)` is raised (not retryable)
+   - For other providers (e.g. file-based secret providers): falls back to `staticApiKey` (graceful degradation)
 4. **No auth available** — if no static key AND no `runtime.modelAuth`, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
 
 The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when OAuth providers are configured:
@@ -381,7 +384,7 @@ The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it
 ```typescript
 runtime?: {
   modelAuth?: {
-    resolveApiKeyForProvider: (params: { provider: string }) =>
+    resolveApiKeyForProvider: (params: { provider: string; cfg?: Record<string, unknown>; apiKeyRef?: unknown }) =>
       Promise<{ apiKey?: string; source: string; mode: "api-key" | "oauth" | "token" | "aws-sdk" }>
   }
 }

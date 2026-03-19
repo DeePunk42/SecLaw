@@ -20,7 +20,7 @@ function createMockGatewayApi(
     string,
     {
       baseUrl: string;
-      apiKey?: string;
+      apiKey?: string | Record<string, unknown>;
       auth?: string;
       api?: string;
       models?: Array<{ id: string; name: string }>;
@@ -218,6 +218,102 @@ describe("OAuth provider auth", () => {
       expect((err as LLMHttpError).message).toContain("Auth resolution failed");
       expect((err as LLMHttpError).message).toContain("OAuth token expired");
     }
+  });
+
+  it("file-based apiKey (object ref): resolver receives apiKeyRef and returns resolved key", async () => {
+    const fileApiKeyRef = { source: "file", provider: "filemain", id: "deepseek-key" };
+    const resolveApiKey = vi.fn().mockResolvedValue({
+      apiKey: "sk-resolved-from-file",
+      source: "file",
+      mode: "api-key" as const,
+    });
+    const api = createMockGatewayApi(
+      {
+        deepseek: {
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: fileApiKeyRef,
+          models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+        },
+      },
+      { modelAuth: { resolveApiKeyForProvider: resolveApiKey } },
+    );
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Resolver should receive the apiKeyRef object
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "deepseek", apiKeyRef: fileApiKeyRef }),
+    );
+    // Verify Authorization uses the resolved key
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-resolved-from-file");
+  });
+
+  it("file-based apiKey: resolver failure falls back gracefully (no 401 for non-oauth)", async () => {
+    const resolveApiKey = vi
+      .fn()
+      .mockRejectedValue(new Error("File secret not found"));
+    const api = createMockGatewayApi(
+      {
+        deepseek: {
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: { source: "file", provider: "filemain", id: "deepseek-key" },
+          models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+        },
+      },
+      { modelAuth: { resolveApiKeyForProvider: resolveApiKey } },
+    );
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    // Should NOT throw 401 — non-oauth provider falls back gracefully
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Request proceeds without Authorization (staticApiKey is undefined for object apiKey)
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBeUndefined();
   });
 
   it("no runtime + no apiKey: proceeds without Authorization header (local providers)", async () => {

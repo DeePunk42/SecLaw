@@ -139,6 +139,7 @@ export interface OpenClawPluginApi {
       resolveApiKeyForProvider: (params: {
         provider: string;
         cfg?: Record<string, unknown>;
+        apiKeyRef?: unknown;
       }) => Promise<{
         apiKey?: string;
         profileId?: string;
@@ -1263,6 +1264,7 @@ type ResolvedProviderTransport = {
   apiSurface: ProviderApiSurface;
   endpoint: string;
   staticApiKey?: string;
+  apiKeyRef?: unknown; // raw apiKey from provider config (may be secret reference object)
   authMode?: string;
 };
 
@@ -1431,6 +1433,7 @@ function resolveProviderTransport(
     apiSurface,
     endpoint,
     staticApiKey: typeof provider.apiKey === "string" ? provider.apiKey : undefined,
+    apiKeyRef: provider.apiKey, // keep original reference for runtime resolver
     authMode: provider.auth,
   };
 }
@@ -1594,6 +1597,7 @@ async function resolveBearerToken(
     const authResult = await resolver({
       provider: transport.providerName,
       cfg: resolveRuntimeConfig(api),
+      apiKeyRef: transport.apiKeyRef,
     });
     const token = authResult.apiKey?.trim();
     if (token) return token;
@@ -1605,11 +1609,14 @@ async function resolveBearerToken(
     }
     return staticToken;
   } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new LLMHttpError(
-      401,
-      `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
-    );
+    if (transport.authMode === "oauth" || transport.authMode === "token") {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new LLMHttpError(
+        401,
+        `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
+      );
+    }
+    return staticToken;
   }
 }
 
