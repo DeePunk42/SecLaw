@@ -412,11 +412,11 @@ providers: {
 |---|---|---|
 | `openai-completions` | `{ model, messages, max_tokens }` | Standard Chat Completions format |
 | `openai-responses` | `{ model, input, max_output_tokens }` | OpenAI Responses API; `instructions` optional, omitted |
-| `openai-codex-responses` | `{ model, instructions, input, max_output_tokens, store }` | Codex API requires `instructions`; `store: false` |
+| `openai-codex-responses` | `{ model, instructions, input, max_output_tokens, store, stream }` | Codex API requires `instructions`; `store: false`, `stream: true` |
 
 **Codex `instructions` handling**: The Codex backend API (`chatgpt.com/backend-api/codex/responses`) requires an `instructions` field. `buildRequestPayload()` extracts the first `system`-role message from the messages array and uses its content as `instructions`. If no system message is present, a default `"You are a helpful assistant."` is used. System messages are excluded from the `input` array.
 
-**Surface override for SecLaw calls**: `createGatewayLLMCallFn()` overrides the API surface for all providers to avoid constraints that SecLaw's simple audit calls (single user message, no streaming) cannot satisfy. Non-codex providers are forced to `/chat/completions`. Codex providers (`openai-codex-responses`) are forced to `/responses` instead of `/codex/responses`, because `/codex/responses` requires `stream=true`. The override uses `stripApiPath()` to remove any existing API path suffix before appending the target path. Auth resolution (`resolveBearerToken`) still uses the original transport since auth is provider-level, not surface-level.
+**Surface override for SecLaw calls**: `createGatewayLLMCallFn()` overrides the API surface for non-codex providers, forcing them to `/chat/completions` to avoid constraints that SecLaw's simple audit calls cannot satisfy. Codex providers keep their native `/codex/responses` endpoint with `stream: true` in the payload; the SSE response is parsed by `parseSSEResponse()` which accumulates `response.output_text.delta` events and uses `response.completed` as fallback. The override uses `stripApiPath()` to remove any existing API path suffix before appending the target path. Auth resolution (`resolveBearerToken`) still uses the original transport since auth is provider-level, not surface-level.
 
 ### HTTP Call
 
@@ -428,7 +428,7 @@ fetch(endpoint, {
 });
 ```
 
-The response is parsed based on API surface: Responses/Codex use `output_text` or `output[].content[].text`, Completions use `choices[0].message.content`.
+The response is parsed based on API surface: Codex (`openai-codex-responses`) uses SSE stream parsing via `parseSSEResponse()`, Responses use `output_text` or `output[].content[].text`, Completions use `choices[0].message.content`.
 
 ## Config Persistence
 

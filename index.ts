@@ -1372,8 +1372,7 @@ function buildAttributionHeaders(transport: ResolvedProviderTransport): Record<s
     isHostMatch(transport.endpoint, "api.openai.com");
   const isCodex =
     provider === "openaicodex" &&
-    (transport.apiSurface === "openai-codex-responses" ||
-      transport.apiSurface === "openai-responses") &&
+    transport.apiSurface === "openai-codex-responses" &&
     isHostMatch(transport.endpoint, "chatgpt.com");
   if (isOpenAI || isCodex) {
     headers.originator = "openclaw";
@@ -1452,6 +1451,7 @@ function buildRequestPayload(
       })),
       max_output_tokens: params.max_tokens,
       store: false,
+      stream: true,
     };
   }
   if (transport.apiSurface === "openai-responses") {
@@ -1527,6 +1527,46 @@ function parseResponseContent(
   );
 }
 
+async function parseSSEResponse(response: Response): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    throw new Error("response_parse_failed: SSE response has no body");
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let accumulatedText = "";
+  let completedText: string | undefined;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") continue;
+        if (!trimmed.startsWith("data: ")) continue;
+        let event: { type?: string; delta?: string; response?: { output_text?: string } };
+        try { event = JSON.parse(trimmed.slice(6)); } catch { continue; }
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          accumulatedText += event.delta;
+        } else if (event.type === "response.completed" && typeof event.response?.output_text === "string") {
+          completedText = event.response.output_text;
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const result = accumulatedText || completedText;
+  if (!result || result.trim().length === 0) {
+    throw new Error("response_parse_failed: SSE stream contained no text content");
+  }
+  return result.trim();
+}
+
 async function resolveBearerToken(
   transport: ResolvedProviderTransport,
   api: OpenClawPluginApi,
@@ -1591,16 +1631,11 @@ function createGatewayLLMCallFn(
   return async (params) => {
     const current = resolveProviderTransport(params.model, api) ?? initial;
 
-    // Force simpler API surfaces for SecLaw audit calls (no streaming, single
-    // user message). Codex → /responses (avoids /codex/responses stream=true
-    // requirement), everything else → /chat/completions.
+    // Codex stays on its native /codex/responses (stream: true + SSE parsing).
+    // Everything else is forced to /chat/completions.
     const effective: ResolvedProviderTransport =
       current.apiSurface === "openai-codex-responses"
-        ? {
-            ...current,
-            apiSurface: "openai-responses",
-            endpoint: appendEndpoint(stripApiPath(current.endpoint), "/responses"),
-          }
+        ? current
         : {
             ...current,
             apiSurface: "openai-completions",
@@ -1647,8 +1682,13 @@ function createGatewayLLMCallFn(
       throw new LLMHttpError(response.status, detail);
     }
 
-    const data = (await response.json()) as unknown;
-    const content = parseResponseContent(effective, data);
+    let content: string;
+    if (effective.apiSurface === "openai-codex-responses") {
+      content = await parseSSEResponse(response);
+    } else {
+      const data = (await response.json()) as unknown;
+      content = parseResponseContent(effective, data);
+    }
 
     return { content };
   };

@@ -465,10 +465,7 @@ describe("Auth profile fallback", () => {
     _setGatewayApi(api);
 
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ output_text: "SAFE: codex ok" }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(createSSEMockResponse("SAFE: codex ok"));
     globalThis.fetch = fetchMock;
 
     const result = _updateConfig({ llm: { model: "openai-codex/gpt-5.2" } });
@@ -483,16 +480,16 @@ describe("Auth profile fallback", () => {
     expect(resolveApiKey).toHaveBeenCalledWith(
       expect.objectContaining({ provider: "openai-codex" }),
     );
-    // Codex is overridden to /responses (avoids /codex/responses stream=true requirement)
-    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/responses");
+    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers.originator).toBe("openclaw");
     expect(headers["User-Agent"]).toBe("openclaw/seclaw");
 
-    // Payload uses openai-responses format (no instructions, no store)
+    // Payload uses codex format with streaming
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBeUndefined();
-    expect(body.store).toBeUndefined();
+    expect(body.instructions).toBe("You are a helpful assistant.");
+    expect(body.store).toBe(false);
+    expect(body.stream).toBe(true);
     expect(body.input).toEqual([{ role: "user", content: "test" }]);
   });
 
@@ -699,13 +696,10 @@ describe("Codex payload structure", () => {
     return { api, resolveApiKey };
   }
 
-  it("codex is overridden to /responses format (no instructions, no store)", async () => {
+  it("codex uses /codex/responses with SSE streaming", async () => {
     const { api } = setupCodexEnv();
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ output_text: "OK" }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(createSSEMockResponse("OK"));
     globalThis.fetch = fetchMock;
 
     await llmCallFn({
@@ -715,21 +709,19 @@ describe("Codex payload structure", () => {
     });
 
     const url = fetchMock.mock.calls[0][0];
-    expect(url).toBe("https://chatgpt.com/backend-api/responses");
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBeUndefined();
-    expect(body.store).toBeUndefined();
+    expect(body.instructions).toBe("You are a helpful assistant.");
+    expect(body.store).toBe(false);
+    expect(body.stream).toBe(true);
     expect(body.input).toEqual([{ role: "user", content: "Hello" }]);
     expect(body.max_output_tokens).toBe(16);
   });
 
-  it("system message is kept in input for overridden codex /responses calls", async () => {
+  it("system message becomes instructions for codex calls", async () => {
     const { api } = setupCodexEnv();
     const llmCallFn = _createTestLLMCallFn(api, "openai-codex/gpt-5.2");
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ output_text: "OK" }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(createSSEMockResponse("OK"));
     globalThis.fetch = fetchMock;
 
     await llmCallFn({
@@ -742,13 +734,13 @@ describe("Codex payload structure", () => {
     });
 
     const url = fetchMock.mock.calls[0][0];
-    expect(url).toBe("https://chatgpt.com/backend-api/responses");
+    expect(url).toBe("https://chatgpt.com/backend-api/codex/responses");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.instructions).toBeUndefined();
-    expect(body.store).toBeUndefined();
-    // system message stays in input for responses surface
+    expect(body.instructions).toBe("You are a security auditor.");
+    expect(body.store).toBe(false);
+    expect(body.stream).toBe(true);
+    // system message is extracted to instructions, only user message in input
     expect(body.input).toEqual([
-      { role: "system", content: "You are a security auditor." },
       { role: "user", content: "Audit this call." },
     ]);
   });
@@ -840,4 +832,25 @@ function _createTestLLMCallFn(api: OpenClawPluginApi, modelOverride?: string) {
     throw new Error("Failed to capture llmCallFn — createGatewayLLMCallFn returned null");
   }
   return capturedFn;
+}
+
+function createSSEMockResponse(text: string) {
+  const encoder = new TextEncoder();
+  const ssePayload = [
+    `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`,
+    `data: ${JSON.stringify({ type: "response.completed", response: { output_text: text } })}\n\n`,
+    `data: [DONE]\n\n`,
+  ].join("");
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    headers: { get: () => null },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(ssePayload));
+        controller.close();
+      },
+    }),
+  };
 }
