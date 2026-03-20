@@ -118,7 +118,7 @@ describe("Dashboard", () => {
           seclaw: {
             config: {
               llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
               logging: { level: "info", auditJsonl: false },
               dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
             },
@@ -134,7 +134,7 @@ describe("Dashboard", () => {
       varDir: path.join(dashTmpDir, "var"),
       config: {
         llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -142,7 +142,7 @@ describe("Dashboard", () => {
 
     runtimeConfig = {
       llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-      timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+      timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" as const },
       logging: { level: "info" as const, auditJsonl: false },
       dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       rules: { activeRuleFile: "default.yaml" },
@@ -553,7 +553,7 @@ describe("Dashboard disabled", () => {
       pluginDir: __dirname + "/..",
       config: {
         llm: { model: "test", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_open" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_open" },
         logging: { level: "error", auditJsonl: false },
         dashboard: { enabled: false, port: 19198, host: "127.0.0.1" },
       },
@@ -581,7 +581,7 @@ describe("Config persistence", () => {
           seclaw: {
             config: {
               llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
-              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
               logging: { level: "info", auditJsonl: false },
               dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
             },
@@ -596,7 +596,7 @@ describe("Config persistence", () => {
       varDir,
       config: {
         llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -606,7 +606,7 @@ describe("Config persistence", () => {
     const actualPort = await startDashboard(dashboardConfig, {
       getConfig: () => ({
         llm: { model: "test-model", enabled: true, maxConcurrent: 2 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" as const },
         logging: { level: "info" as const, auditJsonl: false },
         dashboard: dashboardConfig,
       }),
@@ -654,12 +654,12 @@ describe("Config persistence", () => {
     await fetch(`${baseUrl}/api/config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ logging: { level: "debug" }, timeouts: { syncAuditMs: 5000 } }),
+      body: JSON.stringify({ logging: { level: "debug" }, timeouts: { auditTimeoutMs: 5000 } }),
     });
 
     const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
     expect(saved.plugins.entries.seclaw.config.logging.level).toBe("debug");
-    expect(saved.plugins.entries.seclaw.config.timeouts.syncAuditMs).toBe(5000);
+    expect(saved.plugins.entries.seclaw.config.timeouts.auditTimeoutMs).toBe(5000);
   });
 });
 
@@ -677,7 +677,7 @@ describe("Sender labels refresh", () => {
       pluginDir: tmpDir,
       config: {
         llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "info", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -687,7 +687,7 @@ describe("Sender labels refresh", () => {
     const actualPort = await startDashboard(dashboardConfig, {
       getConfig: () => ({
         llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" as const },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" as const },
         logging: { level: "info" as const, auditJsonl: false },
         dashboard: dashboardConfig,
       }),
@@ -766,7 +766,7 @@ describe("Runtime model change via updateConfig", () => {
           seclaw: {
             config: {
               llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
-              timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+              timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
               logging: { level: "error", auditJsonl: false },
               dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
             },
@@ -793,7 +793,7 @@ describe("Runtime model change via updateConfig", () => {
       varDir: tmpDir,
       config: {
         llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -816,7 +816,7 @@ describe("Runtime model change via updateConfig", () => {
       varDir: tmpDir,
       config: {
         llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -844,7 +844,7 @@ describe("Runtime model change via updateConfig", () => {
       varDir: tmpDir,
       config: {
         llm: { model: "myapi/gpt-5.2", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },
@@ -871,7 +871,7 @@ describe("Runtime model change via updateConfig", () => {
       varDir: tmpDir,
       config: {
         llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
         dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
       },

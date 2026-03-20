@@ -773,22 +773,13 @@ function updateConfig(partial: Partial<SecLawConfig>): {
 
   // Validate & apply timeout changes
   if (partial.timeouts) {
-    if (partial.timeouts.syncAuditMs !== undefined) {
+    if (partial.timeouts.auditTimeoutMs !== undefined) {
       if (
-        typeof partial.timeouts.syncAuditMs !== "number" ||
-        partial.timeouts.syncAuditMs < 1000 ||
-        partial.timeouts.syncAuditMs > 120000
+        typeof partial.timeouts.auditTimeoutMs !== "number" ||
+        partial.timeouts.auditTimeoutMs < 1000 ||
+        partial.timeouts.auditTimeoutMs > 120000
       ) {
-        errors.push("timeouts.syncAuditMs must be between 1000 and 120000");
-      }
-    }
-    if (partial.timeouts.asyncAuditMs !== undefined) {
-      if (
-        typeof partial.timeouts.asyncAuditMs !== "number" ||
-        partial.timeouts.asyncAuditMs < 1000 ||
-        partial.timeouts.asyncAuditMs > 120000
-      ) {
-        errors.push("timeouts.asyncAuditMs must be between 1000 and 120000");
+        errors.push("timeouts.auditTimeoutMs must be between 1000 and 120000");
       }
     }
     if (partial.timeouts.syncTimeoutPolicy !== undefined) {

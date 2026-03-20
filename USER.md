@@ -120,8 +120,7 @@ SecLaw 使用 Provider 模式（`provider/model`）：
     }
   },
   "timeouts": {
-    "syncAuditMs": 30000,
-    "asyncAuditMs": 30000,
+    "auditTimeoutMs": 60000,
     "syncTimeoutPolicy": "fail_closed"
   },
   "logging": {
@@ -142,8 +141,7 @@ SecLaw 使用 Provider 模式（`provider/model`）：
 | `llm.enabled` | 是否启用 LLM 审计 | `true` |
 | `llm.maxConcurrent` | 最大并发 LLM 调用数 | `2` |
 | `llm.trustedSenderLabels` | 受信任发送者标签列表 | `["openclaw-control-ui"]` |
-| `timeouts.syncAuditMs` | 同步审计超时（毫秒） | `30000` |
-| `timeouts.asyncAuditMs` | 异步审计超时（毫秒） | `30000` |
+| `timeouts.auditTimeoutMs` | 审计超时（毫秒，同步 & 异步共用） | `60000` |
 | `timeouts.syncTimeoutPolicy` | 超时策略：`fail_closed`（阻断）或 `fail_open`（放行） | `fail_closed` |
 | `logging.level` | 日志级别：`debug` / `info` / `warn` / `error` | `debug` |
 | `logging.auditJsonl` | 是否写入 JSONL 审计日志 | `true` |

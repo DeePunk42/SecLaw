@@ -136,7 +136,7 @@ export class AsyncAuditQueue {
       : undefined;
     const llmResult = await this.llmAuditor.auditWithTimeout(
       { toolName, params, intentContext, sessionKey },
-      this.config.timeouts.asyncAuditMs,
+      this.config.timeouts.auditTimeoutMs,
       ruleContext,
     );
     const durationMs = Date.now() - startTime;

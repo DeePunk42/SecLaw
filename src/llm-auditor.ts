@@ -196,7 +196,7 @@ export class LLMAuditor {
     timeoutMs?: number,
     ruleContext?: { ruleId?: string; reason?: string },
   ): Promise<LLMAuditResult> {
-    const timeout = timeoutMs ?? this.timeoutConfig.syncAuditMs;
+    const timeout = timeoutMs ?? this.timeoutConfig.auditTimeoutMs;
 
     const result = await Promise.race([
       this.audit(params, ruleContext),

@@ -54,8 +54,7 @@ function writeOpenClawConfig(
 const BASE_CONFIG = {
   llm: { model: "myapi/gpt-5.2", enabled: true, maxConcurrent: 1 },
   timeouts: {
-    syncAuditMs: 10000,
-    asyncAuditMs: 30000,
+    auditTimeoutMs: 10000,
     syncTimeoutPolicy: "fail_closed" as const,
   },
   logging: { level: "error" as const, auditJsonl: false },

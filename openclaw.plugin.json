@@ -30,8 +30,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "syncAuditMs": { "type": "number" },
-          "asyncAuditMs": { "type": "number" },
+          "auditTimeoutMs": { "type": "number" },
           "syncTimeoutPolicy": { "type": "string", "enum": ["fail_closed", "fail_open"] }
         }
       },
@@ -57,22 +56,6 @@
           "enabled": { "type": "boolean" },
           "port": { "type": "number" },
           "host": { "type": "string" }
-        }
-      },
-      "agentProfiles": {
-        "type": "object",
-        "additionalProperties": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "classification": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "safeCommands": { "type": "array", "items": { "type": "string" } }
-              }
-            }
-          }
         }
       }
     }

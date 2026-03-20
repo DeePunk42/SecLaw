@@ -10,8 +10,7 @@ const defaultLLMConfig: LLMConfig = {
 };
 
 const defaultTimeoutConfig: TimeoutConfig = {
-  syncAuditMs: 10000,
-  asyncAuditMs: 30000,
+  auditTimeoutMs: 10000,
   syncTimeoutPolicy: "fail_closed",
 };
 
@@ -578,7 +577,7 @@ describe("LLMAuditor", () => {
   it("respects timeout with fail_closed policy", async () => {
     const slowAuditor = new LLMAuditor(defaultLLMConfig, {
       ...defaultTimeoutConfig,
-      syncAuditMs: 100,
+      auditTimeoutMs: 100,
       syncTimeoutPolicy: "fail_closed",
     });
     const mockLLM: LLMCallFn = vi.fn().mockImplementation(

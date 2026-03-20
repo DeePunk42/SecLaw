@@ -279,7 +279,7 @@ After every tool call (`afterToolCall`), the operation is checked:
 3. **Deduplication**: fingerprint-based, skips already-queued identical operations
 4. **Re-classification**: runs `ruleEngine.classify()` again
 5. **GREEN → skip**: no further audit needed
-6. **YELLOW/RED → LLM audit**: runs with `asyncAuditMs` timeout
+6. **YELLOW/RED → LLM audit**: runs with `auditTimeoutMs` timeout
 7. **DANGER → interrupt**: sets per-session danger flag, emits `security` event
 
 The danger flag blocks **all subsequent tool calls** for that session until the session is reset.
@@ -470,8 +470,7 @@ If `plugins.entries.seclaw` is missing, persistence auto-creates it. The depreca
     }
   },
   "timeouts": {
-    "syncAuditMs": 10000,
-    "asyncAuditMs": 30000,
+    "auditTimeoutMs": 60000,
     "syncTimeoutPolicy": "fail_closed"
   },
   "logging": {

@@ -150,6 +150,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 }
 .config-field { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .config-field label { width: 180px; font-size: 12px; color: var(--text-dim); }
+.config-hint { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
 .config-field input, .config-field select {
   flex: 1; max-width: 300px; padding: 6px 10px; background: var(--bg-input);
   border: 1px solid var(--border); color: var(--text); border-radius: 4px;
@@ -414,39 +415,34 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <div id="tab-config" class="tab-content">
   <div class="config-section">
     <h3>LLM</h3>
-    <div class="config-field"><label>model</label><input id="cfg-llm-model" list="cfg-llm-model-list" placeholder="provider/model" autocomplete="off"><datalist id="cfg-llm-model-list"></datalist><button id="btn-test-llm-model" class="btn-mini" type="button">Test</button></div>
-    <div class="config-field"><label>enabled</label><input id="cfg-llm-enabled" type="checkbox"></div>
-    <div class="config-field"><label>maxConcurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"></div>
-    <div class="config-field"><label>promptRecentCalls</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"></div>
-    <div class="config-field"><label>trustedSenderLabels</label><div class="multi-select" id="cfg-llm-trustedSenderLabels"><div class="multi-select-toggle"><span class="multi-select-summary">0 selected</span><span class="multi-select-arrow">&#x25BE;</span></div><div class="multi-select-dropdown"></div></div><button id="btn-refresh-labels" type="button" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;font-size:12px;margin-left:4px" title="Refresh labels from logs">&#x21bb;</button></div>
+    <div class="config-field"><label>Model</label><input id="cfg-llm-model" list="cfg-llm-model-list" placeholder="provider/model" autocomplete="off"><datalist id="cfg-llm-model-list"></datalist><button id="btn-test-llm-model" class="btn-mini" type="button">Test</button><span class="config-hint">provider/model</span></div>
+    <div class="config-field"><label>Enabled</label><input id="cfg-llm-enabled" type="checkbox"><span class="config-hint">Enable LLM auditing</span></div>
+    <div class="config-field"><label>Max Concurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"><span class="config-hint">Parallel audit limit</span></div>
+    <div class="config-field"><label>Recent Calls in Prompt</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"><span class="config-hint">Tool calls included in audit context</span></div>
+    <div class="config-field"><label>Trusted Senders</label><div class="multi-select" id="cfg-llm-trustedSenderLabels"><div class="multi-select-toggle"><span class="multi-select-summary">0 selected</span><span class="multi-select-arrow">&#x25BE;</span></div><div class="multi-select-dropdown"></div></div><button id="btn-refresh-labels" type="button" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer;font-size:12px;margin-left:4px" title="Refresh labels from logs">&#x21bb;</button></div>
   </div>
   <div class="config-section">
     <h3>LLM Retry</h3>
-    <div class="config-field"><label>maxRetries</label><input id="cfg-llm-retry-maxRetries" type="number" min="0" max="10"></div>
-    <div class="config-field"><label>initialBackoffMs</label><input id="cfg-llm-retry-initialBackoffMs" type="number" min="100" max="30000"></div>
-    <div class="config-field"><label>cooldownMs</label><input id="cfg-llm-retry-cooldownMs" type="number" min="1000" max="300000"></div>
-    <div class="config-field"><label>cooldownThreshold</label><input id="cfg-llm-retry-cooldownThreshold" type="number" min="1" max="20"></div>
+    <div class="config-field"><label>Max Retries</label><input id="cfg-llm-retry-maxRetries" type="number" min="0" max="10"></div>
+    <div class="config-field"><label>Initial Backoff</label><input id="cfg-llm-retry-initialBackoffMs" type="number" min="100" max="30000"><span class="config-hint">ms</span></div>
+    <div class="config-field"><label>Cooldown</label><input id="cfg-llm-retry-cooldownMs" type="number" min="1000" max="300000"><span class="config-hint">ms, after threshold</span></div>
+    <div class="config-field"><label>Cooldown After</label><input id="cfg-llm-retry-cooldownThreshold" type="number" min="1" max="20"><span class="config-hint">consecutive errors</span></div>
   </div>
   <div class="config-section">
     <h3>Timeouts</h3>
-    <div class="config-field"><label>syncAuditMs</label><input id="cfg-timeouts-syncAuditMs" type="number" min="1000" max="120000"></div>
-    <div class="config-field"><label>asyncAuditMs</label><input id="cfg-timeouts-asyncAuditMs" type="number" min="1000" max="120000"></div>
-    <div class="config-field"><label>syncTimeoutPolicy</label><select id="cfg-timeouts-syncTimeoutPolicy"><option value="fail_closed">fail_closed</option><option value="fail_open">fail_open</option></select></div>
+    <div class="config-field"><label>Audit Timeout</label><input id="cfg-timeouts-auditTimeoutMs" type="number" min="1000" max="120000"><span class="config-hint">ms (sync &amp; async)</span></div>
+    <div class="config-field"><label>Timeout Policy</label><select id="cfg-timeouts-syncTimeoutPolicy"><option value="fail_closed">fail_closed</option><option value="fail_open">fail_open</option></select><span class="config-hint">fail_closed = block, fail_open = allow</span></div>
   </div>
   <div class="config-section">
     <h3>Logging</h3>
-    <div class="config-field"><label>level</label><select id="cfg-logging-level"><option value="debug">debug</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option></select></div>
-    <div class="config-field"><label>auditJsonl</label><input id="cfg-logging-auditJsonl" type="checkbox"></div>
+    <div class="config-field"><label>Log Level</label><select id="cfg-logging-level"><option value="debug">debug</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option></select></div>
+    <div class="config-field"><label>JSONL Audit Log</label><input id="cfg-logging-auditJsonl" type="checkbox"><span class="config-hint">Write structured logs to disk</span></div>
   </div>
   <div class="config-section">
     <h3>Dashboard</h3>
-    <div class="config-field"><label>enabled</label><input id="cfg-dashboard-enabled" type="checkbox" disabled title="Requires restart"></div>
-    <div class="config-field"><label>port</label><input id="cfg-dashboard-port" type="number" disabled title="Requires restart"></div>
-    <div class="config-field"><label>host</label><input id="cfg-dashboard-host" type="text" disabled title="Requires restart"></div>
-  </div>
-  <div class="config-section">
-    <h3>Agent Profiles</h3>
-    <div class="config-field" style="align-items:flex-start"><label>agentProfiles</label><textarea id="cfg-agentProfiles" rows="6" style="flex:1;max-width:500px;padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical" placeholder="{}"></textarea></div>
+    <div class="config-field"><label>Enabled</label><input id="cfg-dashboard-enabled" type="checkbox" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
+    <div class="config-field"><label>Port</label><input id="cfg-dashboard-port" type="number" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
+    <div class="config-field"><label>Bind Address</label><input id="cfg-dashboard-host" type="text" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
   </div>
   <button class="btn-save" id="btn-save-config">Save Configuration</button>
 </div>
@@ -1054,8 +1050,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         document.getElementById('cfg-llm-retry-cooldownMs').value = retry.cooldownMs ?? 30000;
         document.getElementById('cfg-llm-retry-cooldownThreshold').value = retry.cooldownThreshold ?? 3;
         // Timeouts
-        document.getElementById('cfg-timeouts-syncAuditMs').value = cfg.timeouts?.syncAuditMs || 30000;
-        document.getElementById('cfg-timeouts-asyncAuditMs').value = cfg.timeouts?.asyncAuditMs || 30000;
+        document.getElementById('cfg-timeouts-auditTimeoutMs').value = cfg.timeouts?.auditTimeoutMs || 60000;
         document.getElementById('cfg-timeouts-syncTimeoutPolicy').value = cfg.timeouts?.syncTimeoutPolicy || 'fail_closed';
         // Logging
         document.getElementById('cfg-logging-level').value = cfg.logging?.level || 'info';
@@ -1064,8 +1059,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         document.getElementById('cfg-dashboard-enabled').checked = cfg.dashboard?.enabled ?? true;
         document.getElementById('cfg-dashboard-port').value = cfg.dashboard?.port ?? 19198;
         document.getElementById('cfg-dashboard-host').value = cfg.dashboard?.host || '127.0.0.1';
-        // Agent Profiles
-        document.getElementById('cfg-agentProfiles').value = cfg.agentProfiles ? JSON.stringify(cfg.agentProfiles, null, 2) : '{}';
       })
       .catch(function() { showToast('Failed to load config', 'error'); });
   }
@@ -1107,15 +1100,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   document.getElementById('btn-save-config').addEventListener('click', function() {
     var labels = getSelectedLabels();
 
-    // Parse JSON textareas
-    var agentProfiles;
-    try {
-      agentProfiles = JSON.parse(document.getElementById('cfg-agentProfiles').value || '{}');
-    } catch(e) {
-      showToast('Invalid JSON in agentProfiles', 'error');
-      return;
-    }
-
     var body = {
       llm: {
         model: document.getElementById('cfg-llm-model').value,
@@ -1131,15 +1115,13 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         },
       },
       timeouts: {
-        syncAuditMs: parseInt(document.getElementById('cfg-timeouts-syncAuditMs').value, 10),
-        asyncAuditMs: parseInt(document.getElementById('cfg-timeouts-asyncAuditMs').value, 10),
+        auditTimeoutMs: parseInt(document.getElementById('cfg-timeouts-auditTimeoutMs').value, 10),
         syncTimeoutPolicy: document.getElementById('cfg-timeouts-syncTimeoutPolicy').value,
       },
       logging: {
         level: document.getElementById('cfg-logging-level').value,
         auditJsonl: document.getElementById('cfg-logging-auditJsonl').checked,
       },
-      agentProfiles: agentProfiles,
     };
     fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function(r) { return r.json(); })

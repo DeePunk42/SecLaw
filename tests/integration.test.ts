@@ -28,7 +28,7 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
       pluginDir: __dirname + "/..",
       config: {
         llm: { model: "test", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_open" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_open" },
         logging: { level: "error", auditJsonl: false },
       },
     });
@@ -185,7 +185,7 @@ describe("Integration: LLM disabled + fail_closed", () => {
       pluginDir: __dirname + "/..",
       config: {
         llm: { model: "test", enabled: false, maxConcurrent: 1 },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
       },
     });
@@ -361,7 +361,7 @@ describe("Integration: LLM service errors", () => {
             model: "test", enabled: true, maxConcurrent: 2,
             retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 },
           },
-          timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+          timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
           logging: { level: "error", auditJsonl: false },
         },
         llmCall: mockLLM,
@@ -400,7 +400,7 @@ describe("Integration: LLM service errors", () => {
             model: "test", enabled: true, maxConcurrent: 2,
             retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 },
           },
-          timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_open" },
+          timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_open" },
           logging: { level: "error", auditJsonl: false },
         },
         llmCall: mockLLM,
@@ -438,7 +438,7 @@ describe("Integration: LLM service errors", () => {
             model: "test", enabled: true, maxConcurrent: 2,
             retry: { maxRetries: 2, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 },
           },
-          timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+          timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
           logging: { level: "error", auditJsonl: false },
         },
         llmCall: mockLLM,
@@ -475,7 +475,7 @@ describe("Integration: LLM service errors", () => {
             model: "test", enabled: true, maxConcurrent: 2,
             retry: { maxRetries: 0, initialBackoffMs: 1, cooldownMs: 30000, cooldownThreshold: 10 },
           },
-          timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+          timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
           logging: { level: "error", auditJsonl: false },
         },
         llmCall: mockLLM,

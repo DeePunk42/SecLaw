@@ -163,20 +163,13 @@ export interface LLMConfig {
 }
 
 export interface TimeoutConfig {
-  syncAuditMs: number;
-  asyncAuditMs: number;
+  auditTimeoutMs: number;
   syncTimeoutPolicy: "fail_closed" | "fail_open";
 }
 
 export interface LoggingConfig {
   level: "debug" | "info" | "warn" | "error";
   auditJsonl: boolean;
-}
-
-export interface AgentProfileConfig {
-  classification?: {
-    safeCommands?: string[];
-  };
 }
 
 export interface DashboardConfig {
@@ -191,7 +184,6 @@ export interface SecLawConfig {
   logging: LoggingConfig;
   dashboard?: DashboardConfig;
   rules?: { activeRuleFile?: string };
-  agentProfiles?: Record<string, AgentProfileConfig>;
 }
 
 const DEFAULT_CONFIG: SecLawConfig = {
@@ -208,8 +200,7 @@ const DEFAULT_CONFIG: SecLawConfig = {
     },
   },
   timeouts: {
-    syncAuditMs: 30000,
-    asyncAuditMs: 30000,
+    auditTimeoutMs: 60000,
     syncTimeoutPolicy: "fail_closed",
   },
   logging: {
@@ -234,6 +225,5 @@ export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
     logging: { ...DEFAULT_CONFIG.logging, ...partial.logging },
     dashboard: { ...DEFAULT_CONFIG.dashboard!, ...partial.dashboard },
     rules: { ...DEFAULT_CONFIG.rules!, ...partial.rules },
-    agentProfiles: partial.agentProfiles,
   };
 }

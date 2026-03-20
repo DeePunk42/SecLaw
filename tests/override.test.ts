@@ -611,7 +611,7 @@ describe("Integration: fail_closed override flow", () => {
           maxConcurrent: 1,
           trustedSenderLabels: trustedLabels,
         },
-        timeouts: { syncAuditMs: 10000, asyncAuditMs: 30000, syncTimeoutPolicy: "fail_closed" },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
         logging: { level: "error", auditJsonl: false },
       },
     });
