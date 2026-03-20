@@ -577,6 +577,7 @@ describe("Integration: Trust-branched LLM prompts", () => {
     // Verify the prompt used intent-alignment (trusted)
     const promptContent = mockLLM.mock.calls[0][0].messages[0].content;
     expect(promptContent).toContain("intent-alignment auditor");
+    expect(promptContent).toContain("DANGER is a high bar");
     expect(promptContent).not.toContain("security auditor");
 
     // Verify block response has PIN + buttons

@@ -206,7 +206,7 @@ Sender trust is determined **before** the LLM call (via `isSenderTrusted()` in c
 
 | Sender | Prompt | Focus | DANGER means |
 |--------|--------|-------|-------------|
-| Trusted | `TRUSTED_AUDIT_PROMPT` ("intent-alignment auditor") | Does this align with the user's goal? | Deviates from instructions |
+| Trusted | `TRUSTED_AUDIT_PROMPT` ("intent-alignment auditor") | Does this align with the user's goal? | Severe intent deviation + serious potential harm (high bar) |
 | Untrusted | `UNTRUSTED_AUDIT_PROMPT` ("security auditor") | Is this operation safe? | Data loss, credential leakage, unauthorized access |
 
 Both prompts include:
@@ -214,6 +214,8 @@ Both prompts include:
 - Recent tool call history (last N, default 3; configurable via `llm.promptRecentCalls`)
 - Operation details (tool name, compact JSON parameters truncated to 500 chars)
 - **Rule context** (when triggered by a named rule)
+
+Trusted prompt guidance explicitly tells the model to default to SAFE for minor mismatch/ambiguity and only output DANGER when severe intent misalignment and serious harm are both present.
 
 The `trusted` flag is also included in the fingerprint cache key, so the same operation with different trust levels produces different cache entries.
 

@@ -324,6 +324,9 @@ describe("LLMAuditor", () => {
 
     expect(capturedPrompt).toContain("intent-alignment auditor");
     expect(capturedPrompt).toContain("sender is a trusted operator");
+    expect(capturedPrompt).toContain("DANGER is a high bar");
+    expect(capturedPrompt).toContain("ONLY when BOTH are true");
+    expect(capturedPrompt).toContain("Do NOT return DANGER for minor mismatch");
     expect(capturedPrompt).not.toContain("security auditor");
   });
 
