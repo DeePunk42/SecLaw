@@ -529,7 +529,6 @@ function assertNoDeprecatedLLMConfig(partial?: Partial<SecLawConfig>): void {
   if (!llm || typeof llm !== "object") return;
 
   const deprecated: string[] = [];
-  if ("apiKey" in llm) deprecated.push("llm.apiKey");
   if ("endpoint" in llm) deprecated.push("llm.endpoint");
   if (deprecated.length === 0) return;
 
@@ -563,7 +562,8 @@ function upsertSecLawPluginConfig(
       ? { ...(entriesObj.seclaw as Record<string, unknown>) }
       : {};
 
-  seclawEntry.config = seclawConfig;
+  const { apiKey: _stripApiKey, ...llmSafe } = seclawConfig.llm;
+  seclawEntry.config = { ...seclawConfig, llm: llmSafe };
   entriesObj.seclaw = seclawEntry;
   pluginsObj.entries = entriesObj;
   next.plugins = pluginsObj;
@@ -614,8 +614,8 @@ function updateConfig(partial: Partial<SecLawConfig>): {
   const errors: string[] = [];
   const llmPartial = (partial as { llm?: Record<string, unknown> }).llm;
   if (llmPartial && typeof llmPartial === "object") {
-    if ("apiKey" in llmPartial || "endpoint" in llmPartial) {
-      errors.push("llm.apiKey and llm.endpoint are no longer supported");
+    if ("endpoint" in llmPartial) {
+      errors.push("llm.endpoint is no longer supported");
     }
   }
 
@@ -646,6 +646,11 @@ function updateConfig(partial: Partial<SecLawConfig>): {
     if (partial.llm.trustedSenderLabels !== undefined) {
       if (!Array.isArray(partial.llm.trustedSenderLabels)) {
         errors.push("llm.trustedSenderLabels must be an array of strings");
+      }
+    }
+    if (partial.llm.apiKey !== undefined) {
+      if (typeof partial.llm.apiKey !== "string") {
+        errors.push("llm.apiKey must be a string");
       }
     }
     // Validate provider existence for "provider/model" format models
@@ -1139,6 +1144,17 @@ function register(api: OpenClawPluginApi): void {
     if (llmCallFn) {
       llmAuditor.setLLMCallFn(llmCallFn);
       // Determine auth mode for logging
+      if (config.llm.apiKey) {
+        api.logger.info(
+          "[seclaw] 🚀 LLM connected via explicit apiKey override",
+          `model=${config.llm.model}`,
+        );
+      } else if (process.env.SECLAW_API_KEY?.trim()) {
+        api.logger.info(
+          "[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var",
+          `model=${config.llm.model}`,
+        );
+      } else {
       const resolved = resolveProviderTransport(config.llm.model, api);
       const providerAuth = resolved?.authMode;
       const hasStaticKey = !!resolved?.staticApiKey;
@@ -1158,6 +1174,7 @@ function register(api: OpenClawPluginApi): void {
           "[seclaw] 🚀 LLM connected via provider config",
           `model=${config.llm.model}`,
         );
+      }
       }
     } else {
       if (config.llm.model.includes("/")) {
@@ -1592,6 +1609,10 @@ async function resolveBearerToken(
   transport: ResolvedProviderTransport,
   api: OpenClawPluginApi,
 ): Promise<string | undefined> {
+  // Explicit SecLaw config override — highest priority
+  const configApiKey = config.llm.apiKey?.trim();
+  if (configApiKey) return configApiKey;
+
   const staticToken = transport.staticApiKey?.trim();
   const dynamicRequired =
     !staticToken || transport.authMode === "oauth" || transport.authMode === "token";
@@ -1638,7 +1659,7 @@ async function resolveBearerToken(
     // Non-oauth providers: log warning when no static key available so silent
     // auth failures are diagnosable (e.g. file-based secret reference that
     // couldn't be resolved).
-    if (!staticToken && transport.apiKeyRef != null) {
+    if (!staticToken && transport.apiKeyRef != null && !process.env.SECLAW_API_KEY?.trim()) {
       const detail = error instanceof Error ? error.message : String(error);
       auditLog.warn(
         `Auth resolution for provider "${transport.providerName}" failed (${detail}), ` +
@@ -1677,7 +1698,10 @@ function createGatewayLLMCallFn(
             endpoint: appendEndpoint(stripApiPath(current.endpoint), "/chat/completions"),
           };
 
-    const bearerToken = await resolveBearerToken(current, api);
+    let bearerToken = await resolveBearerToken(current, api);
+    if (!bearerToken) {
+      bearerToken = process.env.SECLAW_API_KEY?.trim() || undefined;
+    }
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",

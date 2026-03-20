@@ -366,19 +366,18 @@ If the auth profile is found but the provider has no known base URL, resolution 
 
 ### Auth Resolution
 
-Auth is resolved **per-call** inside `createGatewayLLMCallFn()`:
+Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 6-level priority order:
 
-1. **Static `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
-2. **File-based / object `apiKey`** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`. This ensures auth works even when the runtime resolver is unavailable or fails.
-3. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
+1. **Explicit `config.llm.apiKey`** — if set in SecLaw plugin config, used directly as `Bearer` token. This is the highest-priority override, bypassing all provider-level auth. The key is never persisted to `openclaw.json` (stripped before writing). Set via dashboard `PUT /api/config` or environment-injected plugin config.
+2. **Static provider `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
+3. **File-based / object `apiKey`** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`. This ensures auth works even when the runtime resolver is unavailable or fails.
+4. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
    - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
    - Call it with `{ provider: providerName, cfg, apiKeyRef }` to get a fresh token (handles OAuth refresh and file-based secret resolution automatically)
    - `apiKeyRef` is the raw `apiKey` value from the provider config — it may be a string or an object
    - Use the resolved `apiKey` as `Bearer` token
-4. **Auth failure** — if `resolveApiKeyForProvider` throws:
-   - For `oauth`/`token` providers: a `LLMHttpError(401)` is raised (not retryable)
-   - For other providers (e.g. file-based secret providers): falls back to `staticApiKey` (graceful degradation). If no static key is available and an `apiKeyRef` was present, a warning is logged for diagnosability.
-5. **No auth available** — if no static key AND no `runtime.modelAuth`, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
+5. **`SECLAW_API_KEY` env var** — if all provider-level resolution fails (no static key, no runtime resolver, or resolver returns empty), the `SECLAW_API_KEY` environment variable is used as a last-resort fallback. When this env var is set, the auth resolution warning for unresolved file-based secrets is suppressed.
+6. **No auth available** — if none of the above produces a key, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
 
 The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when OAuth providers are configured:
 
@@ -438,7 +437,7 @@ The response is parsed based on API surface: Codex (`openai-codex-responses`) us
 
 Dashboard config changes are persisted directly into `~/.openclaw/openclaw.json` at `plugins.entries.seclaw.config`. `updateConfig()` writes file changes first; runtime config is applied only after successful persistence.
 
-If `plugins.entries.seclaw` is missing, persistence auto-creates it. Deprecated fields `llm.apiKey` and `llm.endpoint` are rejected.
+If `plugins.entries.seclaw` is missing, persistence auto-creates it. The deprecated field `llm.endpoint` is rejected. `llm.apiKey` is accepted at runtime but **stripped before persisting** to `openclaw.json` to avoid leaking secrets to disk.
 
 ### Module-level State
 
@@ -461,7 +460,6 @@ If `plugins.entries.seclaw` is missing, persistence auto-creates it. Deprecated 
     "maxConcurrent": 2,
     "promptRecentCalls": 3,
     "trustedSenderLabels": ["openclaw-control-ui"],
-    "endpoint": "http://127.0.0.1:3000/v1/chat/completions",
     "apiKey": "sk-...",
     "retry": {
       "maxRetries": 2,
@@ -601,7 +599,7 @@ SecLaw includes a built-in web dashboard on port 19198 (configurable) for real-t
 | GET | `/api/tool-calls` | Aggregated ToolCallRecords (query: `limit`, `tier`, `toolName`) |
 | GET | `/api/tool-calls/stream` | SSE real-time ToolCallRecord updates |
 | GET | `/api/config` | Current config (apiKey masked as `"***"`) |
-| PUT | `/api/config` | Update runtime config (apiKey/endpoint blocked) |
+| PUT | `/api/config` | Update runtime config (endpoint blocked; apiKey accepted) |
 | GET | `/api/health` | Health check (`{ status: "running" }`) |
 | GET | `/api/rules` | Loaded rule list |
 | GET | `/api/models` | Available models from gateway providers |
@@ -669,7 +667,7 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 `PUT /api/config` validates and applies changes to the running config:
 - `logging` changes propagate to `auditLog.setLoggingConfig()`
 - `timeouts` and `llm` settings update the config singleton and sync to `LLMAuditor.setConfig()`
-- `llm.apiKey` and `llm.endpoint` are deprecated and rejected
+- `llm.endpoint` is deprecated and rejected; `llm.apiKey` is accepted as an explicit override (stripped before persisting to disk)
 - **Provider validation**: model changes in `"provider/model"` format are validated against `gatewayApi.config.models.providers` — unknown providers return 400
 - **LLM call function recreation**: when `llm.model` changes, `createGatewayLLMCallFn()` is called again and the new function wired via `llmAuditor.setLLMCallFn()`
 - **Enable toggle**: if `llm.enabled` is toggled from false to true, the call function is created on the spot

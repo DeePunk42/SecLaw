@@ -277,13 +277,13 @@ describe("Dashboard", () => {
     expect(data.errors).toBeDefined();
   });
 
-  it("PUT /api/config rejects apiKey modification", async () => {
+  it("PUT /api/config accepts apiKey modification", async () => {
     const res = await fetch(`${baseUrl}/api/config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ llm: { apiKey: "new-key" } }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
   });
 
   it("PUT /api/config rejects endpoint modification", async () => {

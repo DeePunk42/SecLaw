@@ -947,6 +947,208 @@ describe("Codex payload structure", () => {
   });
 });
 
+// ─── Explicit apiKey override & env var fallback ───
+
+describe("Explicit apiKey override", () => {
+  let tmpDir: string;
+  let openClawDir: string;
+  let prevOpenClawHome: string | undefined;
+  let originalFetch: typeof globalThis.fetch;
+  let prevSeclawApiKey: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-apikey-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    prevSeclawApiKey = process.env.SECLAW_API_KEY;
+    delete process.env.SECLAW_API_KEY;
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+    });
+    sessionState.clear();
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(async () => {
+    _setGatewayApi(null);
+    await stopDashboard();
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
+    if (prevSeclawApiKey !== undefined) {
+      process.env.SECLAW_API_KEY = prevSeclawApiKey;
+    } else {
+      delete process.env.SECLAW_API_KEY;
+    }
+  });
+
+  it("config llm.apiKey takes highest priority over provider static key", async () => {
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        apiKey: "sk-provider-key",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, apiKey: "sk-explicit-override" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: test" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "myapi/gpt-5.2",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Explicit override should win over provider key
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-explicit-override");
+  });
+
+  it("SECLAW_API_KEY env var used as last fallback when all else fails", async () => {
+    process.env.SECLAW_API_KEY = "sk-env-fallback";
+
+    const api = createMockGatewayApi({
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: { source: "file", provider: "filemain", id: "deepseek-key" },
+        models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+      },
+    });
+    // No runtime resolver — file-based key can't be resolved
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Env var should be used as fallback
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-env-fallback");
+  });
+
+  it("config apiKey takes priority over SECLAW_API_KEY env var", async () => {
+    process.env.SECLAW_API_KEY = "sk-env-fallback";
+
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, apiKey: "sk-config-override" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "myapi/gpt-5.2",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Config override wins over env var
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-config-override");
+  });
+
+  it("updateConfig accepts llm.apiKey (no longer rejected)", () => {
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        apiKey: "sk-test",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: BASE_CONFIG,
+    });
+    _setGatewayApi(api);
+
+    const result = _updateConfig({ llm: { apiKey: "sk-new-key" } });
+    expect(result.ok).toBe(true);
+  });
+
+  it("apiKey is stripped from persisted config", () => {
+    const api = createMockGatewayApi({
+      myapi: {
+        baseUrl: "http://localhost:4000/v1",
+        apiKey: "sk-test",
+        models: [{ id: "gpt-5.2", name: "GPT 5.2" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, apiKey: "sk-secret" } },
+    });
+    _setGatewayApi(api);
+
+    // Trigger a config update to persist
+    _updateConfig({ llm: { apiKey: "sk-updated-secret" } });
+
+    // Read persisted config
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(openClawDir, "openclaw.json"), "utf-8"),
+    );
+    const seclawLlm = persisted.plugins?.entries?.seclaw?.config?.llm;
+    expect(seclawLlm?.apiKey).toBeUndefined();
+  });
+});
+
 // ─── Helper to create an LLM call function for testing ───
 // This mirrors createGatewayLLMCallFn logic but is accessible from tests.
 

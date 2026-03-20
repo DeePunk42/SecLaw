@@ -158,6 +158,8 @@ export interface LLMConfig {
   trustedSenderLabels?: string[];
   /** Retry configuration for transient LLM errors (429, 5xx) */
   retry?: RetryConfig;
+  /** Explicit API key for SecLaw's own LLM calls. Bypasses provider-level auth. */
+  apiKey?: string;
 }
 
 export interface TimeoutConfig {

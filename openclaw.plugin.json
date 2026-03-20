@@ -22,7 +22,8 @@
               "cooldownMs": { "type": "number" },
               "cooldownThreshold": { "type": "number" }
             }
-          }
+          },
+          "apiKey": { "type": "string", "description": "Explicit API key override for SecLaw's LLM calls. Bypasses provider auth." }
         }
       },
       "timeouts": {

@@ -298,7 +298,11 @@ function handleGetConfig(
   deps: DashboardDeps,
 ): void {
   const config = deps.getConfig();
-  json(res, 200, config);
+  // Mask apiKey before sending to dashboard
+  const safeConfig = config.llm.apiKey
+    ? { ...config, llm: { ...config.llm, apiKey: "***" } }
+    : config;
+  json(res, 200, safeConfig);
 }
 
 // ─── PUT /api/config ───
@@ -313,8 +317,8 @@ async function handleUpdateConfig(
     const partial = JSON.parse(body);
 
     // Deprecated fields are no longer supported
-    if (partial.llm?.apiKey !== undefined || partial.llm?.endpoint !== undefined) {
-      json(res, 400, { ok: false, errors: ["llm.apiKey and llm.endpoint are no longer supported"] });
+    if (partial.llm?.endpoint !== undefined) {
+      json(res, 400, { ok: false, errors: ["llm.endpoint is no longer supported"] });
       return;
     }
 
