@@ -12,20 +12,7 @@ npm install @deepunk/seclaw
 
 ### 2. 在 OpenClaw 中启用插件
 
-在 `openclaw.json` 的 `plugins.entries` 中添加：
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "seclaw": {
-        "enabled": true
-      }
-    }
-  }
-}
-```
-
+默认安装后会启用插件。
 首次启动时，SecLaw 会自动完成初始化：创建数据目录、写入默认配置、复制默认规则（28+ 条）、预置发送者标签。无需手动创建任何文件。
 
 ### 3. 打开 Dashboard 配置 LLM
@@ -55,57 +42,6 @@ http://127.0.0.1:19198
 ```
 
 此时 SecLaw 已在工作，所有 Agent 工具调用都会经过实时安全审计。在 Dashboard 的 **Audit Log** 标签页可以看到实时审计卡片。
-
-## Dashboard 仪表盘
-
-SecLaw 内置 Web 仪表盘（默认端口 19198），提供实时审计监控和运行时配置管理。
-
-### Audit Log（审计日志）
-
-主界面，以卡片形式展示每个工具调用的审计记录：
-
-- **卡片头部**：相对时间、工具名、分类等级徽章（GREEN / YELLOW / RED）、状态标签
-- **状态标签**：
-  - 绿色 `allowed` — 已放行
-  - 红色 `BLOCKED` — 已阻断（如有 Override PIN 也会显示）
-  - 黄色 `auditing...` — 异步审计进行中
-  - 紫色 `OVERRIDDEN` — 经受信任操作员确认放行
-- **展开详情**：点击卡片查看完整审计生命周期（规则匹配、意图上下文、同步/异步审计结果、Override、参数）
-- **过滤器**：按等级、状态、工具名筛选
-- **实时更新**：通过 SSE 推送，无需刷新
-
-### Config（配置）
-
-运行时配置编辑器，所有配置修改即时生效并持久化：
-
-- **模型选择**：下拉菜单列出网关中所有可用模型
-- **LLM 开关**：启用/禁用 LLM 审计
-- **并发数**：调整最大并发 LLM 调用数
-- **受信任发送者标签**：多选下拉框，支持"全选"/"清除"，以及刷新按钮（扫描审计日志发现新标签）
-- **超时设置**：审计超时时间、超时策略（`fail_closed` / `fail_open`）
-- **日志设置**：日志级别、JSONL 开关
-
-### Rules（规则）
-
-查看和管理安全规则。支持上传自定义 YAML 规则文件，在多个规则文件间切换。
-
-### API 端点
-
-Dashboard 同时提供 REST API，可供外部系统集成：
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/logs` | 审计日志（支持 `limit`、`tier`、`eventType`、`toolName` 查询） |
-| GET | `/api/logs/stream` | SSE 实时日志推送 |
-| GET | `/api/tool-calls` | 聚合的工具调用记录 |
-| GET | `/api/tool-calls/stream` | SSE 实时工具调用更新 |
-| GET | `/api/config` | 当前配置（`apiKey` 脱敏） |
-| PUT | `/api/config` | 更新运行时配置 |
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/rules` | 已加载的规则列表 |
-| GET | `/api/models` | 可用模型列表 |
-| GET | `/api/sender-labels` | 已知发送者标签 |
-| POST | `/api/sender-labels/refresh` | 扫描日志发现新标签 |
 
 ## 运行原理
 
@@ -268,6 +204,58 @@ Give extra weight to this warning.
 
 - **控制台日志**：受 `logging.level` 控制。GREEN 完全静默，YELLOW 产生 1 行调试输出，RED 产生约 10 行详细输出
 - **JSONL 文件**：结构化事件日志（`seclaw-audit.jsonl`），记录分类、规则匹配、LLM 审计、阻断/放行等事件，每条携带 `toolCallId` 关联同一次调用
+
+## Dashboard 仪表盘
+
+SecLaw 内置 Web 仪表盘（默认端口 19198），提供实时审计监控和运行时配置管理。
+
+### Audit Log（审计日志）
+
+主界面，以卡片形式展示每个工具调用的审计记录：
+
+- **卡片头部**：相对时间、工具名、分类等级徽章（GREEN / YELLOW / RED）、状态标签
+- **状态标签**：
+  - 绿色 `allowed` — 已放行
+  - 红色 `BLOCKED` — 已阻断（如有 Override PIN 也会显示）
+  - 黄色 `auditing...` — 异步审计进行中
+- **展开详情**：点击卡片查看完整审计生命周期（规则匹配、意图上下文、同步/异步审计结果、Override、参数）
+- **过滤器**：按等级、状态、工具名筛选
+- **实时更新**：通过 SSE 推送，无需刷新
+
+### Config（配置）
+
+运行时配置编辑器，所有配置修改即时生效并持久化：
+
+- **模型选择**：下拉菜单列出网关中所有可用模型
+- **LLM 开关**：启用/禁用 LLM 审计
+- **并发数**：调整最大并发 LLM 调用数
+- **受信任发送者标签**：多选下拉框，支持"全选"/"清除"，以及刷新按钮（扫描审计日志发现新标签）
+- **超时设置**：审计超时时间、超时策略（`fail_closed` / `fail_open`）
+- **日志设置**：日志级别、JSONL 开关
+
+### Rules（规则）
+
+查看和管理安全规则。支持上传自定义 YAML 规则文件，在多个规则文件间切换。
+
+### API 端点
+
+Dashboard 同时提供 REST API，可供外部系统集成：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/logs` | 审计日志（支持 `limit`、`tier`、`eventType`、`toolName` 查询） |
+| GET | `/api/logs/stream` | SSE 实时日志推送 |
+| GET | `/api/tool-calls` | 聚合的工具调用记录 |
+| GET | `/api/tool-calls/stream` | SSE 实时工具调用更新 |
+| GET | `/api/config` | 当前配置（`apiKey` 脱敏） |
+| PUT | `/api/config` | 更新运行时配置 |
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/rules` | 已加载的规则列表 |
+| GET | `/api/models` | 可用模型列表 |
+| GET | `/api/sender-labels` | 已知发送者标签 |
+| POST | `/api/sender-labels/refresh` | 扫描日志发现新标签 |
+
+
 
 ## 配置参考
 

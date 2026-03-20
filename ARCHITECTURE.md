@@ -300,6 +300,8 @@ After every tool call (`afterToolCall`), the operation is checked:
 
 The danger flag blocks **all subsequent tool calls** for that session until the session is reset.
 
+When this async danger-flag block triggers, the returned `blockReason` uses a dedicated agent-facing message that explicitly instructs the model to stop the current call immediately. Trusted senders still receive the existing override hint with `/pin<pin>` appended in the override section.
+
 ## Logging
 
 ### Console Output

@@ -160,6 +160,8 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
       expect(result!.block).toBe(true);
       expect(result!.blockReason).toContain("SECURITY ALERT");
       expect(result!.blockReason).toContain("Async audit detected danger");
+      expect(result!.blockReason).toContain("ACTION REQUIRED: STOP this tool call immediately.");
+      expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
 
       const rec = _getAuditLog().getToolCallRecords(1)[0];
       expect(rec).toBeDefined();

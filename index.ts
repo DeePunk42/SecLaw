@@ -13,7 +13,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import type { SecLawConfig, LLMErrorInfo } from "./src/config.js";
+import type { SecLawConfig, LLMErrorInfo, DangerReport } from "./src/config.js";
 import { loadConfig } from "./src/config.js";
 import { RuleEngine } from "./src/rule-engine.js";
 import { LLMAuditor, type LLMCallFn } from "./src/llm-auditor.js";
@@ -22,7 +22,6 @@ import { AsyncAuditQueue } from "./src/async-audit-queue.js";
 import { sessionState } from "./src/session-state.js";
 import {
   consumeDangerFlag,
-  formatDangerAlert,
   setEmitAgentEvent,
   resetSession,
   type EmitAgentEventFn,
@@ -369,6 +368,36 @@ function overrideButtons(
   pin: string,
 ): Array<Array<{ text: string; callback_data: string }>> {
   return [[{ text: "⚠️ Confirm Override", callback_data: `/pin${pin}` }]];
+}
+
+function formatAsyncDangerBlockForAgent(report: DangerReport): string {
+  const lines = [
+    `[SecLaw] SECURITY ALERT — Operation blocked`,
+    ``,
+    `ACTION REQUIRED: STOP this tool call immediately.`,
+    `Do NOT execute this call and do NOT continue with additional tool calls until user confirmation.`,
+    ``,
+    `Previous dangerous operation (async audit): ${report.toolName}`,
+    `Reason: ${report.reason}`,
+  ];
+
+  if (report.recommendation) {
+    lines.push(`Recommendation: ${report.recommendation}`);
+  }
+
+  if (report.ruleId) {
+    lines.push(`Rule: ${report.ruleId}`);
+  }
+
+  lines.push(
+    ``,
+    `If an Override PIN is shown below, only use it after the user explicitly confirms this risk.`,
+    `Explain the risk to the user and wait for explicit confirmation before proceeding.`,
+    `Source: Async audit detected prior dangerous operation`,
+    `Time: ${new Date(report.timestamp).toISOString()}`,
+  );
+
+  return lines.join("\n");
 }
 
 function isSenderTrusted(sessionKey: string): boolean {
@@ -936,7 +965,7 @@ export async function beforeToolCall(
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const dangerIntentCtx = getIntentContext(sessionKey);
-    const blockReason = formatDangerAlert(dangerReport);
+    const blockReason = formatAsyncDangerBlockForAgent(dangerReport);
     const trusted = isSenderTrusted(sessionKey);
     if (trusted) {
       const pin = registerPendingOverride(

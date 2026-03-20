@@ -343,6 +343,7 @@ describe("Integration: Override flow", () => {
     const result = await beforeToolCall(event, ctx);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
+    expect(result!.blockReason).toContain("ACTION REQUIRED: STOP this tool call immediately.");
     expect(result!.blockReason).toContain("/pin");
 
     // Extract PIN
