@@ -414,7 +414,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <div id="tab-config" class="tab-content">
   <div class="config-section">
     <h3>LLM</h3>
-    <div class="config-field"><label>model</label><select id="cfg-llm-model"><option value="">— select model —</option></select><button id="btn-test-llm-model" class="btn-mini" type="button">Test</button></div>
+    <div class="config-field"><label>model</label><input id="cfg-llm-model" list="cfg-llm-model-list" placeholder="provider/model" autocomplete="off"><datalist id="cfg-llm-model-list"></datalist><button id="btn-test-llm-model" class="btn-mini" type="button">Test</button></div>
     <div class="config-field"><label>enabled</label><input id="cfg-llm-enabled" type="checkbox"></div>
     <div class="config-field"><label>maxConcurrent</label><input id="cfg-llm-maxConcurrent" type="number" min="1" max="10"></div>
     <div class="config-field"><label>promptRecentCalls</label><input id="cfg-llm-promptRecentCalls" type="number" min="0" max="20"></div>
@@ -1028,26 +1028,20 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     ]).then(function(results) {
         var cfg = results[0];
         var models = results[1];
-        // Populate model select
-        var sel = document.getElementById('cfg-llm-model');
+        // Populate model datalist
+        var input = document.getElementById('cfg-llm-model');
+        var list = document.getElementById('cfg-llm-model-list');
         var currentVal = cfg.llm?.model || '';
-        sel.innerHTML = '<option value="">\\u2014 select model \\u2014</option>';
+        list.innerHTML = '';
         if (Array.isArray(models)) {
           models.forEach(function(m) {
             var opt = document.createElement('option');
             opt.value = m.value;
-            opt.textContent = m.label;
-            sel.appendChild(opt);
+            opt.label = m.label;
+            list.appendChild(opt);
           });
         }
-        // If current model is not in the list, add it as an option
-        if (currentVal && !sel.querySelector('option[value="' + currentVal.replace(/"/g, '\\\\"') + '"]')) {
-          var opt = document.createElement('option');
-          opt.value = currentVal;
-          opt.textContent = currentVal + ' (custom)';
-          sel.appendChild(opt);
-        }
-        sel.value = currentVal;
+        input.value = currentVal;
         // LLM
         document.getElementById('cfg-llm-enabled').checked = cfg.llm?.enabled ?? true;
         document.getElementById('cfg-llm-maxConcurrent').value = cfg.llm?.maxConcurrent || 2;

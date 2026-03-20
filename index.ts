@@ -1203,7 +1203,7 @@ function register(api: OpenClawPluginApi): void {
         for (const m of provider.models) {
           options.push({
             value: `${providerName}/${m.id}`,
-            label: `${providerName} / ${m.name || m.id}`,
+            label: `${providerName}/${m.name || m.id}`,
           });
         }
       }
