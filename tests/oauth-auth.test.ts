@@ -1149,6 +1149,410 @@ describe("Explicit apiKey override", () => {
   });
 });
 
+// ─── File-based secret resolution (direct) ───
+
+describe("File-based secret resolution (direct)", () => {
+  let tmpDir: string;
+  let openClawDir: string;
+  let prevOpenClawHome: string | undefined;
+  let originalFetch: typeof globalThis.fetch;
+  let prevSeclawApiKey: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-filesecret-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    prevSeclawApiKey = process.env.SECLAW_API_KEY;
+    delete process.env.SECLAW_API_KEY;
+    sessionState.clear();
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(async () => {
+    _setGatewayApi(null);
+    await stopDashboard();
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
+    if (prevSeclawApiKey !== undefined) {
+      process.env.SECLAW_API_KEY = prevSeclawApiKey;
+    } else {
+      delete process.env.SECLAW_API_KEY;
+    }
+  });
+
+  it("JSON mode: resolves apiKey from secrets file via JSON pointer", async () => {
+    // Write secrets file
+    const secretsPath = path.join(tmpDir, "secrets.json");
+    fs.writeFileSync(
+      secretsPath,
+      JSON.stringify({
+        models: {
+          providers: {
+            deepseek: { apiKey: "sk-deepseek-from-file" },
+          },
+        },
+      }),
+    );
+
+    // Write openclaw.json with secrets.providers config
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      secrets: {
+        providers: {
+          filemain: { source: "file", path: secretsPath, mode: "json" },
+        },
+      },
+    });
+
+    const fileApiKeyRef = {
+      source: "file",
+      provider: "filemain",
+      id: "/models/providers/deepseek/apiKey",
+    };
+    const api = createMockGatewayApi({
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: fileApiKeyRef,
+        models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+      },
+    });
+    // No runtime resolver — relies on direct file resolution
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-deepseek-from-file");
+  });
+
+  it("JSON pointer navigates multi-level nested value", async () => {
+    const secretsPath = path.join(tmpDir, "secrets.json");
+    fs.writeFileSync(
+      secretsPath,
+      JSON.stringify({
+        level1: { level2: { level3: "sk-nested-key" } },
+      }),
+    );
+
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      secrets: {
+        providers: {
+          filemain: { source: "file", path: secretsPath, mode: "json" },
+        },
+      },
+    });
+
+    const api = createMockGatewayApi({
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: {
+          source: "file",
+          provider: "filemain",
+          id: "/level1/level2/level3",
+        },
+        models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-nested-key");
+  });
+
+  it("runtime config resolution takes precedence over file-based fallback", async () => {
+    const secretsPath = path.join(tmpDir, "secrets.json");
+    fs.writeFileSync(
+      secretsPath,
+      JSON.stringify({
+        models: { providers: { deepseek: { apiKey: "sk-file-key" } } },
+      }),
+    );
+
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      secrets: {
+        providers: {
+          filemain: { source: "file", path: secretsPath, mode: "json" },
+        },
+      },
+    });
+
+    const fileApiKeyRef = {
+      source: "file",
+      provider: "filemain",
+      id: "/models/providers/deepseek/apiKey",
+    };
+    const api = createMockGatewayApi(
+      {
+        deepseek: {
+          baseUrl: "https://api.deepseek.com/v1",
+          apiKey: fileApiKeyRef,
+          models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+        },
+      },
+      {
+        config: {
+          loadConfig: () => ({
+            models: {
+              providers: {
+                deepseek: {
+                  baseUrl: "https://api.deepseek.com/v1",
+                  apiKey: "sk-runtime-resolved",
+                  models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+                },
+              },
+            },
+          }),
+        },
+      },
+    );
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // Runtime config key wins, file-based fallback is not reached
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-runtime-resolved");
+  });
+
+  it("file not found: falls through to SECLAW_API_KEY env var", async () => {
+    process.env.SECLAW_API_KEY = "sk-env-fallback";
+
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      secrets: {
+        providers: {
+          filemain: {
+            source: "file",
+            path: path.join(tmpDir, "nonexistent-secrets.json"),
+            mode: "json",
+          },
+        },
+      },
+    });
+
+    const api = createMockGatewayApi({
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: {
+          source: "file",
+          provider: "filemain",
+          id: "/models/providers/deepseek/apiKey",
+        },
+        models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+      },
+    });
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-env-fallback");
+  });
+
+  it("OAuth provider not affected by file-based resolution", async () => {
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+    });
+
+    const resolveApiKey = vi.fn().mockResolvedValue({
+      apiKey: "oauth-token-abc",
+      source: "oauth",
+      mode: "oauth" as const,
+    });
+    const api = createMockGatewayApi(
+      {
+        codex: {
+          baseUrl: "http://localhost:5000/v1",
+          auth: "oauth",
+          // No apiKey field — OAuth providers don't have one
+          models: [{ id: "codex-v1", name: "Codex" }],
+        },
+      },
+      { modelAuth: { resolveApiKeyForProvider: resolveApiKey } },
+    );
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "codex/codex-v1" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "codex/codex-v1",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    // OAuth flow used, not file-based resolution
+    expect(resolveApiKey).toHaveBeenCalled();
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer oauth-token-abc");
+  });
+
+  it("secrets provider config from api.config takes precedence", async () => {
+    const secretsPath = path.join(tmpDir, "secrets.json");
+    fs.writeFileSync(
+      secretsPath,
+      JSON.stringify({
+        models: { providers: { deepseek: { apiKey: "sk-from-api-config" } } },
+      }),
+    );
+
+    // Put secrets config on api.config directly (not on disk)
+    writeOpenClawConfig(openClawDir, {
+      plugins: { entries: { seclaw: { config: BASE_CONFIG } } },
+      // No secrets config on disk
+    });
+
+    const api = createMockGatewayApi({
+      deepseek: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: {
+          source: "file",
+          provider: "filemain",
+          id: "/models/providers/deepseek/apiKey",
+        },
+        models: [{ id: "deepseek-chat", name: "DeepSeek Chat" }],
+      },
+    });
+    // Add secrets.providers to api.config directly
+    (api.config as Record<string, unknown>).secrets = {
+      providers: {
+        filemain: { source: "file", path: secretsPath, mode: "json" },
+      },
+    };
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: tmpDir,
+      config: { ...BASE_CONFIG, llm: { ...BASE_CONFIG.llm, model: "deepseek/deepseek-chat" } },
+    });
+    _setGatewayApi(api);
+
+    const llmCallFn = _createTestLLMCallFn(api, "deepseek/deepseek-chat");
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "SAFE: ok" } }],
+        }),
+    });
+    globalThis.fetch = fetchMock;
+
+    await llmCallFn({
+      model: "deepseek/deepseek-chat",
+      messages: [{ role: "user", content: "test" }],
+      max_tokens: 100,
+    });
+
+    const headers = fetchMock.mock.calls[0][1].headers;
+    expect(headers["Authorization"]).toBe("Bearer sk-from-api-config");
+  });
+});
+
 // ─── Helper to create an LLM call function for testing ───
 // This mirrors createGatewayLLMCallFn logic but is accessible from tests.
 

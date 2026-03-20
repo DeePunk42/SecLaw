@@ -158,6 +158,90 @@ type GatewayProviderConfig = {
   models?: Array<{ id: string; name?: string; [key: string]: unknown }>;
 };
 
+// ─── File-based secret resolution ───
+
+interface FileSecretRef {
+  source: "file";
+  provider: string;
+  id: string;
+}
+
+function isFileSecretRef(value: unknown): value is FileSecretRef {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  return obj.source === "file" && typeof obj.provider === "string" && typeof obj.id === "string";
+}
+
+function resolveFileSecret(ref: FileSecretRef, api: OpenClawPluginApi): string | undefined {
+  const providerDef = lookupSecretsProviderDef(ref.provider, api);
+  if (!providerDef) return undefined;
+
+  const filePath = providerDef.path.startsWith("~")
+    ? path.join(os.homedir(), providerDef.path.slice(1))
+    : providerDef.path;
+
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    if (providerDef.mode === "text") return content.trim() || undefined;
+    return navigateJsonPointer(JSON.parse(content), ref.id);
+  } catch {
+    return undefined;
+  }
+}
+
+function navigateJsonPointer(obj: unknown, pointer: string): string | undefined {
+  const segments = pointer.split("/").filter(Boolean);
+  let current: unknown = obj;
+  for (const seg of segments) {
+    if (current == null || typeof current !== "object") return undefined;
+    const key = seg.replace(/~1/g, "/").replace(/~0/g, "~"); // RFC 6901
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
+function lookupSecretsProviderDef(
+  name: string,
+  api: OpenClawPluginApi,
+): { path: string; mode: "json" | "text" } | undefined {
+  // Try api.config.secrets.providers first
+  const fromConfig = extractSecretsProviderDef(api.config as Record<string, unknown>, name);
+  if (fromConfig) return fromConfig;
+
+  // Try runtime config
+  try {
+    const runtimeCfg = resolveRuntimeConfig(api);
+    if (runtimeCfg) {
+      const fromRuntime = extractSecretsProviderDef(runtimeCfg, name);
+      if (fromRuntime) return fromRuntime;
+    }
+  } catch { /* ignore */ }
+
+  // Try reading openclaw.json from disk
+  try {
+    const raw = fs.readFileSync(path.join(getOpenClawDir(), "openclaw.json"), "utf-8");
+    const fromDisk = extractSecretsProviderDef(JSON.parse(raw), name);
+    if (fromDisk) return fromDisk;
+  } catch { /* ignore */ }
+
+  return undefined;
+}
+
+function extractSecretsProviderDef(
+  cfg: Record<string, unknown>,
+  name: string,
+): { path: string; mode: "json" | "text" } | undefined {
+  const secrets = cfg?.secrets;
+  if (!secrets || typeof secrets !== "object") return undefined;
+  const providers = (secrets as Record<string, unknown>).providers;
+  if (!providers || typeof providers !== "object") return undefined;
+  const def = (providers as Record<string, unknown>)[name];
+  if (!def || typeof def !== "object") return undefined;
+  const d = def as Record<string, unknown>;
+  if (d.source !== "file" || typeof d.path !== "string") return undefined;
+  return { path: d.path, mode: d.mode === "text" ? "text" : "json" };
+}
+
 // ─── LLMHttpError ───
 
 export class LLMHttpError extends Error {
@@ -1460,6 +1544,11 @@ function resolveProviderTransport(
       }
     } catch {
       // Fall through — resolveBearerToken will attempt runtime auth resolution
+    }
+
+    // Fallback: resolve file-based secret reference directly
+    if (!resolvedApiKey && isFileSecretRef(provider.apiKey)) {
+      resolvedApiKey = resolveFileSecret(provider.apiKey, api);
     }
   }
 

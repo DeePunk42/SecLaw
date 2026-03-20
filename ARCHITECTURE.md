@@ -366,11 +366,12 @@ If the auth profile is found but the provider has no known base URL, resolution 
 
 ### Auth Resolution
 
-Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 6-level priority order:
+Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 7-level priority order:
 
 1. **Explicit `config.llm.apiKey`** — if set in SecLaw plugin config, used directly as `Bearer` token. This is the highest-priority override, bypassing all provider-level auth. The key is never persisted to `openclaw.json` (stripped before writing). Set via dashboard `PUT /api/config` or environment-injected plugin config.
 2. **Static provider `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
-3. **File-based / object `apiKey`** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`. This ensures auth works even when the runtime resolver is unavailable or fails.
+3. **File-based / object `apiKey` (runtime config)** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` first attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`.
+3b. **File-based / object `apiKey` (direct resolution)** — if the runtime config snapshot didn't resolve the key, `resolveProviderTransport()` falls back to direct file-based secret resolution. It looks up the secret provider definition (e.g. `filemain → { path: "~/.openclaw/secrets.json", mode: "json" }`) from `api.config.secrets.providers`, runtime config, or `openclaw.json` on disk. Then reads the file, parses JSON, and navigates the JSON pointer (RFC 6901) to extract the API key string. This ensures auth works even when the runtime resolver is unavailable or the gateway doesn't pre-resolve secrets for plugins.
 4. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
    - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
    - Call it with `{ provider: providerName, cfg, apiKeyRef }` to get a fresh token (handles OAuth refresh and file-based secret resolution automatically)
