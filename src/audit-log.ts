@@ -34,6 +34,7 @@ export interface AuditLogEntry {
   sessionKey: string;
   toolName?: string;
   params?: Record<string, unknown>;
+  intentContext?: Record<string, unknown>;
   tier?: "GREEN" | "YELLOW" | "RED";
   ruleId?: string;
   decision?: string;
@@ -317,6 +318,12 @@ export class AuditLog {
         if (entry.overridePin) {
           record.overridePin = entry.overridePin as string;
         }
+        if (entry.params) {
+          record.params = entry.params as Record<string, unknown>;
+        }
+        if (entry.intentContext) {
+          record.intentContext = entry.intentContext as Record<string, unknown>;
+        }
         if (entry.reason) {
           record.blockReason = entry.reason as string;
         }
@@ -473,6 +480,8 @@ export class AuditLog {
     source: "sync" | "async",
     toolCallId?: string,
     overridePin?: string,
+    params?: Record<string, unknown>,
+    intentContext?: IntentContext,
   ): void {
     // BLOCKED is always visible at info level
     this.info(`⛔ BLOCKED ${toolName} [${source}] -- ${reason.split("\n")[0]}`);
@@ -486,6 +495,8 @@ export class AuditLog {
       source,
       toolCallId,
       overridePin,
+      params,
+      intentContext: intentContext as unknown as Record<string, unknown> | undefined,
     });
   }
 

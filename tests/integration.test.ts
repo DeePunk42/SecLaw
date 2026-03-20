@@ -7,6 +7,7 @@ import {
   _getAsyncQueue,
   _getRuleEngine,
   _getLLMAuditor,
+  _getAuditLog,
 } from "../index.js";
 import { sessionState } from "../src/session-state.js";
 import type {
@@ -159,6 +160,13 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
       expect(result!.block).toBe(true);
       expect(result!.blockReason).toContain("SECURITY ALERT");
       expect(result!.blockReason).toContain("Async audit detected danger");
+
+      const rec = _getAuditLog().getToolCallRecords(1)[0];
+      expect(rec).toBeDefined();
+      expect(rec.finalStatus).toBe("blocked");
+      expect(rec.params).toEqual({ path: "innocent-file.txt" });
+      expect(rec.intentContext).toBeDefined();
+      expect(rec.intentContext?.userGoal).toBe("Help me set up my project");
     });
 
     it("allows tools after danger flag is consumed", async () => {
@@ -211,6 +219,13 @@ describe("Integration: LLM disabled + fail_closed", () => {
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("fail_closed");
+
+    const rec = _getAuditLog().getToolCallRecords(1)[0];
+    expect(rec).toBeDefined();
+    expect(rec.finalStatus).toBe("blocked");
+    expect(rec.params).toEqual({ command: "rm -rf /" });
+    expect(rec.intentContext).toBeDefined();
+    expect(rec.intentContext?.userGoal).toBe("Help me set up my project");
   });
 
   it("allows GREEN operations regardless of fail_closed", async () => {

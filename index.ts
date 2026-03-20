@@ -935,6 +935,7 @@ export async function beforeToolCall(
   const dangerReport = consumeDangerFlag(sessionKey);
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
+    const dangerIntentCtx = getIntentContext(sessionKey);
     const blockReason = formatDangerAlert(dangerReport);
     const trusted = isSenderTrusted(sessionKey);
     if (trusted) {
@@ -951,6 +952,8 @@ export async function beforeToolCall(
         "async",
         toolCallId,
         pin,
+        params,
+        dangerIntentCtx,
       );
       return {
         block: true,
@@ -964,6 +967,9 @@ export async function beforeToolCall(
         blockReason,
         "async",
         toolCallId,
+        undefined,
+        params,
+        dangerIntentCtx,
       );
       return {
         block: true,
@@ -1027,14 +1033,32 @@ export async function beforeToolCall(
           params,
           toolCallId,
         );
-        auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
+        auditLog.logBlock(
+          sessionKey,
+          toolName,
+          reason,
+          "sync",
+          toolCallId,
+          pin,
+          params,
+          intentCtx,
+        );
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
           buttons: overrideButtons(pin),
         };
       } else {
-        auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId);
+        auditLog.logBlock(
+          sessionKey,
+          toolName,
+          reason,
+          "sync",
+          toolCallId,
+          undefined,
+          params,
+          intentCtx,
+        );
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint("", false),
@@ -1114,7 +1138,16 @@ export async function beforeToolCall(
     if (shouldBlock) {
       // fail_closed: block the tool call (no override — this isn't a security finding)
       const blockReason = formatServiceErrorBlock(errorInfo, "blocked");
-      auditLog.logBlock(sessionKey, toolName, blockReason, "sync", toolCallId);
+      auditLog.logBlock(
+        sessionKey,
+        toolName,
+        blockReason,
+        "sync",
+        toolCallId,
+        undefined,
+        params,
+        intentCtx,
+      );
       return { block: true, blockReason };
     } else {
       // fail_open: allow but warn the agent to stop
@@ -1141,14 +1174,32 @@ export async function beforeToolCall(
         params,
         toolCallId,
       );
-      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
+      auditLog.logBlock(
+        sessionKey,
+        toolName,
+        reason,
+        "sync",
+        toolCallId,
+        pin,
+        params,
+        intentCtx,
+      );
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
         buttons: overrideButtons(pin),
       };
     } else {
-      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId);
+      auditLog.logBlock(
+        sessionKey,
+        toolName,
+        reason,
+        "sync",
+        toolCallId,
+        undefined,
+        params,
+        intentCtx,
+      );
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint("", false),

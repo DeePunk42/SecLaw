@@ -333,6 +333,8 @@ When `logging.auditJsonl: true`, structured events are written to `seclaw-audit.
 
 All events carry a `toolCallId` field (when available) that links events from the same tool call together. The `toolCallId` comes from OpenClaw's `event.toolCallId` / `ctx.toolCallId`, or is generated via `crypto.randomUUID()` if not provided.
 
+`tool_blocked` also carries `params` and `intentContext` when available. This ensures blocked cards keep full context even for early-stop paths that do not emit `tool_classified` / `intent_context` first (for example danger-flag preemption).
+
 ## LLM Gateway Connection
 
 SecLaw uses provider resolution for the LLM audit endpoint:
@@ -657,6 +659,8 @@ interface ToolCallRecord {
 ```
 
 The aggregation happens in `AuditLog.log()` — when an entry has a `toolCallId`, the corresponding `ToolCallRecord` is created or updated. Up to 200 records are kept in memory.
+
+`params` and `intentContext` are populated from both their primary events (`tool_classified`, `intent_context`) and `tool_blocked` fallback fields, so blocked records do not lose detail across different block paths.
 
 ### Dashboard Frontend (Grouped Card View)
 
