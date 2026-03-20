@@ -105,6 +105,23 @@ export async function refreshSenderLabels(
 }
 
 /**
+ * Seed sender-labels.json with default labels if the file doesn't exist.
+ * Synchronous, best-effort — safe to call on every init.
+ */
+export function seedSenderLabels(varDir: string, defaultLabels: string[]): void {
+  const filePath = getSenderLabelsPath(varDir);
+  if (fs.existsSync(filePath)) return; // don't overwrite existing
+  const data: SenderLabelsData = {
+    labels: [...defaultLabels].sort(),
+    lastRefreshed: new Date().toISOString(),
+  };
+  try {
+    fs.mkdirSync(varDir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  } catch { /* best-effort */ }
+}
+
+/**
  * Stream-parse a JSONL file for sender labels.
  */
 function scanJsonlFile(filePath: string, labels: Set<string>): Promise<void> {

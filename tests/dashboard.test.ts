@@ -18,6 +18,7 @@ import type { OpenClawPluginApi } from "../index.js";
 import { startDashboard } from "../src/dashboard/server.js";
 import type { DashboardConfig } from "../src/config.js";
 import { sessionState } from "../src/session-state.js";
+import { seedSenderLabels, readSenderLabels } from "../src/dashboard/sender-labels.js";
 
 // ─── Helpers ───
 
@@ -897,5 +898,119 @@ describe("Deprecated llm config fields", () => {
         } as any,
       },
     })).toThrow(/Deprecated config field/);
+  });
+});
+
+// ─── First-install bootstrap tests ───
+
+describe("seedSenderLabels", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-seed-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates sender-labels.json with default labels when file does not exist", () => {
+    const varDir = path.join(tmpDir, "seclaw");
+    seedSenderLabels(varDir, ["openclaw-control-ui"]);
+
+    const data = readSenderLabels(varDir);
+    expect(data.labels).toEqual(["openclaw-control-ui"]);
+    expect(data.lastRefreshed).toBeTruthy();
+  });
+
+  it("does NOT overwrite existing sender-labels.json", () => {
+    const varDir = path.join(tmpDir, "seclaw");
+    fs.mkdirSync(varDir, { recursive: true });
+    const existing = { labels: ["telegram:alice"], lastRefreshed: "2024-01-01T00:00:00.000Z" };
+    fs.writeFileSync(path.join(varDir, "sender-labels.json"), JSON.stringify(existing, null, 2));
+
+    seedSenderLabels(varDir, ["openclaw-control-ui"]);
+
+    const data = readSenderLabels(varDir);
+    expect(data.labels).toEqual(["telegram:alice"]);
+    expect(data.lastRefreshed).toBe("2024-01-01T00:00:00.000Z");
+  });
+
+  it("handles empty defaultLabels array", () => {
+    const varDir = path.join(tmpDir, "seclaw");
+    seedSenderLabels(varDir, []);
+
+    const data = readSenderLabels(varDir);
+    expect(data.labels).toEqual([]);
+  });
+});
+
+describe("persistConfigToOpenClaw with missing file", () => {
+  let tmpDir: string;
+  let prevOpenClawHome: string | undefined;
+  let openClawDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "seclaw-persist-new-"));
+    openClawDir = path.join(tmpDir, ".openclaw");
+    prevOpenClawHome = process.env.OPENCLAW_HOME;
+    process.env.OPENCLAW_HOME = openClawDir;
+    sessionState.clear();
+  });
+
+  afterEach(async () => {
+    await stopDashboard();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    process.env.OPENCLAW_HOME = prevOpenClawHome;
+  });
+
+  it("creates openclaw.json from scratch when file is missing", () => {
+    // openClawDir exists but openclaw.json does NOT
+    fs.mkdirSync(openClawDir, { recursive: true });
+    // No openclaw.json written
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: path.join(tmpDir, "var"),
+      config: {
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "info", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+
+    // Now call _updateConfig which internally calls persistConfigToOpenClaw
+    const result = _updateConfig({ logging: { level: "debug" } });
+    expect(result.ok).toBe(true);
+
+    // Verify the file was created
+    const openClawPath = path.join(openClawDir, "openclaw.json");
+    expect(fs.existsSync(openClawPath)).toBe(true);
+    const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
+    expect(saved.plugins.entries.seclaw.config.logging.level).toBe("debug");
+  });
+
+  it("creates openclaw.json even when directory does not exist", () => {
+    // Don't create openClawDir at all
+
+    init({
+      pluginDir: __dirname + "/..",
+      varDir: path.join(tmpDir, "var"),
+      config: {
+        llm: { model: "test-model", enabled: false, maxConcurrent: 1 },
+        timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" },
+        logging: { level: "info", auditJsonl: false },
+        dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
+      },
+    });
+
+    const result = _updateConfig({ llm: { enabled: true } });
+    expect(result.ok).toBe(true);
+
+    const openClawPath = path.join(openClawDir, "openclaw.json");
+    expect(fs.existsSync(openClawPath)).toBe(true);
+    const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
+    expect(saved.plugins.entries.seclaw.config.llm.enabled).toBe(true);
   });
 });

@@ -38,6 +38,7 @@ import {
   stopDashboard,
   type ModelOption,
 } from "./src/dashboard/server.js";
+import { seedSenderLabels } from "./src/dashboard/sender-labels.js";
 import { getOpenClawDir } from "./src/hardening/platform.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
@@ -511,6 +512,7 @@ export function init(ctx: PluginInitContext): void {
   const pluginDir = ctx.pluginDir || getDirname();
   workspacePath = ctx.workspacePath;
   varDir = ctx.varDir || path.join(os.homedir(), ".openclaw", "seclaw");
+  fs.mkdirSync(varDir, { recursive: true });
   bootstrapManagedRules(pluginDir);
 
   ruleEngine = new RuleEngine();
@@ -658,10 +660,21 @@ function persistConfigToOpenClaw(nextConfig: SecLawConfig): {
   ok: boolean;
   error?: string;
 } {
-  const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
+  const openClawDir = getOpenClawDir();
+  const openClawPath = path.join(openClawDir, "openclaw.json");
   try {
-    const raw = fs.readFileSync(openClawPath, "utf-8");
-    const parsed = JSON.parse(raw);
+    fs.mkdirSync(openClawDir, { recursive: true });
+    let parsed: Record<string, unknown>;
+    try {
+      const raw = fs.readFileSync(openClawPath, "utf-8");
+      parsed = JSON.parse(raw);
+    } catch (readErr: any) {
+      if (readErr.code === "ENOENT") {
+        parsed = {};
+      } else {
+        throw readErr;
+      }
+    }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {
         ok: false,
@@ -1255,6 +1268,10 @@ function register(api: OpenClawPluginApi): void {
     pluginDir: getDirname(),
     emitAgentEvent: api.emitAgentEvent,
   });
+
+  // First-install bootstrap: seed sender labels and persist default config
+  seedSenderLabels(varDir, config.llm.trustedSenderLabels ?? []);
+  persistConfigToOpenClaw(config);
 
   // Route all seclaw log output through the gateway's logger
   auditLog.setExternalLogger(api.logger);

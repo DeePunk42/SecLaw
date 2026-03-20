@@ -454,6 +454,17 @@ Dashboard config changes are persisted directly into `~/.openclaw/openclaw.json`
 
 If `plugins.entries.seclaw` is missing, persistence auto-creates it. The deprecated field `llm.endpoint` is rejected. `llm.apiKey` is accepted at runtime but **stripped before persisting** to `openclaw.json` to avoid leaking secrets to disk.
 
+### First-Install Bootstrap
+
+On first install (all config empty), `register()` performs automatic initialization after `init()`:
+
+1. **`varDir` creation** — `init()` calls `fs.mkdirSync(varDir, { recursive: true })` explicitly, rather than relying on the side effect of `bootstrapManagedRules()`. This ensures the directory exists even when `varDir` is overridden.
+2. **`sender-labels.json` seeding** — `register()` calls `seedSenderLabels(varDir, config.llm.trustedSenderLabels)` which creates the file with default trusted labels (e.g. `"openclaw-control-ui"`) only if it doesn't already exist.
+3. **`openclaw.json` persistence** — `register()` calls `persistConfigToOpenClaw(config)` to write the default config to disk. `persistConfigToOpenClaw()` handles a missing `openclaw.json` by starting from `{}` (ENOENT → empty object), and creates the `~/.openclaw/` directory if needed.
+4. **Default rules** — `bootstrapManagedRules()` (called by `init()`) copies `rules/default.yaml` to `~/.openclaw/seclaw/rules/` if not already present.
+
+The bootstrap calls (`seedSenderLabels`, `persistConfigToOpenClaw`) are in `register()` (not `init()`) to keep test isolation clean — tests call `init()` directly and don't want to write to `~/.openclaw/`.
+
 ### Module-level State
 
 `index.ts` maintains several module-level variables that outlive individual hook calls:
