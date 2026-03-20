@@ -1193,6 +1193,21 @@ function register(api: OpenClawPluginApi): void {
   const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
   const wsDir = api.config.workspace?.dir;
 
+  // Default model from main config agents.defaults.model.primary when not explicitly set
+  if (!pluginConfig.llm?.model) {
+    const agents = api.config.agents as
+      | { defaults?: { model?: { primary?: string } } }
+      | undefined;
+    const primaryModel = agents?.defaults?.model?.primary;
+    if (primaryModel && typeof primaryModel === "string") {
+      if (!pluginConfig.llm) {
+        pluginConfig.llm = { model: primaryModel } as Partial<SecLawConfig>["llm"];
+      } else {
+        pluginConfig.llm.model = primaryModel;
+      }
+    }
+  }
+
   // Build available models list from effective providers
   availableModelsProvider = () => {
     const providers = getMergedProviders(api);
@@ -1274,7 +1289,7 @@ function register(api: OpenClawPluginApi): void {
       } else if (!config.llm.model) {
         api.logger.error(
           "[seclaw] ⚠️ LLM enabled but no model configured -- " +
-            "set llm.model as provider/model in plugin config. " +
+            "set llm.model in plugin config or agents.defaults.model.primary in openclaw.json. " +
             "RED operations will pass without real LLM audit.",
         );
       } else {
