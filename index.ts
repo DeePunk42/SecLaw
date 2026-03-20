@@ -923,26 +923,40 @@ export async function beforeToolCall(
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const blockReason = formatDangerAlert(dangerReport);
-    const pin = registerPendingOverride(
-      sessionKey,
-      toolName,
-      params,
-      toolCallId,
-    );
-    auditLog.logBlock(
-      sessionKey,
-      toolName,
-      blockReason,
-      "async",
-      toolCallId,
-      pin,
-    );
     const trusted = isSenderTrusted(sessionKey);
-    return {
-      block: true,
-      blockReason: blockReason + formatOverrideHint(pin, trusted),
-      ...(trusted ? { buttons: overrideButtons(pin) } : {}),
-    };
+    if (trusted) {
+      const pin = registerPendingOverride(
+        sessionKey,
+        toolName,
+        params,
+        toolCallId,
+      );
+      auditLog.logBlock(
+        sessionKey,
+        toolName,
+        blockReason,
+        "async",
+        toolCallId,
+        pin,
+      );
+      return {
+        block: true,
+        blockReason: blockReason + formatOverrideHint(pin, true),
+        buttons: overrideButtons(pin),
+      };
+    } else {
+      auditLog.logBlock(
+        sessionKey,
+        toolName,
+        blockReason,
+        "async",
+        toolCallId,
+      );
+      return {
+        block: true,
+        blockReason: blockReason + formatOverrideHint("", false),
+      };
+    }
   }
 
   // 2. Classify via unified rule engine
@@ -992,19 +1006,27 @@ export async function beforeToolCall(
     // LLM disabled — apply timeout policy
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
-      const pin = registerPendingOverride(
-        sessionKey,
-        toolName,
-        params,
-        toolCallId,
-      );
-      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
       const trusted = isSenderTrusted(sessionKey);
-      return {
-        block: true,
-        blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, trusted),
-        ...(trusted ? { buttons: overrideButtons(pin) } : {}),
-      };
+      if (trusted) {
+        const pin = registerPendingOverride(
+          sessionKey,
+          toolName,
+          params,
+          toolCallId,
+        );
+        auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
+        return {
+          block: true,
+          blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
+          buttons: overrideButtons(pin),
+        };
+      } else {
+        auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId);
+        return {
+          block: true,
+          blockReason: `[SecLaw] ${reason}` + formatOverrideHint("", false),
+        };
+      }
     }
     auditLog.logLLMSkipped(sessionKey, toolName);
     auditLog.logAllow(
@@ -1024,6 +1046,7 @@ export async function beforeToolCall(
     config.llm.promptRecentCalls,
     toolCallId,
   );
+  const trusted = isSenderTrusted(sessionKey);
   const startTime = Date.now();
   const ruleContext = ruleResult.ruleId
     ? { ruleId: ruleResult.ruleId, reason: ruleResult.reason }
@@ -1034,6 +1057,7 @@ export async function beforeToolCall(
       params,
       intentContext: intentCtx,
       sessionKey,
+      trusted,
     },
     undefined,
     ruleContext,
@@ -1096,20 +1120,27 @@ export async function beforeToolCall(
   if (llmResult.decision === "DANGER") {
     const reason = llmResult.reason || "Blocked by LLM security audit";
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
-    const pin = registerPendingOverride(
-      sessionKey,
-      toolName,
-      params,
-      toolCallId,
-    );
-    auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
     const blockReason = `[SecLaw] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
-    const trusted = isSenderTrusted(sessionKey);
-    return {
-      block: true,
-      blockReason: blockReason + formatOverrideHint(pin, trusted),
-      ...(trusted ? { buttons: overrideButtons(pin) } : {}),
-    };
+    if (trusted) {
+      const pin = registerPendingOverride(
+        sessionKey,
+        toolName,
+        params,
+        toolCallId,
+      );
+      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin);
+      return {
+        block: true,
+        blockReason: blockReason + formatOverrideHint(pin, true),
+        buttons: overrideButtons(pin),
+      };
+    } else {
+      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId);
+      return {
+        block: true,
+        blockReason: blockReason + formatOverrideHint("", false),
+      };
+    }
   }
 
   auditLog.logAllow(sessionKey, toolName, "LLM audit → SAFE", toolCallId);
@@ -1163,6 +1194,7 @@ export async function afterToolCall(
     intentContext: { ...intentCtx },
     timestamp: Date.now(),
     toolCallId,
+    trusted: isSenderTrusted(sessionKey),
   });
 
   auditLog.logAsyncEnqueue(sessionKey, toolName, asyncQueue.length, toolCallId);

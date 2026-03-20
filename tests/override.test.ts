@@ -562,6 +562,25 @@ describe("Integration: Override flow", () => {
     expect(result!.buttons).toBeUndefined();
   });
 
+  it("untrusted DANGER does not register pendingOverride", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Bob", "Do something dangerous"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Blocked"}',
+    });
+
+    await beforeToolCall(
+      { toolName: "exec", params: { command: "rm -rf /" } },
+      ctx,
+    );
+
+    // No pending overrides should exist for this session
+    // Trying to activate any PIN should fail
+    expect(sessionState.activateOverride(sessionKey, "000000")).toBe(false);
+    // Verify no override is active
+    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
+  });
+
   it("override-approved call skips async audit (no spurious danger flag)", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Delete key file"));
 

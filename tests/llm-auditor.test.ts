@@ -306,72 +306,70 @@ describe("LLMAuditor", () => {
     expect(capturedPrompt).not.toContain("tool_3");
   });
 
-  it("includes default trusted sender label in prompt", async () => {
-    const trustedAuditor = new LLMAuditor(
-      { ...defaultLLMConfig, trustedSenderLabels: ["openclaw-control-ui"] },
-      defaultTimeoutConfig,
-    );
+  it("uses trusted prompt when trusted=true", async () => {
     let capturedPrompt = "";
     const mockLLM: LLMCallFn = vi.fn().mockImplementation(async (p) => {
       capturedPrompt = p.messages[0].content;
       return { content: '{"decision": "SAFE"}' };
     });
-    trustedAuditor.setLLMCallFn(mockLLM);
+    auditor.setLLMCallFn(mockLLM);
 
-    await trustedAuditor.audit({
+    await auditor.audit({
       toolName: "exec",
       params: { command: "echo hi" },
       intentContext: defaultContext,
-      sessionKey: "test-trusted-default",
+      sessionKey: "test-trusted-prompt",
+      trusted: true,
     });
 
-    expect(capturedPrompt).toContain("Sender trust policy");
-    expect(capturedPrompt).toContain("openclaw-control-ui");
+    expect(capturedPrompt).toContain("intent-alignment auditor");
+    expect(capturedPrompt).toContain("sender is a trusted operator");
+    expect(capturedPrompt).not.toContain("security auditor");
   });
 
-  it("includes custom trustedSenderLabels in prompt", async () => {
-    const customAuditor = new LLMAuditor(
-      { ...defaultLLMConfig, trustedSenderLabels: ["my-ui", "admin-panel"] },
-      defaultTimeoutConfig,
-    );
+  it("uses untrusted prompt when trusted=false", async () => {
     let capturedPrompt = "";
     const mockLLM: LLMCallFn = vi.fn().mockImplementation(async (p) => {
       capturedPrompt = p.messages[0].content;
       return { content: '{"decision": "SAFE"}' };
     });
-    customAuditor.setLLMCallFn(mockLLM);
+    auditor.setLLMCallFn(mockLLM);
 
-    await customAuditor.audit({
+    await auditor.audit({
       toolName: "exec",
       params: { command: "echo hi" },
       intentContext: defaultContext,
-      sessionKey: "test-trusted-custom",
+      sessionKey: "test-untrusted-prompt",
+      trusted: false,
     });
 
-    expect(capturedPrompt).toContain("my-ui, admin-panel");
-    expect(capturedPrompt).toContain("Sender trust policy");
+    expect(capturedPrompt).toContain("security auditor");
+    expect(capturedPrompt).toContain("sender is NOT a trusted operator");
+    expect(capturedPrompt).not.toContain("intent-alignment");
   });
 
-  it("shows (none configured) when trustedSenderLabels is empty", async () => {
-    const noTrustAuditor = new LLMAuditor(
-      { ...defaultLLMConfig, trustedSenderLabels: [] },
-      defaultTimeoutConfig,
-    );
+  it("defaults to untrusted prompt when trusted is omitted", async () => {
     let capturedPrompt = "";
     const mockLLM: LLMCallFn = vi.fn().mockImplementation(async (p) => {
       capturedPrompt = p.messages[0].content;
       return { content: '{"decision": "SAFE"}' };
     });
-    noTrustAuditor.setLLMCallFn(mockLLM);
+    auditor.setLLMCallFn(mockLLM);
 
-    await noTrustAuditor.audit({
+    await auditor.audit({
       toolName: "exec",
       params: { command: "echo hi" },
       intentContext: defaultContext,
-      sessionKey: "test-no-trust",
+      sessionKey: "test-default-untrusted",
     });
 
-    expect(capturedPrompt).toContain("Trusted sender labels: (none configured)");
+    expect(capturedPrompt).toContain("security auditor");
+  });
+
+  it("fingerprint differs for same op with different trust", () => {
+    const fp1 = auditor.computeFingerprint("exec", { command: "ls" }, "goal", true);
+    const fp2 = auditor.computeFingerprint("exec", { command: "ls" }, "goal", false);
+    expect(fp1).not.toBe(fp2);
   });
 
   // ─── Error handling tests ───

@@ -44,6 +44,7 @@ export class AsyncAuditQueue {
       item.toolName,
       item.params,
       item.intentContext.userGoal,
+      item.trusted,
     );
 
     // Deduplicate within the current queue
@@ -135,7 +136,7 @@ export class AsyncAuditQueue {
       ? { ruleId: ruleResult.ruleId, reason: ruleResult.reason }
       : undefined;
     const llmResult = await this.llmAuditor.auditWithTimeout(
-      { toolName, params, intentContext, sessionKey },
+      { toolName, params, intentContext, sessionKey, trusted: item.trusted },
       this.config.timeouts.auditTimeoutMs,
       ruleContext,
     );

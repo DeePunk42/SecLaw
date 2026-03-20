@@ -101,6 +101,8 @@ export interface AuditQueueItem {
   intentContext: IntentContext;
   timestamp: number;
   toolCallId?: string;
+  /** Whether the sender was trusted at enqueue time. */
+  trusted: boolean;
 }
 
 export interface DangerReport {

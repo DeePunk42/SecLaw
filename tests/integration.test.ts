@@ -6,6 +6,7 @@ import {
   onUserMessageEvent,
   _getAsyncQueue,
   _getRuleEngine,
+  _getLLMAuditor,
 } from "../index.js";
 import { sessionState } from "../src/session-state.js";
 import type {
@@ -19,6 +20,14 @@ const ctx: PluginHookToolContext = {
   sessionKey,
   workspacePath: "/workspace",
 };
+
+function senderMessage(label: string, text: string): string {
+  return `Sender (untrusted metadata):
+\`\`\`json
+{"userId": 1, "label": "${label}"}
+\`\`\`
+${text}`;
+}
 
 describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
   beforeEach(() => {
@@ -512,5 +521,108 @@ describe("Integration: LLM service errors", () => {
       // read is GREEN → no block, and no danger flag should be set
       expect(result).toBeUndefined();
     });
+  });
+});
+
+describe("Integration: Trust-branched LLM prompts", () => {
+  const mockLLM = vi.fn();
+  const trustedLabels = ["Alice (admin)"];
+
+  beforeEach(() => {
+    sessionState.clear();
+    mockLLM.mockReset();
+    init({
+      workspacePath: "/workspace",
+      pluginDir: __dirname + "/..",
+      config: {
+        llm: {
+          model: "test", enabled: true, maxConcurrent: 2,
+          trustedSenderLabels: trustedLabels,
+        },
+        logging: { level: "error", auditJsonl: false },
+      },
+      llmCall: mockLLM,
+    });
+  });
+
+  it("trusted sender RED DANGER → prompt contains intent-alignment, response has PIN + buttons", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval command"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Deviates from intent"}',
+    });
+
+    const event: PluginHookBeforeToolCallEvent = {
+      toolName: "exec",
+      params: { command: "eval \"dangerous_payload\"" },
+    };
+
+    const result = await beforeToolCall(event, ctx);
+
+    // Verify the prompt used intent-alignment (trusted)
+    const promptContent = mockLLM.mock.calls[0][0].messages[0].content;
+    expect(promptContent).toContain("intent-alignment auditor");
+    expect(promptContent).not.toContain("security auditor");
+
+    // Verify block response has PIN + buttons
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.blockReason).toMatch(/\/pin\d{6}/);
+    expect(result!.buttons).toBeDefined();
+    expect(result!.buttons!.length).toBe(1);
+  });
+
+  it("untrusted sender RED DANGER → prompt contains security auditor, response has NO PIN, NO buttons", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Bob", "Run eval command"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Security risk"}',
+    });
+
+    const event: PluginHookBeforeToolCallEvent = {
+      toolName: "exec",
+      params: { command: "eval \"dangerous_payload\"" },
+    };
+
+    const result = await beforeToolCall(event, ctx);
+
+    // Verify the prompt used security auditor (untrusted)
+    const promptContent = mockLLM.mock.calls[0][0].messages[0].content;
+    expect(promptContent).toContain("security auditor");
+    expect(promptContent).not.toContain("intent-alignment");
+
+    // Verify block response has NO PIN, NO buttons
+    expect(result).toBeDefined();
+    expect(result!.block).toBe(true);
+    expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
+    expect(result!.buttons).toBeUndefined();
+  });
+
+  it("trusted sender override flow works end-to-end with intent-alignment prompt", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Deviates from intent"}',
+    });
+
+    const event: PluginHookBeforeToolCallEvent = {
+      toolName: "exec",
+      params: { command: "eval \"payload\"" },
+    };
+
+    // Block → get PIN
+    const result = await beforeToolCall(event, ctx);
+    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
+    expect(pinMatch).not.toBeNull();
+    const pin = pinMatch![1];
+
+    // Override
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
+
+    // Retry → allowed
+    mockLLM.mockClear();
+    const retryResult = await beforeToolCall(event, ctx);
+    expect(retryResult).toBeUndefined();
+    expect(mockLLM).not.toHaveBeenCalled();
   });
 });

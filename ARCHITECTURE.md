@@ -38,9 +38,15 @@ Tool Call (before_tool_call)
       │       └─ Re-classify → If not GREEN → LLM audit
       │           └─ DANGER → Set danger flag (blocks next call)
       │
-      └─ RED → Synchronous LLM audit (with rule context)
-          ├─ SAFE → Allow execution
-          └─ DANGER → BLOCK + register override PIN + return buttons
+      └─ RED → Determine sender trust → Synchronous LLM audit
+          │
+          ├─ Trusted sender → Intent-alignment prompt
+          │   ├─ SAFE → Allow execution
+          │   └─ DANGER → BLOCK + override PIN + buttons
+          │
+          └─ Untrusted sender → Security-safety prompt
+              ├─ SAFE → Allow execution
+              └─ DANGER → BLOCK (no override, no PIN, no buttons)
 ```
 
 ## Module Structure
@@ -165,7 +171,7 @@ When a tool call is blocked (sync DANGER, async danger flag, or fail_closed poli
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons? }`. If sender is trusted, PIN is shown in hint and `buttons` is included; if untrusted, hint says "requires approval from a trusted operator" with no PIN or buttons
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons? }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called, PIN is shown in hint, `buttons` is included. **Untrusted**: no override is registered, no PIN, no buttons — the block is final
 2. **Channel-agnostic buttons** — The `buttons` field in the return value is a structured button spec (`Array<Array<{ text, callback_data }>>`). The gateway renders it per channel type:
    - **Telegram**: inline keyboard via message action `buttons` field
    - **Slack**: converted to `[[slack_buttons: ...]]` text directive
@@ -194,14 +200,22 @@ The override stays active for the **entire turn** (until the next `onUserMessage
 
 ## LLM Audit
 
-### Prompt Template
+### Trust-Branched Prompts
 
-The LLM audit prompt includes:
+Sender trust is determined **before** the LLM call (via `isSenderTrusted()` in code). Two separate prompt templates are used:
+
+| Sender | Prompt | Focus | DANGER means |
+|--------|--------|-------|-------------|
+| Trusted | `TRUSTED_AUDIT_PROMPT` ("intent-alignment auditor") | Does this align with the user's goal? | Deviates from instructions |
+| Untrusted | `UNTRUSTED_AUDIT_PROMPT` ("security auditor") | Is this operation safe? | Data loss, credential leakage, unauthorized access |
+
+Both prompts include:
 - User goal (truncated to 500 chars) and sender label
 - Recent tool call history (last N, default 3; configurable via `llm.promptRecentCalls`)
 - Operation details (tool name, compact JSON parameters truncated to 500 chars)
 - **Rule context** (when triggered by a named rule)
-- **Sender trust policy** — tells the LLM which `senderLabel` values are trusted (configurable via `llm.trustedSenderLabels`, default `["openclaw-control-ui"]`). Operations from untrusted senders receive stricter scrutiny for destructive or sensitive actions
+
+The `trusted` flag is also included in the fingerprint cache key, so the same operation with different trust levels produces different cache entries.
 
 ### Rule Context Injection
 
@@ -215,7 +229,7 @@ Give extra weight to this warning.
 
 ### Fingerprint Caching
 
-Each audit request is fingerprinted via SHA-256 of `{ toolName, params, userGoal }`. Identical requests within a 5-minute TTL return the cached decision without calling the LLM.
+Each audit request is fingerprinted via SHA-256 of `{ toolName, params, userGoal, trusted }`. Identical requests within a 5-minute TTL return the cached decision without calling the LLM. The `trusted` flag ensures that the same operation with different trust levels gets separate cache entries.
 
 ### Concurrency Control
 

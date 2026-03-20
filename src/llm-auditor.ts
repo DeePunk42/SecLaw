@@ -26,7 +26,7 @@ export type LLMCallFn = (params: {
   max_tokens: number;
 }) => Promise<{ content: string }>;
 
-const AUDIT_PROMPT_TEMPLATE = `You are a security auditor for an AI Agent system. Analyze the following tool call for security risks.
+const TRUSTED_AUDIT_PROMPT = `You are an intent-alignment auditor for an AI Agent system. The sender is a trusted operator. Analyze whether the following tool call aligns with the user's stated goal.
 
 ## Context
 - User goal: {userGoal}
@@ -42,13 +42,35 @@ const AUDIT_PROMPT_TEMPLATE = `You are a security auditor for an AI Agent system
 - Parameters: {params}
 
 ## Decision criteria
-- SAFE: The operation clearly aligns with the user's goal and poses no security risk
-- DANGER: The operation may cause data loss, credential leakage, unauthorized access, or deviates from the user's intent
+- SAFE: The operation aligns with the user's stated goal or is a reasonable step toward it
+- DANGER: The operation deviates from the user's instructions or contradicts their intent
 
-## Sender trust policy
-Trusted sender labels: {trustedSenderLabels}
-Current sender: {senderLabel}
-If the current sender is NOT in the trusted list, apply stricter scrutiny to destructive or sensitive operations (file deletion, credential access, system commands). Untrusted senders require stronger alignment between the operation and the stated user goal.
+Do NOT evaluate whether the operation is "safe" in a security sense — the sender is trusted. Focus only on whether the operation matches the user's intent.
+
+Respond with ONLY a JSON object in one of these formats:
+{"decision": "SAFE"}
+{"decision": "DANGER", "reason": "...", "recommendation": "..."}`;
+
+const UNTRUSTED_AUDIT_PROMPT = `You are a security auditor for an AI Agent system. The sender is NOT a trusted operator. Analyze the following tool call for security risks.
+
+## Context
+- User goal: {userGoal}
+- Sender: {senderLabel}
+- Channel: {channelId}
+- Trigger: {trigger}
+- Agent: {agentId}
+- Recent tool call history:
+{recentToolCalls}
+
+## Operation to audit
+- Tool: {toolName}
+- Parameters: {params}
+
+## Decision criteria
+- SAFE: The operation poses no security risk — no data loss, credential leakage, or unauthorized access
+- DANGER: The operation may cause data loss, credential leakage, unauthorized access, or other security harm
+
+Apply strict scrutiny. When in doubt, flag as DANGER.
 
 Respond with ONLY a JSON object in one of these formats:
 {"decision": "SAFE"}
@@ -98,8 +120,9 @@ export class LLMAuditor {
     toolName: string,
     params: Record<string, unknown>,
     userGoal: string,
+    trusted?: boolean,
   ): string {
-    const raw = JSON.stringify({ toolName, params, userGoal });
+    const raw = JSON.stringify({ toolName, params, userGoal, trusted: !!trusted });
     return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
   }
 
@@ -127,6 +150,7 @@ export class LLMAuditor {
     params: Record<string, unknown>;
     intentContext: IntentContext;
     sessionKey: string;
+    trusted?: boolean;
   }, ruleContext?: { ruleId?: string; reason?: string }): Promise<LLMAuditResult> {
     if (!this.config.enabled || !this.llmCall) {
       return { decision: "SAFE" };
@@ -137,6 +161,7 @@ export class LLMAuditor {
       params.toolName,
       params.params,
       params.intentContext.userGoal,
+      params.trusted,
     );
     const cached = sessionState.getAuditCache(
       params.sessionKey,
@@ -192,6 +217,7 @@ export class LLMAuditor {
       params: Record<string, unknown>;
       intentContext: IntentContext;
       sessionKey: string;
+      trusted?: boolean;
     },
     timeoutMs?: number,
     ruleContext?: { ruleId?: string; reason?: string },
@@ -281,6 +307,7 @@ export class LLMAuditor {
     toolName: string;
     params: Record<string, unknown>;
     intentContext: IntentContext;
+    trusted?: boolean;
   }, ruleContext?: { ruleId?: string; reason?: string }): Promise<LLMAuditResult> {
     const prompt = this.buildPrompt(params, ruleContext);
     const retryConfig = this.config.retry ?? DEFAULT_RETRY_CONFIG;
@@ -370,6 +397,7 @@ export class LLMAuditor {
     toolName: string;
     params: Record<string, unknown>;
     intentContext: IntentContext;
+    trusted?: boolean;
   }, ruleContext?: { ruleId?: string; reason?: string }): string {
     const { intentContext } = params;
 
@@ -390,17 +418,16 @@ export class LLMAuditor {
     // Compact params with 500 char limit
     const compactParams = JSON.stringify(params.params).slice(0, 500);
 
-    const trustedLabels = this.config.trustedSenderLabels?.join(", ") || "(none configured)";
+    const template = params.trusted ? TRUSTED_AUDIT_PROMPT : UNTRUSTED_AUDIT_PROMPT;
 
-    let prompt = AUDIT_PROMPT_TEMPLATE.replace("{userGoal}", truncatedGoal)
+    let prompt = template.replace("{userGoal}", truncatedGoal)
       .replaceAll("{senderLabel}", intentContext.senderLabel || "(unknown)")
       .replace("{channelId}", intentContext.channelId || "(unknown)")
       .replace("{trigger}", intentContext.trigger || "(unknown)")
       .replace("{agentId}", intentContext.agentId || "(unknown)")
       .replace("{recentToolCalls}", recentCalls || "  (none)")
       .replace("{toolName}", params.toolName)
-      .replace("{params}", compactParams)
-      .replace("{trustedSenderLabels}", trustedLabels);
+      .replace("{params}", compactParams);
 
     if (ruleContext && (ruleContext.ruleId || ruleContext.reason)) {
       prompt += `\n\n## Security rule context\nRule ${ruleContext.ruleId || "unknown"} flagged this operation: ${ruleContext.reason || "no reason given"}\nGive extra weight to this warning.`;
