@@ -44,6 +44,8 @@ npm run build
 }
 ```
 
+> **提示**：如果 `openclaw.json` 尚不存在或不包含 SecLaw 配置，SecLaw 会在首次启动时自动创建并写入默认配置（参见下方"首次安装自动初始化"）。
+
 **第三步：配置 LLM 审计模型**
 
 SecLaw 使用 Provider 模式（`provider/model`）：
@@ -101,6 +103,17 @@ SecLaw 使用 Provider 模式（`provider/model`）：
 [seclaw] 🚀 Initialized rules=28 llm=myapi/gpt-4o policy=fail_closed
 [seclaw] 📊 Dashboard: http://0.0.0.0:19198
 ```
+
+### 首次安装自动初始化
+
+SecLaw 在首次启动时会自动完成以下初始化，无需手动创建文件或目录：
+
+1. **创建数据目录** — 自动创建 `~/.openclaw/seclaw/`（varDir），用于存储发送者标签等插件数据
+2. **预置发送者标签** — 自动生成 `sender-labels.json`，写入默认受信任标签 `"openclaw-control-ui"`。如果文件已存在则不会覆盖
+3. **持久化默认配置** — 自动将默认配置写入 `~/.openclaw/openclaw.json` 的 `plugins.entries.seclaw.config`。如果文件不存在会从空对象创建；如果已有内容则合并写入
+4. **复制默认规则** — 自动将内置的 `default.yaml` 复制到 `~/.openclaw/seclaw/rules/`（如不存在）
+
+这意味着全新安装只需配置 LLM 模型（第二步/第三步），其余配置会自动生成。后续可通过 Dashboard 在线调整。
 
 ### 完整配置参考
 
