@@ -198,7 +198,7 @@ describe("onUserMessage override detection", () => {
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
   });
 
-  it("no sender label → does NOT activate even with correct PIN", () => {
+  it("no sender label → treated as trusted, activates override with correct PIN", () => {
     sessionState.addPendingOverride(sessionKey, {
       pin: "038291",
       toolName: "exec",
@@ -206,10 +206,10 @@ describe("onUserMessage override detection", () => {
       timestamp: Date.now(),
     });
 
-    // Plain message without Sender metadata
+    // Plain message without Sender metadata → trusted (direct/system interaction)
     onUserMessage(sessionKey, "/pin038291", trustedLabels);
 
-    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
+    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
   });
 
   it("new turn clears previous active override", () => {

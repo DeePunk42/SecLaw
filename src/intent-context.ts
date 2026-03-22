@@ -58,7 +58,7 @@ export function onUserMessage(
     const match = userMessage.match(/\/pin(\d{6})/);
     if (match) {
       const pin = match[1].toLowerCase();
-      const isTrusted = senderLabel != null && trustedSenderLabels.includes(senderLabel);
+      const isTrusted = senderLabel == null || trustedSenderLabels.includes(senderLabel);
       if (isTrusted && sessionState.getPendingOverride(sessionKey, pin)) {
         sessionState.activateOverride(sessionKey, pin);
       }

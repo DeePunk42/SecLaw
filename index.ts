@@ -402,10 +402,9 @@ function formatAsyncDangerBlockForAgent(report: DangerReport): string {
 
 function isSenderTrusted(sessionKey: string): boolean {
   const senderLabel = getIntentContext(sessionKey).senderLabel;
-  return (
-    senderLabel != null &&
-    (config.llm.trustedSenderLabels ?? []).includes(senderLabel)
-  );
+  // No sender identity → direct/system interaction → trusted
+  if (senderLabel == null) return true;
+  return (config.llm.trustedSenderLabels ?? []).includes(senderLabel);
 }
 
 // ─── Service Error Formatting ───

@@ -173,6 +173,18 @@ This ensures `userGoal` contains only the user's actual instruction, reducing LL
 
 When a tool call is blocked (sync DANGER, async danger flag, or fail_closed policy), a 6-digit decimal PIN is generated and included in the `blockReason`. Trusted senders can reply `/pin<pin>` to unblock the operation.
 
+### Trust Determination
+
+Trust is resolved by `isSenderTrusted()` based on `senderLabel`:
+
+| senderLabel | Condition | Trust | Rationale |
+|-------------|-----------|-------|-----------|
+| `null` / `undefined` | No Sender metadata block | **Trusted** | Direct operator session, system trigger (cron/heartbeat/memory), or adapter without Sender support — no multi-user channel threat |
+| Present | In `trustedSenderLabels` | **Trusted** | Known operator in multi-user channel |
+| Present | NOT in `trustedSenderLabels` | **Untrusted** | Unknown user in multi-user channel |
+
+The same logic applies to `/pin` override consumption in `onUserMessage()`: when `senderLabel` is absent, `/pin` commands are accepted (consistent with trust determination).
+
 ### Flow
 
 1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons? }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called, PIN is shown in hint, `buttons` is included. **Untrusted**: no override is registered, no PIN, no buttons — the block is final
@@ -206,12 +218,12 @@ The override stays active for the **entire turn** (until the next `onUserMessage
 
 ### Trust-Branched Prompts
 
-Sender trust is determined **before** the LLM call (via `isSenderTrusted()` in code). Two separate prompt templates are used:
+Sender trust is determined **before** the LLM call (via `isSenderTrusted()` in code — see [Trust Determination](#trust-determination)). Two separate prompt templates are used:
 
 | Sender | Prompt | Focus | DANGER means |
 |--------|--------|-------|-------------|
-| Trusted | `TRUSTED_AUDIT_PROMPT` ("intent-alignment auditor") | Does this align with the user's goal? | Severe intent deviation + serious potential harm (high bar) |
-| Untrusted | `UNTRUSTED_AUDIT_PROMPT` ("security auditor") | Is this operation safe? | Data loss, credential leakage, unauthorized access |
+| Trusted (senderLabel absent OR in trustedSenderLabels) | `TRUSTED_AUDIT_PROMPT` ("intent-alignment auditor") | Does this align with the user's goal? | Severe intent deviation + serious potential harm (high bar) |
+| Untrusted (senderLabel present but NOT in trustedSenderLabels) | `UNTRUSTED_AUDIT_PROMPT` ("security auditor") | Is this operation safe? | Data loss, credential leakage, unauthorized access |
 
 Both prompts include:
 - User goal (truncated to 500 chars) and sender label
