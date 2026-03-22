@@ -101,8 +101,10 @@ export class AuditLog {
 
   private toolCallRecords = new Map<string, ToolCallRecord>();
   private toolCallIds: string[] = [];
-  private static readonly MAX_TOOL_CALL_RECORDS = 200;
+  private static readonly MAX_TOOL_CALL_RECORDS = 500;
   private toolCallSubscribers: ToolCallSubscriber[] = [];
+  private toolCallStream: fs.WriteStream | null = null;
+  private toolCallLogDir: string | null = null;
 
   constructor(config: LoggingConfig) {
     this.config = config;
@@ -193,6 +195,84 @@ export class AuditLog {
       this.logStream = fs.createWriteStream(logFile, { flags: "a" });
     } catch {
       // Silently fail — audit log is best-effort
+    }
+  }
+
+  /**
+   * Initialize tool call log persistence (JSONL).
+   * Loads existing records from disk and opens a write stream for new ones.
+   */
+  initToolCallLog(logDir: string): void {
+    try {
+      this.toolCallLogDir = logDir;
+      fs.mkdirSync(logDir, { recursive: true });
+      this.loadPersistedToolCalls(path.join(logDir, "tool-calls.jsonl"));
+      this.toolCallStream = fs.createWriteStream(
+        path.join(logDir, "tool-calls.jsonl"),
+        { flags: "a" },
+      );
+      this.toolCallStream.on("error", () => {
+        // Best-effort — stream errors (e.g. directory removed) are silently ignored
+        this.toolCallStream = null;
+      });
+    } catch {
+      // Best-effort — persistence failure shouldn't block the plugin
+    }
+  }
+
+  private loadPersistedToolCalls(filePath: string): void {
+    try {
+      if (!fs.existsSync(filePath)) return;
+      const content = fs.readFileSync(filePath, "utf-8");
+      const lines = content.split("\n").filter((l) => l.trim());
+
+      // Deduplicate by toolCallId (last occurrence wins)
+      const deduped = new Map<string, Record<string, unknown>>();
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line) as Record<string, unknown>;
+          if (typeof parsed.toolCallId === "string") {
+            deduped.set(parsed.toolCallId, parsed);
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      // Take last MAX records
+      const entries = [...deduped.entries()];
+      const start = Math.max(0, entries.length - AuditLog.MAX_TOOL_CALL_RECORDS);
+      const trimmed = entries.slice(start);
+
+      for (const [id, data] of trimmed) {
+        const record: ToolCallRecord = {
+          toolCallId: id,
+          sessionKey: (data.sessionKey as string) || "",
+          toolName: (data.toolName as string) || "unknown",
+          startedAt: (data.startedAt as string) || "",
+          updatedAt: (data.updatedAt as string) || "",
+          tier: data.tier as ToolCallRecord["tier"],
+          ruleId: data.ruleId as string | undefined,
+          ruleReason: data.ruleReason as string | undefined,
+          finalStatus: (data.finalStatus as ToolCallRecord["finalStatus"]) || "pending",
+          syncAudit: data.syncAudit as ToolCallRecord["syncAudit"],
+          asyncAuditStatus: data.asyncAuditStatus as ToolCallRecord["asyncAuditStatus"],
+          asyncAudit: data.asyncAudit as ToolCallRecord["asyncAudit"],
+          dangerDetected: data.dangerDetected as boolean | undefined,
+          overridePin: data.overridePin as string | undefined,
+          overrideUsed: data.overrideUsed as boolean | undefined,
+          intentContext: data.intentContext as Record<string, unknown> | undefined,
+          params: data.params as Record<string, unknown> | undefined,
+          blockReason: data.blockReason as string | undefined,
+          blockSource: data.blockSource as "sync" | "async" | undefined,
+          serviceError: data.serviceError as ToolCallRecord["serviceError"],
+          events: [],
+        };
+        this.toolCallRecords.set(id, record);
+        this.toolCallIds.push(id);
+      }
+    } catch {
+      // Best-effort — failed load doesn't block startup
     }
   }
 
@@ -367,6 +447,14 @@ export class AuditLog {
     // Notify subscribers
     for (const fn of this.toolCallSubscribers) {
       try { fn(record); } catch { /* best-effort */ }
+    }
+
+    // Persist to JSONL (without events array)
+    if (this.toolCallStream) {
+      try {
+        const { events, ...persistable } = record;
+        this.toolCallStream.write(JSON.stringify(persistable) + "\n");
+      } catch { /* best-effort */ }
     }
   }
 
@@ -674,6 +762,10 @@ export class AuditLog {
     if (this.logStream) {
       this.logStream.end();
       this.logStream = null;
+    }
+    if (this.toolCallStream) {
+      this.toolCallStream.end();
+      this.toolCallStream = null;
     }
   }
 

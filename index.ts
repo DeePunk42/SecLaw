@@ -561,6 +561,7 @@ export function init(ctx: PluginInitContext): void {
     ? path.join(ctx.workspacePath, ".openclaw", "logs")
     : path.join(pluginDir, "logs");
   auditLog.init(logDir);
+  auditLog.initToolCallLog(path.join(varDir, "logs"));
 
   asyncQueue = new AsyncAuditQueue(ruleEngine, llmAuditor, auditLog, config);
 

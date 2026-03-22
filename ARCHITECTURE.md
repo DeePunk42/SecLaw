@@ -666,22 +666,31 @@ interface ToolCallRecord {
 }
 ```
 
-The aggregation happens in `AuditLog.log()` — when an entry has a `toolCallId`, the corresponding `ToolCallRecord` is created or updated. Up to 200 records are kept in memory.
+The aggregation happens in `AuditLog.log()` — when an entry has a `toolCallId`, the corresponding `ToolCallRecord` is created or updated. Up to 500 records are kept in memory.
+
+### ToolCallRecord Persistence
+
+ToolCallRecords are persisted to `~/.openclaw/seclaw/logs/tool-calls.jsonl` for history across restarts:
+
+- **Write**: After each `aggregateIntoToolCallRecord()` subscriber notification, the record (without `events[]`) is appended as a JSONL line
+- **Load**: On startup, `initToolCallLog()` reads the file, deduplicates by `toolCallId` (last occurrence wins), and hydrates the in-memory map with the last 500 records (events set to `[]`)
+- **No API changes**: Existing `getToolCallRecords()` returns the hydrated data transparently
 
 `params` and `intentContext` are populated from both their primary events (`tool_classified`, `intent_context`) and `tool_blocked` fallback fields, so blocked records do not lose detail across different block paths.
 
 ### Dashboard Frontend (Grouped Card View)
 
-The dashboard Audit Log tab shows tool calls as **grouped cards** instead of flat events:
+The dashboard Audit Log tab shows tool calls as **grouped cards** in a 60/40 split layout:
 
-- Each card represents one tool call (identified by `toolCallId`)
-- Card header: relative time, tool name, tier badge, status label
+- **Left panel (60%)**: scrollable card list. Each card shows relative time, tool name, tier badge, status label
+- **Right panel (40%)**: fixed detail sidebar. Clicking a card highlights it (blue outline) and populates the sidebar with full detail phases (Rule Match, Intent Context, Sync Audit, Async Audit, Override, Params)
 - Status labels: green "allowed", red "BLOCKED" (with PIN if override available), yellow "auditing..." with spinner, purple "OVERRIDDEN"
 - Danger detection shows a red "DANGER" badge
-- Click to expand: lifecycle phases (Rule Match, Intent Context, Sync Audit, Async Audit, Override, Params)
-- Async audit shows a spinner while `enqueued`, updates in-place when `complete`
-- Filters: tier, status (All/Allowed/Blocked/Overridden/Pending), tool name
-- Cards update in-place via SSE (`/api/tool-calls/stream`), preserving expanded state
+- **Toolbar**: pill-style toggle buttons replace dropdowns
+  - Tier pills: `ALL | GREEN | YELLOW | RED` (colored when active)
+  - Status pills: `ALL | Blocked | Danger` (Blocked = `finalStatus === "blocked"`, Danger = `dangerDetected === true`)
+  - Pause/Resume toggle + count display
+- Cards update in-place via SSE (`/api/tool-calls/stream`), refreshing the sidebar if the selected card was updated
 
 ### Config Editor
 

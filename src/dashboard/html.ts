@@ -61,17 +61,28 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 .log-toolbar {
   display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;
 }
-.log-toolbar select, .log-toolbar input {
-  padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
-  color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-ui);
-}
 .log-toolbar button {
   padding: 6px 12px; background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text); border-radius: 4px; cursor: pointer; font-size: 12px; font-family: var(--font-ui);
 }
 .log-toolbar button:hover { background: var(--border); }
 .log-toolbar .count { color: var(--text-dim); font-size: 12px; margin-left: auto; }
-.log-list { display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 200px); overflow-y: auto; }
+.pill-group { display:flex; gap:2px; background:var(--bg-input); border-radius:4px; border:1px solid var(--border); padding:2px; }
+.pill-btn { padding:4px 10px; border:none; background:transparent; color:var(--text-dim); border-radius:3px; cursor:pointer; font-size:11px; font-family:var(--font-mono); font-weight:600; text-transform:uppercase; }
+.pill-btn:hover { color:var(--text); }
+.pill-btn.active { background:var(--border); color:var(--text); }
+.pill-btn.active[data-value="GREEN"] { background:rgba(34,197,94,0.2); color:var(--green); }
+.pill-btn.active[data-value="YELLOW"] { background:rgba(245,158,11,0.2); color:var(--yellow); }
+.pill-btn.active[data-value="RED"] { background:rgba(239,68,68,0.2); color:var(--red); }
+.pill-btn.active[data-value="blocked"] { background:rgba(239,68,68,0.2); color:var(--red); }
+.pill-btn.active[data-value="danger"] { background:rgba(239,68,68,0.25); color:var(--red); }
+.log-container { display:flex; gap:0; height:calc(100vh - 200px); }
+.log-list { flex:0 0 60%; overflow-y:auto; padding-right:12px; border-right:1px solid var(--border); display:flex; flex-direction:column; gap:6px; }
+.detail-panel { flex:0 0 40%; overflow-y:auto; padding-left:16px; position:sticky; top:0; align-self:flex-start; max-height:calc(100vh - 200px); }
+.detail-placeholder { display:flex; align-items:center; justify-content:center; height:100%; color:var(--text-dim); font-size:13px; }
+.detail-header { margin-bottom:12px; }
+.detail-header .log-tool { font-size:14px; font-weight:600; }
+.tc-card.selected { outline:1px solid var(--blue); outline-offset:-1px; }
 
 .tc-card {
   background: var(--bg-card); border-radius: 6px; padding: 10px 14px;
@@ -116,12 +127,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 .blink { animation: blink 1.5s ease-in-out infinite; }
-
-.tc-detail {
-  display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
-  font-size: 12px;
-}
-.tc-card.expanded .tc-detail { display: block; }
 
 .tc-phase {
   margin-bottom: 8px; padding: 6px 8px; background: var(--bg-input); border-radius: 4px;
@@ -401,14 +406,26 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <!-- Tab 1: Audit Log (Tool Call Cards) -->
 <div id="tab-logs" class="tab-content active">
   <div class="log-toolbar">
-    <select id="filter-tier"><option value="">All Tiers</option><option value="GREEN">GREEN</option><option value="YELLOW">YELLOW</option><option value="RED">RED</option></select>
-    <select id="filter-status"><option value="">All Status</option><option value="allowed">Allowed</option><option value="blocked">Blocked</option><option value="overridden">Overridden</option><option value="pending">Pending</option></select>
-    <input id="filter-tool" type="text" placeholder="Tool name..." style="width:120px">
+    <div class="pill-group" id="pill-tier">
+      <button class="pill-btn active" data-value="">ALL</button>
+      <button class="pill-btn" data-value="GREEN">GREEN</button>
+      <button class="pill-btn" data-value="YELLOW">YELLOW</button>
+      <button class="pill-btn" data-value="RED">RED</button>
+    </div>
+    <div class="pill-group" id="pill-status">
+      <button class="pill-btn active" data-value="">ALL</button>
+      <button class="pill-btn" data-value="blocked">Blocked</button>
+      <button class="pill-btn" data-value="danger">Danger</button>
+    </div>
     <button id="btn-pause">Pause</button>
-    <button id="btn-clear">Clear</button>
     <span class="count" id="log-count">0 calls</span>
   </div>
-  <div class="log-list" id="log-list"></div>
+  <div class="log-container">
+    <div class="log-list" id="log-list"></div>
+    <div class="detail-panel" id="detail-panel">
+      <div class="detail-placeholder">Select a log entry to view details</div>
+    </div>
+  </div>
 </div>
 
 <!-- Tab 2: Config Editor -->
@@ -643,16 +660,34 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   // ─── Tool Call Cards ───
   const logList = document.getElementById('log-list');
   const logCount = document.getElementById('log-count');
-  const filterTier = document.getElementById('filter-tier');
-  const filterStatus = document.getElementById('filter-status');
-  const filterTool = document.getElementById('filter-tool');
+  const detailPanel = document.getElementById('detail-panel');
   const btnPause = document.getElementById('btn-pause');
-  const btnClear = document.getElementById('btn-clear');
 
   var records = new Map();
   var recordOrder = [];
+  var activeTier = '';
+  var activeStatus = '';
+  var selectedToolCallId = null;
   let paused = false;
   let eventSource = null;
+
+  // ─── Pill group event delegation ───
+  document.getElementById('pill-tier').addEventListener('click', function(e) {
+    var btn = e.target.closest('.pill-btn');
+    if (!btn) return;
+    this.querySelectorAll('.pill-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    activeTier = btn.dataset.value || '';
+    renderAll();
+  });
+  document.getElementById('pill-status').addEventListener('click', function(e) {
+    var btn = e.target.closest('.pill-btn');
+    if (!btn) return;
+    this.querySelectorAll('.pill-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    activeStatus = btn.dataset.value || '';
+    renderAll();
+  });
 
   function relativeTime(ts) {
     const d = new Date(ts);
@@ -675,9 +710,9 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   }
 
   function matchesFilter(rec) {
-    if (filterTier.value && rec.tier !== filterTier.value) return false;
-    if (filterStatus.value && rec.finalStatus !== filterStatus.value) return false;
-    if (filterTool.value && !rec.toolName.includes(filterTool.value)) return false;
+    if (activeTier && rec.tier !== activeTier) return false;
+    if (activeStatus === 'blocked' && rec.finalStatus !== 'blocked') return false;
+    if (activeStatus === 'danger' && !rec.dangerDetected) return false;
     return true;
   }
 
@@ -766,12 +801,32 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     return parts.join('');
   }
 
+  function showDetail(toolCallId) {
+    selectedToolCallId = toolCallId;
+    var rec = records.get(toolCallId);
+    if (!rec) {
+      detailPanel.innerHTML = '<div class="detail-placeholder">Select a log entry to view details</div>';
+      return;
+    }
+    var html = '<div class="detail-header">' +
+      '<div class="tc-card-header" style="margin-bottom:8px">' +
+        '<span class="log-time">' + relativeTime(rec.startedAt) + '</span>' +
+        '<span class="log-tool">' + escapeHtml(rec.toolName) + '</span>' +
+        (rec.tier ? '<span class="badge ' + tierBadgeClass(rec.tier) + '">' + rec.tier + '</span>' : '') +
+        statusHtml(rec) +
+        (rec.dangerDetected ? ' <span class="badge badge-danger">DANGER</span>' : '') +
+      '</div></div>' +
+      detailHtml(rec);
+    detailPanel.innerHTML = html;
+  }
+
   function renderCard(rec) {
     var div = document.createElement('div');
     var cls = 'tc-card';
     if (rec.tier) cls += ' tier-' + rec.tier;
     if (rec.finalStatus === 'blocked' || rec.finalStatus === 'overridden') cls += ' status-' + rec.finalStatus;
     if (rec.dangerDetected) cls += ' danger';
+    if (selectedToolCallId === rec.toolCallId) cls += ' selected';
     div.className = cls;
     div.dataset.tcid = rec.toolCallId;
 
@@ -782,10 +837,14 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         (rec.tier ? '<span class="badge ' + tierBadgeClass(rec.tier) + '">' + rec.tier + '</span>' : '') +
         statusHtml(rec) +
         (rec.dangerDetected ? ' <span class="badge badge-danger">DANGER</span>' : '') +
-      '</div>' +
-      '<div class="tc-detail">' + detailHtml(rec) + '</div>';
+      '</div>';
 
-    div.addEventListener('click', function() { div.classList.toggle('expanded'); });
+    div.addEventListener('click', function() {
+      var prev = logList.querySelector('.tc-card.selected');
+      if (prev) prev.classList.remove('selected');
+      div.classList.add('selected');
+      showDetail(rec.toolCallId);
+    });
     return div;
   }
 
@@ -796,6 +855,17 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       logList.appendChild(renderCard(records.get(filtered[i])));
     }
     logCount.textContent = filtered.length + ' calls';
+    // Restore selected card or show placeholder
+    if (selectedToolCallId) {
+      var selRec = records.get(selectedToolCallId);
+      if (selRec && matchesFilter(selRec)) {
+        var selEl = logList.querySelector('[data-tcid="' + selectedToolCallId + '"]');
+        if (selEl) selEl.classList.add('selected');
+        showDetail(selectedToolCallId);
+      } else {
+        detailPanel.innerHTML = '<div class="detail-placeholder">Select a log entry to view details</div>';
+      }
+    }
   }
 
   function updateToolCallCard(rec) {
@@ -820,19 +890,20 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
     var existingEl = logList.querySelector('[data-tcid="' + rec.toolCallId + '"]');
     if (existingEl) {
-      var wasExpanded = existingEl.classList.contains('expanded');
+      var wasSelected = existingEl.classList.contains('selected');
       var newEl = renderCard(rec);
-      if (wasExpanded) newEl.classList.add('expanded');
+      if (wasSelected) newEl.classList.add('selected');
       existingEl.replaceWith(newEl);
     } else {
       logList.insertBefore(renderCard(rec), logList.firstChild);
     }
     logCount.textContent = recordOrder.filter(function(id) { var r = records.get(id); return r && matchesFilter(r); }).length + ' calls';
-  }
 
-  filterTier.addEventListener('change', renderAll);
-  filterStatus.addEventListener('change', renderAll);
-  filterTool.addEventListener('input', renderAll);
+    // Refresh sidebar if the selected card was updated
+    if (selectedToolCallId === rec.toolCallId) {
+      showDetail(rec.toolCallId);
+    }
+  }
 
   btnPause.addEventListener('click', function() {
     paused = !paused;
@@ -840,14 +911,8 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     if (!paused) renderAll();
   });
 
-  btnClear.addEventListener('click', function() {
-    records = new Map();
-    recordOrder = [];
-    renderAll();
-  });
-
   // Load initial tool calls
-  fetch('/api/tool-calls?limit=200')
+  fetch('/api/tool-calls?limit=500')
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (Array.isArray(data)) {
@@ -874,7 +939,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     }
 
     // Re-fetch current state to catch up on any updates missed during disconnect
-    fetch('/api/tool-calls?limit=200')
+    fetch('/api/tool-calls?limit=500')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (Array.isArray(data)) {
