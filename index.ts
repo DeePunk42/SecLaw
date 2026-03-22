@@ -494,7 +494,11 @@ function bootstrapManagedRules(pluginDir: string): void {
   managedRulesDir = getManagedRulesDir();
   fs.mkdirSync(managedRulesDir, { recursive: true });
 
-  const builtInRulesDir = path.join(pluginDir, "rules");
+  let builtInRulesDir = path.join(pluginDir, "rules");
+  if (!fs.existsSync(builtInRulesDir)) {
+    // Fallback: rules may be one level up (e.g. pluginDir is dist/)
+    builtInRulesDir = path.join(pluginDir, "..", "rules");
+  }
   if (!fs.existsSync(builtInRulesDir)) return;
 
   const sourceFiles = fs
@@ -1981,7 +1985,11 @@ function createGatewayLLMCallFn(
 
 function getDirname(): string {
   try {
-    return path.dirname(fileURLToPath(import.meta.url));
+    const dir = path.dirname(fileURLToPath(import.meta.url));
+    // When running from dist/, return the package root so rules/ and other
+    // assets are found correctly.
+    if (path.basename(dir) === "dist") return path.dirname(dir);
+    return dir;
   } catch {
     return __dirname;
   }

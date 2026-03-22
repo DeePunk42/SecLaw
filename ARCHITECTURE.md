@@ -53,7 +53,11 @@ Tool Call (before_tool_call)
 
 ```
 index.ts                    Plugin entry point, hook registration, provider resolution,
-                            config persistence, runtime config update
+                            config persistence, runtime config update.
+                            getDirname() resolves the package root: when running
+                            from dist/, it ascends one level so rules/ and other
+                            assets are found. bootstrapManagedRules() also has a
+                            fallback to check ../rules/ if pluginDir/rules/ is missing.
 src/
   config.ts                 Type definitions, configuration schema, defaults
   rule-engine.ts            Unified rule engine (YAML rules → GREEN/YELLOW/RED)
