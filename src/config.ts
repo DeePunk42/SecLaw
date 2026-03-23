@@ -260,7 +260,6 @@ export interface SecLawConfig {
   timeouts: TimeoutConfig;
   logging: LoggingConfig;
   dashboard?: DashboardConfig;
-  rules?: { activeRuleFile?: string };
 }
 
 const DEFAULT_CONFIG: SecLawConfig = {
@@ -289,9 +288,6 @@ const DEFAULT_CONFIG: SecLawConfig = {
     port: 19198,
     host: "0.0.0.0",
   },
-  rules: {
-    activeRuleFile: "default.yaml",
-  },
 };
 
 export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
@@ -301,6 +297,5 @@ export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
     timeouts: { ...DEFAULT_CONFIG.timeouts, ...partial.timeouts },
     logging: { ...DEFAULT_CONFIG.logging, ...partial.logging },
     dashboard: { ...DEFAULT_CONFIG.dashboard!, ...partial.dashboard },
-    rules: { ...DEFAULT_CONFIG.rules!, ...partial.rules },
   };
 }

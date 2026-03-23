@@ -42,13 +42,6 @@
           "auditJsonl": { "type": "boolean" }
         }
       },
-      "rules": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "activeRuleFile": { "type": "string" }
-        }
-      },
       "dashboard": {
         "type": "object",
         "additionalProperties": false,

@@ -485,10 +485,6 @@ function listManagedRuleFiles(dir = managedRulesDir): string[] {
   }
 }
 
-function isValidRuleFileName(name: unknown): name is string {
-  return typeof name === "string" && RULE_FILE_NAME_RE.test(name);
-}
-
 function bootstrapManagedRules(pluginDir: string): void {
   managedRulesDir = getManagedRulesDir();
   fs.mkdirSync(managedRulesDir, { recursive: true });
@@ -527,14 +523,9 @@ function resolveActiveRuleFile(): string | undefined {
   const availableFiles = listManagedRuleFiles();
   if (availableFiles.length === 0) return undefined;
 
-  const configured = config.rules?.activeRuleFile;
-  if (configured && availableFiles.includes(configured)) return configured;
-
-  const defaultFile = availableFiles.includes("default.yaml")
+  return availableFiles.includes("default.yaml")
     ? "default.yaml"
     : availableFiles[0];
-  config.rules = { ...(config.rules || {}), activeRuleFile: defaultFile };
-  return defaultFile;
 }
 
 function reloadRuleEngineFromManagedRules(): void {
@@ -880,23 +871,6 @@ function updateConfig(partial: Partial<SecLawConfig>): {
     }
   }
 
-  // Validate rules changes
-  if (partial.rules) {
-    if (
-      partial.rules.activeRuleFile !== undefined &&
-      !isValidRuleFileName(partial.rules.activeRuleFile)
-    ) {
-      errors.push("rules.activeRuleFile must be a .yaml/.yml file name");
-    } else if (partial.rules.activeRuleFile !== undefined) {
-      const availableFiles = listManagedRuleFiles();
-      if (!availableFiles.includes(partial.rules.activeRuleFile!)) {
-        errors.push(
-          `rules.activeRuleFile not found in ${managedRulesDir || getManagedRulesDir()}`,
-        );
-      }
-    }
-  }
-
   if (errors.length > 0) return { ok: false, errors };
 
   // Capture pre-change state for enable toggle detection
@@ -911,7 +885,6 @@ function updateConfig(partial: Partial<SecLawConfig>): {
     logging: partial.logging
       ? { ...config.logging, ...partial.logging }
       : config.logging,
-    rules: partial.rules ? { ...(config.rules || {}), ...partial.rules } : config.rules,
   };
 
   const persistResult = persistConfigToOpenClaw(nextConfig);
@@ -925,10 +898,6 @@ function updateConfig(partial: Partial<SecLawConfig>): {
   config = nextConfig;
   if (partial.logging) {
     auditLog.setLoggingConfig(config.logging);
-  }
-
-  if (partial.rules?.activeRuleFile !== undefined) {
-    reloadRuleEngineFromManagedRules();
   }
 
   // Sync references that were broken by spread operator

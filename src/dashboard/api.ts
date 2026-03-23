@@ -131,8 +131,6 @@ export function handleApiRequest(
     handleParseRuleFile(req, res);
   } else if (path === "/api/rules/file/download" && method === "GET") {
     handleDownloadRuleFile(res, url, deps);
-  } else if (path === "/api/rules/active" && method === "PUT") {
-    handleSetActiveRuleFile(req, res, deps);
   } else if (path === "/api/rules/test" && method === "POST") {
     handleTestRule(req, res, deps);
   } else if (path === "/api/rules" && method === "GET") {
@@ -410,8 +408,7 @@ function handleGetRuleFiles(
   deps: DashboardDeps,
 ): void {
   const files = listRuleFiles(deps);
-  const activeRuleFile = deps.getConfig().rules?.activeRuleFile || "";
-  json(res, 200, { files, activeRuleFile });
+  json(res, 200, { files });
 }
 
 // ─── GET /api/rules/file?name=xxx.yaml ───
@@ -491,16 +488,6 @@ async function handleSaveRuleFile(
     fs.mkdirSync(rulesDir, { recursive: true });
     const filePath = path.join(rulesDir, fileName);
     saveRulesToYamlFile(filePath, parsed.rules as SigmaRule[]);
-
-    const activeRuleFile = deps.getConfig().rules?.activeRuleFile;
-    if (activeRuleFile === fileName) {
-      const update = deps.updateConfig({ rules: { activeRuleFile: fileName } });
-      if (!update.ok) {
-        json(res, 400, { ok: false, errors: update.errors });
-        return;
-      }
-    }
-
     json(res, 200, { ok: true });
   } catch (err: any) {
     json(res, 400, { error: `Failed to save rule file: ${err.message}` });
@@ -530,32 +517,6 @@ function handleDownloadRuleFile(
     res.end(content);
   } catch (err: any) {
     json(res, 404, { error: `Cannot read rule file: ${err.message}` });
-  }
-}
-
-// ─── PUT /api/rules/active ───
-
-async function handleSetActiveRuleFile(
-  req: http.IncomingMessage,
-  res: http.ServerResponse,
-  deps: DashboardDeps,
-): Promise<void> {
-  try {
-    const body = await readBody(req);
-    const parsed = JSON.parse(body);
-    const fileName = normalizeRuleFileName(parsed?.name);
-    if (!fileName) {
-      json(res, 400, { error: "Invalid rule file name" });
-      return;
-    }
-    const result = deps.updateConfig({ rules: { activeRuleFile: fileName } });
-    if (!result.ok) {
-      json(res, 400, { ok: false, errors: result.errors });
-      return;
-    }
-    json(res, 200, { ok: true });
-  } catch (err: any) {
-    json(res, 400, { error: `Failed to set active rule file: ${err.message}` });
   }
 }
 

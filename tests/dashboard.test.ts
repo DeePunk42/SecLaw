@@ -146,7 +146,6 @@ describe("Dashboard", () => {
       timeouts: { auditTimeoutMs: 10000, syncTimeoutPolicy: "fail_closed" as const },
       logging: { level: "info" as const, auditJsonl: false },
       dashboard: { enabled: false, port: 0, host: "127.0.0.1" },
-      rules: { activeRuleFile: "default.yaml" },
     };
 
     // Start dashboard on OS-assigned port
@@ -347,12 +346,11 @@ describe("Dashboard", () => {
     expect(typeof data.platform).toBe("string");
   });
 
-  it("GET /api/rules/files returns files and active file", async () => {
+  it("GET /api/rules/files returns file list", async () => {
     const res = await fetch(`${baseUrl}/api/rules/files`);
     expect(res.status).toBe(200);
-    const data = await res.json() as { files: string[]; activeRuleFile: string };
+    const data = await res.json() as { files: string[] };
     expect(data.files).toContain("default.yaml");
-    expect(data.activeRuleFile).toBe("default.yaml");
   });
 
   it("GET /api/rules/file returns parsed YAML rules", async () => {
@@ -385,7 +383,7 @@ describe("Dashboard", () => {
     expect(data.rules[0].id).toBe("TEST-PARSE-001");
   });
 
-  it("PUT /api/rules/file saves YAML, can download, and activate file", async () => {
+  it("PUT /api/rules/file saves YAML and can download", async () => {
     const rules = [
       {
         id: "TEST-ACTIVE-001",
@@ -406,24 +404,9 @@ describe("Dashboard", () => {
     expect(saveRes.status).toBe(200);
     expect(await saveRes.json()).toEqual({ ok: true });
 
-    const activateRes = await fetch(`${baseUrl}/api/rules/active`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "custom.yaml" }),
-    });
-    expect(activateRes.status).toBe(200);
-    expect(await activateRes.json()).toEqual({ ok: true });
-
     const filesRes = await fetch(`${baseUrl}/api/rules/files`);
-    const filesData = await filesRes.json() as { files: string[]; activeRuleFile: string };
+    const filesData = await filesRes.json() as { files: string[] };
     expect(filesData.files).toContain("custom.yaml");
-    expect(filesData.activeRuleFile).toBe("custom.yaml");
-
-    const runtimeRulesRes = await fetch(`${baseUrl}/api/rules`);
-    const runtimeData = await runtimeRulesRes.json() as { rules: Array<{ id: string }>; platform: string };
-    // Custom rules + platform-specific rules are loaded together
-    expect(runtimeData.rules.length).toBeGreaterThanOrEqual(1);
-    expect(runtimeData.rules.some(r => r.id === "TEST-ACTIVE-001")).toBe(true);
 
     const downloadRes = await fetch(`${baseUrl}/api/rules/file/download?name=custom.yaml`);
     expect(downloadRes.status).toBe(200);

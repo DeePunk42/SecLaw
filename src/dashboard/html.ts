@@ -1493,7 +1493,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     allRules: [],
     platform: '',
     files: [],
-    activeFile: '',
     currentFile: '',
     tierFilter: '',
     selectedRuleId: null,
@@ -1579,19 +1578,15 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       .then(function(r) { return r.json(); })
       .then(function(data) {
         rulesState.files = Array.isArray(data.files) ? data.files : [];
-        rulesState.activeFile = data.activeRuleFile || '';
         rulesFileSelect.innerHTML = '';
         rulesState.files.forEach(function(fileName) {
           var opt = document.createElement('option');
           opt.value = fileName;
-          opt.textContent = fileName + (fileName === rulesState.activeFile ? ' (active)' : '');
+          opt.textContent = fileName;
           rulesFileSelect.appendChild(opt);
         });
         if (rulesState.currentFile && rulesState.files.indexOf(rulesState.currentFile) >= 0) {
           rulesFileSelect.value = rulesState.currentFile;
-        } else if (rulesState.activeFile) {
-          rulesState.currentFile = rulesState.activeFile;
-          rulesFileSelect.value = rulesState.activeFile;
         } else if (rulesState.files.length > 0) {
           rulesState.currentFile = rulesState.files[0];
           rulesFileSelect.value = rulesState.files[0];
@@ -1812,7 +1807,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
   // ─── File Operations ───
   btnRulesDownload.addEventListener('click', function() {
-    var file = rulesState.currentFile || rulesState.activeFile;
+    var file = rulesState.currentFile;
     if (!file) { showToast('No file selected', 'error'); return; }
     window.location.href = '/api/rules/file/download?name=' + encodeURIComponent(file);
   });
@@ -1847,7 +1842,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   });
 
   btnRulesSave.addEventListener('click', function() {
-    var targetFile = rulesState.currentFile || rulesState.activeFile;
+    var targetFile = rulesState.currentFile;
     if (!targetFile || !rulesState.dirty) return;
     fetch('/api/rules/file?name=' + encodeURIComponent(targetFile), {
       method: 'PUT',
