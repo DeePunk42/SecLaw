@@ -338,12 +338,13 @@ describe("Dashboard", () => {
     expect(data[0].tier).toBe("RED");
   });
 
-  it("GET /api/rules returns rule list", async () => {
+  it("GET /api/rules returns rules and platform", async () => {
     const res = await fetch(`${baseUrl}/api/rules`);
     expect(res.status).toBe(200);
-    const data = await res.json() as any[];
-    expect(Array.isArray(data)).toBe(true);
-    expect(data.length).toBeGreaterThan(0);
+    const data = await res.json() as { rules: any[]; platform: string };
+    expect(Array.isArray(data.rules)).toBe(true);
+    expect(data.rules.length).toBeGreaterThan(0);
+    expect(typeof data.platform).toBe("string");
   });
 
   it("GET /api/rules/files returns files and active file", async () => {
@@ -419,10 +420,10 @@ describe("Dashboard", () => {
     expect(filesData.activeRuleFile).toBe("custom.yaml");
 
     const runtimeRulesRes = await fetch(`${baseUrl}/api/rules`);
-    const runtimeRules = await runtimeRulesRes.json() as Array<{ id: string }>;
+    const runtimeData = await runtimeRulesRes.json() as { rules: Array<{ id: string }>; platform: string };
     // Custom rules + platform-specific rules are loaded together
-    expect(runtimeRules.length).toBeGreaterThanOrEqual(1);
-    expect(runtimeRules.some(r => r.id === "TEST-ACTIVE-001")).toBe(true);
+    expect(runtimeData.rules.length).toBeGreaterThanOrEqual(1);
+    expect(runtimeData.rules.some(r => r.id === "TEST-ACTIVE-001")).toBe(true);
 
     const downloadRes = await fetch(`${baseUrl}/api/rules/file/download?name=custom.yaml`);
     expect(downloadRes.status).toBe(200);

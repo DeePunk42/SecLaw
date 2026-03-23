@@ -60,6 +60,7 @@ export interface CompiledRule {
   priority: number;
   reason?: string;
   tags?: string[];
+  detection?: DetectionBlock;
   matcher: (ctx: MatchContext) => boolean;
 }
 

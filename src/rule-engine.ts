@@ -155,6 +155,7 @@ export class RuleEngine {
       priority: rule.priority,
       reason: rule.reason,
       tags: rule.tags,
+      detection: rule.detection,
       matcher: compileDetection(rule.detection, this.fieldRegistry, this.lists),
     }));
   }

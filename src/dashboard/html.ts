@@ -343,44 +343,90 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 .harden-result-item .rollback { font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px; }
 
 /* ─── Rules Tab ─── */
-.rules-panel {
-  background: var(--bg-card); border-radius: 8px; padding: 16px 20px;
-}
 .rules-toolbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
 }
 .rules-toolbar select, .rules-toolbar button {
   padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-ui);
 }
+.rules-toolbar select { font-family: var(--font-mono); max-width: 180px; }
 .rules-toolbar button { cursor: pointer; }
 .rules-toolbar button:hover { background: var(--border); }
 .rules-toolbar button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
 .rules-toolbar button.primary:hover { opacity: 0.9; }
-.rules-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
-.rules-list { display: flex; flex-direction: column; gap: 10px; }
-.rule-item {
-  border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: var(--bg-input);
+.rules-toolbar button:disabled { opacity: 0.5; cursor: default; }
+.rules-toolbar .count { color: var(--text-dim); font-size: 12px; }
+.rules-container { display: flex; gap: 0; height: calc(100vh - 280px); }
+.rules-list-panel {
+  flex: 0 0 60%; overflow-y: auto; padding-right: 12px; border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
 }
-.rule-item-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;
+.rules-detail-panel {
+  flex: 0 0 40%; overflow-y: auto; padding-left: 16px;
+  position: sticky; top: 0; align-self: flex-start; max-height: calc(100vh - 280px);
 }
-.rule-item-title { font-size: 12px; font-weight: 600; color: var(--blue); }
-.rule-item-remove {
-  padding: 4px 8px; font-size: 11px; border: 1px solid rgba(239,68,68,0.5);
-  color: var(--red); background: rgba(239,68,68,0.08); border-radius: 4px; cursor: pointer;
+.rule-card {
+  background: var(--bg-card); border-radius: 6px; padding: 10px 14px;
+  border-left: 3px solid var(--border); cursor: pointer; font-size: 13px;
 }
-.rule-item-remove:hover { background: rgba(239,68,68,0.15); }
-.rule-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+.rule-card:hover { background: rgba(59,130,246,0.04); }
+.rule-card.selected { outline: 1px solid var(--blue); outline-offset: -1px; }
+.rule-card.tier-GREEN { border-left-color: var(--green); }
+.rule-card.tier-YELLOW { border-left-color: var(--yellow); }
+.rule-card.tier-RED { border-left-color: var(--red); }
+.rule-card-id { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+.rule-card-name { color: var(--text-dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rule-card-meta {
+  display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 11px; color: var(--text-dim);
 }
-.rule-field { display: flex; flex-direction: column; gap: 4px; }
-.rule-field label { font-size: 11px; color: var(--text-dim); }
-.rule-field input, .rule-field select, .rule-field textarea {
-  width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+.rule-card-meta .mono { font-family: var(--font-mono); }
+.badge-platform {
+  display: inline-block; padding: 1px 5px; border-radius: 3px; font-size: 9px;
+  font-weight: 600; text-transform: uppercase; font-family: var(--font-mono);
+  background: rgba(168,85,247,0.15); color: var(--purple);
+}
+.rule-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+  font-family: var(--font-mono); background: rgba(59,130,246,0.12); color: var(--blue);
+}
+.rule-detail-section { margin-bottom: 12px; }
+.rule-detail-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-dim);
+  margin-bottom: 4px; font-family: var(--font-mono); letter-spacing: 0.5px;
+}
+.rule-detail-value {
+  font-family: var(--font-mono); font-size: 12px; color: var(--text);
+  background: var(--bg-input); border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; word-break: break-all;
+}
+.test-panel {
+  background: var(--bg-card); border-radius: 6px; margin-bottom: 12px; overflow: hidden;
+}
+.test-panel-header {
+  padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+  user-select: none; color: var(--text-dim);
+}
+.test-panel-header:hover { color: var(--text); }
+.test-panel-body { padding: 0 14px 14px; }
+.test-panel-body.collapsed { display: none; }
+.test-panel-body input, .test-panel-body textarea {
+  width: 100%; padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-mono);
 }
-.rule-field.full { grid-column: 1 / -1; }
+.test-panel-body textarea { resize: vertical; }
+.test-panel-body button {
+  padding: 6px 14px; background: var(--blue); border: 1px solid var(--blue);
+  color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: var(--font-ui);
+}
+.test-panel-body button:hover { opacity: 0.9; }
+.test-result {
+  margin-top: 8px; padding: 8px 10px; border-radius: 4px; font-size: 12px;
+  font-family: var(--font-mono); border-left: 3px solid var(--border); background: var(--bg-input);
+}
+.test-result.tier-GREEN { border-left-color: var(--green); }
+.test-result.tier-YELLOW { border-left-color: var(--yellow); }
+.test-result.tier-RED { border-left-color: var(--red); }
+.test-result.error { border-left-color: var(--red); color: var(--red); }
 
 /* ─── Placeholder pages ─── */
 .placeholder {
@@ -619,17 +665,42 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 <!-- Tab 4: Rules -->
 <div id="tab-rules" class="tab-content">
-  <div class="rules-panel">
-    <div class="rules-toolbar">
-      <select id="rules-file-select"></select>
-      <button id="btn-rules-add">Add Rule</button>
-      <button id="btn-rules-upload">Upload YAML</button>
-      <button id="btn-rules-download">Download YAML</button>
-      <button id="btn-rules-save" class="primary">Save</button>
-      <input id="rules-upload-input" type="file" accept=".yaml,.yml" style="display:none">
+  <!-- Test Panel (collapsible) -->
+  <div class="test-panel">
+    <div class="test-panel-header" id="test-panel-toggle">&#x25B6; Rule Tester</div>
+    <div class="test-panel-body collapsed" id="test-panel-body">
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="test-tool-name" placeholder="Tool name (e.g. exec)" style="flex:0 0 180px">
+        <button id="btn-test-rule">Test</button>
+      </div>
+      <textarea id="test-params" placeholder='{"command":"rm -rf /"}' rows="3"></textarea>
+      <div id="test-result" class="test-result" style="display:none"></div>
     </div>
-    <div class="rules-meta" id="rules-meta">Loading rules...</div>
-    <div class="rules-list" id="rules-list"></div>
+  </div>
+
+  <!-- Toolbar: tier filter + file operations -->
+  <div class="rules-toolbar">
+    <div class="pill-group" id="pill-rules-tier">
+      <button class="pill-btn active" data-value="">ALL</button>
+      <button class="pill-btn" data-value="GREEN">GREEN</button>
+      <button class="pill-btn" data-value="YELLOW">YELLOW</button>
+      <button class="pill-btn" data-value="RED">RED</button>
+    </div>
+    <span class="count" id="rules-count">0 rules</span>
+    <span style="margin-left:auto"></span>
+    <select id="rules-file-select"></select>
+    <button id="btn-rules-upload">Upload</button>
+    <button id="btn-rules-download">Download</button>
+    <button id="btn-rules-save" class="primary" disabled>Save</button>
+    <input id="rules-upload-input" type="file" accept=".yaml,.yml" style="display:none">
+  </div>
+
+  <!-- Two-column layout -->
+  <div class="rules-container">
+    <div class="rules-list-panel" id="rules-list"></div>
+    <div class="rules-detail-panel" id="rules-detail">
+      <div class="detail-placeholder">Select a rule to view details</div>
+    </div>
   </div>
 </div>
 
@@ -1419,201 +1490,90 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   // ─── Rules Tab ───
   var rulesLoaded = false;
   var rulesState = {
+    allRules: [],
+    platform: '',
     files: [],
     activeFile: '',
     currentFile: '',
-    originalRules: [],
-    draftRules: [],
+    tierFilter: '',
+    selectedRuleId: null,
     dirty: false,
+    draftRules: [],
   };
 
+  var rulesListEl = document.getElementById('rules-list');
+  var rulesDetailEl = document.getElementById('rules-detail');
+  var rulesCountEl = document.getElementById('rules-count');
   var rulesFileSelect = document.getElementById('rules-file-select');
-  var rulesMeta = document.getElementById('rules-meta');
-  var rulesList = document.getElementById('rules-list');
-  var btnRulesAdd = document.getElementById('btn-rules-add');
   var btnRulesUpload = document.getElementById('btn-rules-upload');
   var btnRulesDownload = document.getElementById('btn-rules-download');
   var btnRulesSave = document.getElementById('btn-rules-save');
   var rulesUploadInput = document.getElementById('rules-upload-input');
 
-  function cloneJson(v) {
-    return JSON.parse(JSON.stringify(v));
-  }
-
-  function normalizeRule(rule, idx) {
-    return {
-      id: rule && rule.id ? String(rule.id) : ('RULE-' + (idx + 1)),
-      name: rule && rule.name ? String(rule.name) : 'New Rule',
-      toolMatch: Array.isArray(rule && rule.toolMatch) ? rule.toolMatch.map(function(t) { return String(t); }) : ['*'],
-      conditions: Array.isArray(rule && rule.conditions) ? rule.conditions : [],
-      tier: (rule && (rule.tier === 'GREEN' || rule.tier === 'YELLOW' || rule.tier === 'RED')) ? rule.tier : 'YELLOW',
-      reason: rule && rule.reason ? String(rule.reason) : '',
-      priority: Number.isFinite(rule && rule.priority) ? Number(rule.priority) : 1000,
-    };
-  }
-
-  function setRulesDirty(dirty) {
-    rulesState.dirty = dirty;
-    btnRulesSave.disabled = !dirty || !rulesState.currentFile;
-    updateRulesMeta();
-  }
-
-  function updateRulesMeta() {
-    var text = '';
-    if (!rulesState.currentFile) {
-      text = 'No rule file available. Put YAML files under ~/.openclaw/seclaw/rules.';
+  // ─── Test Panel Toggle ───
+  document.getElementById('test-panel-toggle').addEventListener('click', function() {
+    var body = document.getElementById('test-panel-body');
+    var header = document.getElementById('test-panel-toggle');
+    if (body.classList.contains('collapsed')) {
+      body.classList.remove('collapsed');
+      header.innerHTML = '&#x25BC; Rule Tester';
     } else {
-      text = 'Editing: ' + rulesState.currentFile + ' | Active: ' + (rulesState.activeFile || '(none)');
-      if (rulesState.dirty) text += ' | Unsaved changes';
+      body.classList.add('collapsed');
+      header.innerHTML = '&#x25B6; Rule Tester';
     }
-    rulesMeta.textContent = text;
-    btnRulesAdd.disabled = !rulesState.currentFile;
-    btnRulesUpload.disabled = !rulesState.currentFile;
-    btnRulesDownload.disabled = !rulesState.currentFile;
-  }
+  });
 
-  function renderRules() {
-    rulesList.innerHTML = '';
-    if (!rulesState.currentFile) {
-      updateRulesMeta();
-      return;
-    }
-    if (rulesState.draftRules.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'rule-item';
-      empty.textContent = 'No rules in this file. Click Add Rule to create one.';
-      rulesList.appendChild(empty);
-      updateRulesMeta();
-      return;
-    }
+  // ─── Tier Filter ───
+  document.getElementById('pill-rules-tier').addEventListener('click', function(e) {
+    var btn = e.target.closest('.pill-btn');
+    if (!btn) return;
+    this.querySelectorAll('.pill-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    rulesState.tierFilter = btn.dataset.value || '';
+    renderRulesList();
+  });
 
-    rulesState.draftRules.forEach(function(rule, idx) {
-      var item = document.createElement('div');
-      item.className = 'rule-item';
-
-      var header = document.createElement('div');
-      header.className = 'rule-item-header';
-      var title = document.createElement('div');
-      title.className = 'rule-item-title';
-      title.textContent = (idx + 1) + '. ' + rule.id;
-      var removeBtn = document.createElement('button');
-      removeBtn.className = 'rule-item-remove';
-      removeBtn.textContent = 'Remove';
-      removeBtn.addEventListener('click', function() {
-        rulesState.draftRules.splice(idx, 1);
-        setRulesDirty(true);
-        renderRules();
-      });
-      header.appendChild(title);
-      header.appendChild(removeBtn);
-      item.appendChild(header);
-
-      var grid = document.createElement('div');
-      grid.className = 'rule-grid';
-
-      function field(label, value, inputType, onChange, full) {
-        var container = document.createElement('div');
-        container.className = 'rule-field' + (full ? ' full' : '');
-        var lbl = document.createElement('label');
-        lbl.textContent = label;
-        var input = document.createElement(inputType === 'textarea' ? 'textarea' : 'input');
-        if (inputType !== 'textarea' && inputType !== 'text') input.type = inputType;
-        if (inputType === 'textarea') input.rows = 4;
-        input.value = value;
-        input.addEventListener('input', function() {
-          onChange(input.value, input);
+  // ─── detectionToYaml ───
+  function detectionToYaml(obj, indent) {
+    indent = indent || 0;
+    var pad = '  '.repeat(indent);
+    var lines = [];
+    for (var key in obj) {
+      if (!obj.hasOwnProperty(key)) continue;
+      var val = obj[key];
+      if (val === null || val === undefined) continue;
+      if (typeof val === 'object' && !Array.isArray(val)) {
+        lines.push(pad + key + ':');
+        lines.push(detectionToYaml(val, indent + 1));
+      } else if (Array.isArray(val)) {
+        lines.push(pad + key + ':');
+        val.forEach(function(item) {
+          if (typeof item === 'string') {
+            lines.push(pad + '  - ' + JSON.stringify(item));
+          } else {
+            lines.push(pad + '  - ' + JSON.stringify(item));
+          }
         });
-        container.appendChild(lbl);
-        container.appendChild(input);
-        return container;
-      }
-
-      grid.appendChild(field('id', rule.id, 'text', function(v) {
-        rule.id = v.trim();
-        setRulesDirty(true);
-      }));
-      grid.appendChild(field('name', rule.name, 'text', function(v) {
-        rule.name = v.trim();
-        setRulesDirty(true);
-      }));
-      grid.appendChild(field('toolMatch (comma-separated)', (rule.toolMatch || []).join(', '), 'text', function(v) {
-        rule.toolMatch = v.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
-        if (rule.toolMatch.length === 0) rule.toolMatch = ['*'];
-        setRulesDirty(true);
-      }));
-      grid.appendChild(field('priority', String(rule.priority), 'number', function(v) {
-        var p = parseInt(v, 10);
-        if (!Number.isFinite(p)) p = 1000;
-        rule.priority = p;
-        setRulesDirty(true);
-      }));
-
-      var tierField = document.createElement('div');
-      tierField.className = 'rule-field';
-      var tierLabel = document.createElement('label');
-      tierLabel.textContent = 'tier';
-      var tierSelect = document.createElement('select');
-      ['GREEN', 'YELLOW', 'RED'].forEach(function(t) {
-        var opt = document.createElement('option');
-        opt.value = t;
-        opt.textContent = t;
-        tierSelect.appendChild(opt);
-      });
-      tierSelect.value = rule.tier || 'YELLOW';
-      tierSelect.addEventListener('change', function() {
-        rule.tier = tierSelect.value;
-        setRulesDirty(true);
-      });
-      tierField.appendChild(tierLabel);
-      tierField.appendChild(tierSelect);
-      grid.appendChild(tierField);
-
-      grid.appendChild(field('reason', rule.reason || '', 'text', function(v) {
-        rule.reason = v;
-        setRulesDirty(true);
-      }));
-
-      grid.appendChild(field('conditions (JSON array)', JSON.stringify(rule.conditions || [], null, 2), 'textarea', function(v, input) {
-        try {
-          var parsed = JSON.parse(v || '[]');
-          if (!Array.isArray(parsed)) throw new Error('not array');
-          rule.conditions = parsed;
-          input.style.borderColor = 'var(--border)';
-          setRulesDirty(true);
-        } catch(e) {
-          input.style.borderColor = 'var(--red)';
-        }
-      }, true));
-
-      item.appendChild(grid);
-      rulesList.appendChild(item);
-    });
-
-    updateRulesMeta();
-  }
-
-  function loadRuleFile(fileName, skipDirtyPrompt) {
-    if (!fileName) return;
-    if (!skipDirtyPrompt && rulesState.dirty) {
-      var ok = window.confirm('You have unsaved rule changes. Discard them and switch file?');
-      if (!ok) {
-        rulesFileSelect.value = rulesState.currentFile;
-        return;
+      } else {
+        lines.push(pad + key + ': ' + JSON.stringify(val));
       }
     }
-    fetch('/api/rules/file?name=' + encodeURIComponent(fileName))
+    return lines.join('\\n');
+  }
+
+  // ─── Load All Rules (compiled, from rule engine) ───
+  function loadAllRules() {
+    fetch('/api/rules')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (data.error) { showToast(data.error, 'error'); return; }
-        rulesState.currentFile = fileName;
-        rulesState.originalRules = (data.rules || []).map(normalizeRule);
-        rulesState.draftRules = cloneJson(rulesState.originalRules);
-        setRulesDirty(false);
-        renderRules();
+        rulesState.allRules = data.rules || [];
+        rulesState.platform = data.platform || '';
+        renderRulesList();
       })
-      .catch(function() { showToast('Failed to load rule file', 'error'); });
+      .catch(function() { showToast('Failed to load rules', 'error'); });
   }
 
+  // ─── Load Rule Files (for file operations) ───
   function loadRuleFiles() {
     fetch('/api/rules/files')
       .then(function(r) { return r.json(); })
@@ -1627,89 +1587,237 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
           opt.textContent = fileName + (fileName === rulesState.activeFile ? ' (active)' : '');
           rulesFileSelect.appendChild(opt);
         });
-
-        var target = '';
-        if (rulesState.currentFile && rulesState.files.indexOf(rulesState.currentFile) >= 0) target = rulesState.currentFile;
-        else if (rulesState.activeFile && rulesState.files.indexOf(rulesState.activeFile) >= 0) target = rulesState.activeFile;
-        else if (rulesState.files.length > 0) target = rulesState.files[0];
-
-        if (!target) {
-          rulesState.currentFile = '';
-          rulesState.originalRules = [];
-          rulesState.draftRules = [];
-          setRulesDirty(false);
-          renderRules();
-          return;
+        if (rulesState.currentFile && rulesState.files.indexOf(rulesState.currentFile) >= 0) {
+          rulesFileSelect.value = rulesState.currentFile;
+        } else if (rulesState.activeFile) {
+          rulesState.currentFile = rulesState.activeFile;
+          rulesFileSelect.value = rulesState.activeFile;
+        } else if (rulesState.files.length > 0) {
+          rulesState.currentFile = rulesState.files[0];
+          rulesFileSelect.value = rulesState.files[0];
         }
-
-        rulesFileSelect.value = target;
-        loadRuleFile(target, true);
       })
-      .catch(function() { showToast('Failed to load rule files', 'error'); });
-  }
-
-  function saveRules() {
-    if (!rulesState.currentFile) return;
-    fetch('/api/rules/file?name=' + encodeURIComponent(rulesState.currentFile), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rules: rulesState.draftRules }),
-    })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.error || data.ok === false) {
-          showToast((data.error || (data.errors || []).join(', ') || 'Failed to save rules'), 'error');
-          return;
-        }
-        return fetch('/api/rules/active', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: rulesState.currentFile }),
-        })
-          .then(function(r) { return r.json(); })
-          .then(function(activeData) {
-            if (activeData.error || activeData.ok === false) {
-              showToast((activeData.error || (activeData.errors || []).join(', ') || 'Failed to set active rule file'), 'error');
-              return;
-            }
-            rulesState.activeFile = rulesState.currentFile;
-            rulesState.originalRules = cloneJson(rulesState.draftRules);
-            setRulesDirty(false);
-            showToast('Rules saved', 'success');
-            loadRuleFiles();
-          });
-      })
-      .catch(function() { showToast('Failed to save rules', 'error'); });
+      .catch(function() {});
   }
 
   rulesFileSelect.addEventListener('change', function() {
-    loadRuleFile(rulesFileSelect.value, false);
+    rulesState.currentFile = rulesFileSelect.value;
+    rulesState.dirty = false;
+    btnRulesSave.disabled = true;
   });
 
-  btnRulesAdd.addEventListener('click', function() {
-    if (!rulesState.currentFile) return;
-    rulesState.draftRules.push(normalizeRule({
-      id: 'RULE-' + Date.now(),
-      name: 'New Rule',
-      toolMatch: ['*'],
-      conditions: [],
-      tier: 'YELLOW',
-      priority: 1000,
-      reason: '',
-    }, rulesState.draftRules.length));
-    setRulesDirty(true);
-    renderRules();
+  // ─── Render Rule Card List ───
+  function renderRulesList() {
+    rulesListEl.innerHTML = '';
+    var filtered = rulesState.allRules.filter(function(r) {
+      if (rulesState.tierFilter && r.tier !== rulesState.tierFilter) return false;
+      return true;
+    });
+    rulesCountEl.textContent = filtered.length + ' rules';
+
+    if (filtered.length === 0) {
+      rulesListEl.innerHTML = '<div class="detail-placeholder">No rules match the current filter</div>';
+      return;
+    }
+
+    filtered.forEach(function(rule) {
+      var card = document.createElement('div');
+      var cls = 'rule-card tier-' + rule.tier;
+      if (rulesState.selectedRuleId === rule.id) cls += ' selected';
+      card.className = cls;
+      card.dataset.ruleId = rule.id;
+
+      var toolText = (rule.tool || []).join(', ');
+      var platformHtml = '';
+      if (rule.platform && rule.platform.length > 0) {
+        platformHtml = rule.platform.map(function(p) {
+          return '<span class="badge-platform">' + escapeHtml(p) + '</span>';
+        }).join(' ');
+      }
+
+      card.innerHTML =
+        '<div style="display:flex;align-items:center;gap:6px">' +
+          '<span class="rule-card-id">' + escapeHtml(rule.id) + '</span>' +
+          '<span class="badge ' + tierBadgeClass(rule.tier) + '">' + rule.tier + '</span>' +
+        '</div>' +
+        '<div class="rule-card-name">' + escapeHtml(rule.name) + '</div>' +
+        '<div class="rule-card-meta">' +
+          '<span class="mono">' + escapeHtml(toolText) + '</span>' +
+          '<span>P:' + rule.priority + '</span>' +
+          (platformHtml ? ' ' + platformHtml : '') +
+        '</div>';
+
+      card.addEventListener('click', function() {
+        var prev = rulesListEl.querySelector('.rule-card.selected');
+        if (prev) prev.classList.remove('selected');
+        card.classList.add('selected');
+        rulesState.selectedRuleId = rule.id;
+        showRuleDetail(rule.id);
+      });
+
+      rulesListEl.appendChild(card);
+    });
+
+    // Restore selection
+    if (rulesState.selectedRuleId) {
+      var selRule = rulesState.allRules.find(function(r) { return r.id === rulesState.selectedRuleId; });
+      if (selRule) showRuleDetail(selRule.id);
+      else {
+        rulesDetailEl.innerHTML = '<div class="detail-placeholder">Select a rule to view details</div>';
+      }
+    }
+  }
+
+  // ─── Show Rule Detail ───
+  function showRuleDetail(ruleId) {
+    var rule = rulesState.allRules.find(function(r) { return r.id === ruleId; });
+    if (!rule) {
+      rulesDetailEl.innerHTML = '<div class="detail-placeholder">Rule not found</div>';
+      return;
+    }
+
+    var html = '';
+
+    // Header
+    html += '<div style="margin-bottom:12px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<span style="font-family:var(--font-mono);font-size:14px;font-weight:600">' + escapeHtml(rule.id) + '</span>' +
+        '<span class="badge ' + tierBadgeClass(rule.tier) + '">' + rule.tier + '</span>' +
+      '</div>' +
+      '<div style="color:var(--text-dim);font-size:13px">' + escapeHtml(rule.name) + '</div>' +
+    '</div>';
+
+    // Tools
+    html += '<div class="rule-detail-section">' +
+      '<div class="rule-detail-label">Tools</div>' +
+      '<div class="rule-detail-value">' + escapeHtml((rule.tool || []).join(', ')) + '</div>' +
+    '</div>';
+
+    // Platform
+    if (rule.platform && rule.platform.length > 0) {
+      html += '<div class="rule-detail-section">' +
+        '<div class="rule-detail-label">Platform</div>' +
+        '<div>' + rule.platform.map(function(p) {
+          return '<span class="badge-platform">' + escapeHtml(p) + '</span>';
+        }).join(' ') + '</div>' +
+      '</div>';
+    }
+
+    // Priority
+    html += '<div class="rule-detail-section">' +
+      '<div class="rule-detail-label">Priority</div>' +
+      '<div class="rule-detail-value">' + rule.priority + '</div>' +
+    '</div>';
+
+    // Reason
+    if (rule.reason) {
+      html += '<div class="rule-detail-section">' +
+        '<div class="rule-detail-label">Reason</div>' +
+        '<div class="rule-detail-value">' + escapeHtml(rule.reason) + '</div>' +
+      '</div>';
+    }
+
+    // Tags
+    if (rule.tags && rule.tags.length > 0) {
+      html += '<div class="rule-detail-section">' +
+        '<div class="rule-detail-label">Tags</div>' +
+        '<div>' + rule.tags.map(function(t) {
+          return '<span class="rule-tag">' + escapeHtml(t) + '</span>';
+        }).join(' ') + '</div>' +
+      '</div>';
+    }
+
+    // Detection
+    if (rule.detection) {
+      html += '<div class="rule-detail-section">' +
+        '<div class="rule-detail-label">Detection</div>' +
+        '<pre class="rule-detail-value">' + escapeHtml(detectionToYaml(rule.detection)) + '</pre>' +
+      '</div>';
+    }
+
+    rulesDetailEl.innerHTML = html;
+  }
+
+  // ─── Rule Tester ───
+  document.getElementById('btn-test-rule').addEventListener('click', function() {
+    var toolName = document.getElementById('test-tool-name').value.trim();
+    var paramsStr = document.getElementById('test-params').value.trim();
+    var resultEl = document.getElementById('test-result');
+
+    if (!toolName) {
+      resultEl.style.display = 'block';
+      resultEl.className = 'test-result error';
+      resultEl.textContent = 'Please enter a tool name';
+      return;
+    }
+
+    var params;
+    try {
+      params = paramsStr ? JSON.parse(paramsStr) : {};
+    } catch(e) {
+      resultEl.style.display = 'block';
+      resultEl.className = 'test-result error';
+      resultEl.textContent = 'Invalid JSON params: ' + e.message;
+      return;
+    }
+
+    fetch('/api/rules/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolName: toolName, params: params }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        resultEl.style.display = 'block';
+        if (data.error) {
+          resultEl.className = 'test-result error';
+          resultEl.textContent = 'Error: ' + data.error;
+          return;
+        }
+        var tier = data.tier || 'YELLOW';
+        resultEl.className = 'test-result tier-' + tier;
+        var text = 'TIER: ' + tier;
+        if (data.ruleId) {
+          text += ' | Rule: ' + data.ruleId;
+        } else {
+          text += ' | No matching rule (default)';
+        }
+        if (data.reason) {
+          text += '\\n' + data.reason;
+        }
+        resultEl.textContent = text;
+
+        // Scroll to matched rule in list
+        if (data.ruleId) {
+          rulesState.selectedRuleId = data.ruleId;
+          // Clear tier filter to ensure rule is visible
+          rulesState.tierFilter = '';
+          document.getElementById('pill-rules-tier').querySelectorAll('.pill-btn').forEach(function(b) { b.classList.remove('active'); });
+          document.getElementById('pill-rules-tier').querySelector('[data-value=""]').classList.add('active');
+          renderRulesList();
+          var targetCard = rulesListEl.querySelector('[data-rule-id="' + data.ruleId + '"]');
+          if (targetCard) {
+            targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            targetCard.classList.add('selected');
+          }
+          showRuleDetail(data.ruleId);
+        }
+      })
+      .catch(function() {
+        resultEl.style.display = 'block';
+        resultEl.className = 'test-result error';
+        resultEl.textContent = 'Request failed';
+      });
   });
 
-  btnRulesSave.addEventListener('click', saveRules);
-
+  // ─── File Operations ───
   btnRulesDownload.addEventListener('click', function() {
-    if (!rulesState.currentFile) return;
-    window.location.href = '/api/rules/file/download?name=' + encodeURIComponent(rulesState.currentFile);
+    var file = rulesState.currentFile || rulesState.activeFile;
+    if (!file) { showToast('No file selected', 'error'); return; }
+    window.location.href = '/api/rules/file/download?name=' + encodeURIComponent(file);
   });
 
   btnRulesUpload.addEventListener('click', function() {
-    if (!rulesState.currentFile) return;
     rulesUploadInput.value = '';
     rulesUploadInput.click();
   });
@@ -1728,19 +1836,44 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.error) { showToast(data.error, 'error'); return; }
-          rulesState.draftRules = (data.rules || []).map(normalizeRule);
-          setRulesDirty(true);
-          renderRules();
-          showToast('YAML loaded (not saved yet)', 'success');
+          rulesState.draftRules = data.rules || [];
+          rulesState.dirty = true;
+          btnRulesSave.disabled = false;
+          showToast('YAML loaded (' + rulesState.draftRules.length + ' rules, not saved yet)', 'success');
         })
         .catch(function() { showToast('Failed to parse uploaded YAML', 'error'); });
     };
     reader.readAsText(file);
   });
 
+  btnRulesSave.addEventListener('click', function() {
+    var targetFile = rulesState.currentFile || rulesState.activeFile;
+    if (!targetFile || !rulesState.dirty) return;
+    fetch('/api/rules/file?name=' + encodeURIComponent(targetFile), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rules: rulesState.draftRules }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error || data.ok === false) {
+          showToast((data.error || 'Failed to save rules'), 'error');
+          return;
+        }
+        rulesState.dirty = false;
+        btnRulesSave.disabled = true;
+        showToast('Rules saved to ' + targetFile, 'success');
+        loadAllRules();
+        loadRuleFiles();
+      })
+      .catch(function() { showToast('Failed to save rules', 'error'); });
+  });
+
+  // ─── Init Rules Tab ───
   document.querySelector('[data-tab="rules"]').addEventListener('click', function() {
     if (!rulesLoaded) {
       rulesLoaded = true;
+      loadAllRules();
       loadRuleFiles();
     }
   });

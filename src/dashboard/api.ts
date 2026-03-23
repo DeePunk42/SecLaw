@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
-import type { SigmaRule } from "../config.js";
+import type { SigmaRule, IntentContext } from "../config.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
@@ -133,6 +133,8 @@ export function handleApiRequest(
     handleDownloadRuleFile(res, url, deps);
   } else if (path === "/api/rules/active" && method === "PUT") {
     handleSetActiveRuleFile(req, res, deps);
+  } else if (path === "/api/rules/test" && method === "POST") {
+    handleTestRule(req, res, deps);
   } else if (path === "/api/rules" && method === "GET") {
     handleGetRules(res, deps);
   } else if (path === "/api/models" && method === "GET") {
@@ -348,7 +350,57 @@ function handleGetRules(
   deps: DashboardDeps,
 ): void {
   const rules = deps.getRuleEngine().getRules();
-  json(res, 200, rules);
+  const platform = deps.getRuleEngine().getPlatform();
+  json(res, 200, { rules, platform });
+}
+
+// ─── POST /api/rules/test ───
+
+async function handleTestRule(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): Promise<void> {
+  try {
+    const body = await readBody(req);
+    const parsed = JSON.parse(body);
+    const toolName = typeof parsed.toolName === "string" ? parsed.toolName.trim() : "";
+    if (!toolName) {
+      json(res, 400, { error: "toolName is required" });
+      return;
+    }
+
+    let params: Record<string, unknown>;
+    if (typeof parsed.params === "string") {
+      try {
+        params = JSON.parse(parsed.params);
+      } catch {
+        json(res, 400, { error: "params must be valid JSON" });
+        return;
+      }
+    } else if (parsed.params && typeof parsed.params === "object") {
+      params = parsed.params as Record<string, unknown>;
+    } else {
+      params = {};
+    }
+
+    const intentCtx: IntentContext = {
+      userGoal: "rule test",
+      stepIndex: 0,
+      turnNumber: 0,
+      recentToolCalls: [],
+    };
+
+    const result = deps.getRuleEngine().classify(
+      toolName,
+      params,
+      intentCtx,
+      deps.getWorkspacePath(),
+    );
+    json(res, 200, result);
+  } catch {
+    json(res, 400, { error: "Invalid JSON body" });
+  }
 }
 
 // ─── GET /api/rules/files ───
