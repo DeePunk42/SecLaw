@@ -1,58 +1,85 @@
 /**
- * Rule engine: loads YAML rules and matches tool calls against them.
- * Rules are evaluated in priority-descending order; first match wins.
- * Returns a tier (GREEN, YELLOW, or RED) — default is YELLOW when no rule matches.
+ * Sigma-style rule engine.
+ *
+ * Loads YAML rules, compiles detections, indexes by tool/platform,
+ * and classifies tool calls. External API is compatible with the
+ * previous engine: classify(toolName, params, intentCtx, workspacePath).
  */
 
-import * as fs from "fs";
-import * as path from "path";
-import { parse as parseYaml } from "yaml";
-import type { Rule, RuleCondition, RuleResult, IntentContext } from "./config.js";
-import { analyzeCommand, commandMatchesPattern, commandStartsWith } from "./patterns/command-patterns.js";
-import { isPathInWorkspace, extractPathsFromCommand, isSensitiveWritePath } from "./patterns/path-patterns.js";
-import { analyzeURL } from "./patterns/url-patterns.js";
+import * as os from "os";
+import type {
+  SigmaRule,
+  CompiledRule,
+  MatchContext,
+  Platform,
+  RuleResult,
+  IntentContext,
+  PreClassifyHook,
+} from "./config.js";
+import { FieldRegistry, createDefaultFieldRegistry } from "./field-registry.js";
+import { compileDetection } from "./detection-compiler.js";
+import { resolveRuleFile, mergeResolvedRules } from "./rule-resolver.js";
+import { RuleIndex } from "./rule-index.js";
+import { decomposeCommand } from "./patterns/command-patterns.js";
+import { decomposePath, isPathInWorkspace, extractPathsFromCommand } from "./patterns/path-patterns.js";
+import { decomposeURL } from "./patterns/url-patterns.js";
 
 export class RuleEngine {
-  private rules: Rule[] = [];
+  private index: RuleIndex = new RuleIndex([]);
+  private fieldRegistry: FieldRegistry;
+  private lists = new Map<string, string[]>();
+  private platform: Platform;
+  private preClassifyHooks: PreClassifyHook[] = [];
 
-  constructor() {}
+  constructor(platform?: Platform) {
+    this.platform = platform ?? detectPlatform();
+    this.fieldRegistry = createDefaultFieldRegistry();
+  }
 
   /**
-   * Load rules from multiple sources, merge and sort by priority descending.
+   * Load rules from multiple sources, merge and compile.
    */
   loadRules(options: {
     defaultRulesPath?: string;
     workspaceRulesPath?: string;
-    extraRules?: Rule[];
+    extraRulePaths?: string[];
+    extraRules?: SigmaRule[];
   }): void {
-    const allRules: Rule[] = [];
+    const results: Array<{ rules: SigmaRule[]; lists: Map<string, string[]> }> = [];
 
-    // 1. Built-in defaults
     if (options.defaultRulesPath) {
-      const defaults = this.loadYamlRules(options.defaultRulesPath);
-      allRules.push(...defaults);
+      results.push(resolveRuleFile(options.defaultRulesPath));
     }
 
-    // 2. Workspace overrides
+    if (options.extraRulePaths) {
+      for (const p of options.extraRulePaths) {
+        results.push(resolveRuleFile(p));
+      }
+    }
+
     if (options.workspaceRulesPath) {
-      const workspace = this.loadYamlRules(options.workspaceRulesPath);
-      allRules.push(...workspace);
+      results.push(resolveRuleFile(options.workspaceRulesPath));
     }
 
-    // 3. Inline extra rules from config
+    const merged = results.length > 0
+      ? mergeResolvedRules(...results)
+      : { rules: [], lists: new Map<string, string[]>() };
+
+    // Add inline extra rules
     if (options.extraRules) {
-      allRules.push(...options.extraRules);
+      merged.rules.push(...options.extraRules);
     }
 
-    // Sort by priority descending (highest first)
-    this.rules = allRules.sort((a, b) => b.priority - a.priority);
+    this.lists = merged.lists;
+    this.index = new RuleIndex(this.compileRules(merged.rules));
   }
 
   /**
    * Load rules directly (for testing or programmatic use).
    */
-  setRules(rules: Rule[]): void {
-    this.rules = [...rules].sort((a, b) => b.priority - a.priority);
+  setRules(rules: SigmaRule[], lists?: Map<string, string[]>): void {
+    this.lists = lists ?? new Map();
+    this.index = new RuleIndex(this.compileRules(rules));
   }
 
   /**
@@ -62,12 +89,14 @@ export class RuleEngine {
   classify(
     toolName: string,
     params: Record<string, unknown>,
-    intentContext: IntentContext,
+    _intentContext: IntentContext,
     workspacePath?: string,
   ): RuleResult {
-    for (const rule of this.rules) {
-      if (!this.toolMatches(toolName, rule.toolMatch)) continue;
-      if (this.allConditionsMatch(rule.conditions, toolName, params, workspacePath)) {
+    const ctx = this.buildContext(toolName, params, workspacePath);
+    const candidates = this.index.getCandidates(toolName, this.platform);
+
+    for (const rule of candidates) {
+      if (rule.matcher(ctx)) {
         return {
           tier: rule.tier,
           ruleId: rule.id,
@@ -76,153 +105,122 @@ export class RuleEngine {
       }
     }
 
-    // No rule matched — default YELLOW (allow + async audit)
     return { tier: "YELLOW" };
+  }
+
+  /**
+   * Register a pre-classify hook.
+   */
+  registerPreClassifyHook(hook: PreClassifyHook): void {
+    this.preClassifyHooks.push(hook);
   }
 
   /**
    * Get all loaded rules (for debugging/inspection).
    */
-  getRules(): readonly Rule[] {
-    return this.rules;
+  getRules(): readonly CompiledRule[] {
+    return this.index.getAllRules();
   }
 
-  // ─── Private helpers ───
-
-  private loadYamlRules(filePath: string): Rule[] {
-    try {
-      const absPath = path.resolve(filePath);
-      if (!fs.existsSync(absPath)) return [];
-      const content = fs.readFileSync(absPath, "utf-8");
-      const parsed = parseYaml(content);
-      if (!Array.isArray(parsed)) return [];
-      return parsed as Rule[];
-    } catch {
-      return [];
-    }
+  /**
+   * Get the field registry (for extension point registration).
+   */
+  getFieldRegistry(): FieldRegistry {
+    return this.fieldRegistry;
   }
 
-  private toolMatches(toolName: string, toolMatch: string[]): boolean {
-    return toolMatch.includes(toolName) || toolMatch.includes("*");
+  /**
+   * Get the current platform.
+   */
+  getPlatform(): Platform {
+    return this.platform;
   }
 
-  private allConditionsMatch(
-    conditions: RuleCondition[],
+  /**
+   * Set the platform (for testing).
+   */
+  setPlatform(platform: Platform): void {
+    this.platform = platform;
+  }
+
+  // ─── Private ───
+
+  private compileRules(sigmaRules: SigmaRule[]): CompiledRule[] {
+    return sigmaRules.map((rule): CompiledRule => ({
+      id: rule.id,
+      name: rule.name,
+      tool: rule.tool,
+      platform: rule.platform,
+      tier: rule.tier,
+      priority: rule.priority,
+      reason: rule.reason,
+      tags: rule.tags,
+      matcher: compileDetection(rule.detection, this.fieldRegistry, this.lists),
+    }));
+  }
+
+  private buildContext(
     toolName: string,
     params: Record<string, unknown>,
     workspacePath?: string,
-  ): boolean {
-    // Empty conditions array → unconditional match (tool-level rules)
-    if (conditions.length === 0) return true;
-    return conditions.every((cond) =>
-      this.conditionMatches(cond, toolName, params, workspacePath),
-    );
-  }
+  ): MatchContext {
+    const command = typeof params.command === "string" ? params.command : undefined;
+    const filePath = typeof params.path === "string" ? params.path : undefined;
+    const url = typeof params.url === "string" ? params.url : undefined;
 
-  private conditionMatches(
-    condition: RuleCondition,
-    toolName: string,
-    params: Record<string, unknown>,
-    workspacePath?: string,
-  ): boolean {
-    const command = typeof params.command === "string" ? params.command : "";
-    const filePath = typeof params.path === "string" ? params.path : "";
+    const ctx: MatchContext = {
+      tool: toolName,
+      params,
+      platform: this.platform,
+      workspacePath,
+      ext: {},
 
-    switch (condition.type) {
-      case "command_matches":
-        return condition.pattern
-          ? commandMatchesPattern(command, condition.pattern)
-          : false;
+      // Raw param shortcuts
+      command,
+      path: filePath,
+      url,
+      action: typeof params.action === "string" ? params.action : undefined,
+      host: typeof params.host === "string" ? params.host : undefined,
+      elevated: typeof params.elevated === "boolean" ? params.elevated : undefined,
+      content: typeof params.content === "string" ? params.content : undefined,
+      query: typeof params.query === "string" ? params.query : undefined,
+    };
 
-      case "command_starts_with":
-        return condition.prefix
-          ? commandStartsWith(command, condition.prefix)
-          : false;
-
-      case "pipe_to_shell": {
-        const analysis = analyzeCommand(command);
-        return condition.value === true
-          ? analysis.pipesToShell
-          : !analysis.pipesToShell;
-      }
-
-      case "has_dynamic_expansion": {
-        const cmdAnalysis = analyzeCommand(command);
-        return condition.value === true
-          ? cmdAnalysis.hasDynamicExpansion
-          : !cmdAnalysis.hasDynamicExpansion;
-      }
-
-      case "is_dangerous_command": {
-        const cmdAnalysis = analyzeCommand(command);
-        return condition.value === true
-          ? cmdAnalysis.isDangerousCommand
-          : !cmdAnalysis.isDangerousCommand;
-      }
-
-      case "reads_sensitive_files": {
-        const cmdAnalysis = analyzeCommand(command);
-        return condition.value === true
-          ? cmdAnalysis.readsSensitiveFiles
-          : !cmdAnalysis.readsSensitiveFiles;
-      }
-
-      case "is_sensitive_write_path": {
-        return condition.value === true
-          ? isSensitiveWritePath(filePath)
-          : !isSensitiveWritePath(filePath);
-      }
-
-      case "path_in_workspace": {
-        // For exec/bash, extract paths from command and check all are in workspace
-        if (toolName === "exec" || toolName === "bash") {
-          const paths = extractPathsFromCommand(command);
-          if (paths.length === 0) return condition.value === true;
-          const allInWorkspace = paths.every((p) =>
-            isPathInWorkspace(p, workspacePath),
-          );
-          return condition.value === true
-            ? allInWorkspace
-            : !allInWorkspace;
-        }
-        // For fs_write/fs_delete/fs_move, check the path param
-        return condition.value === true
-          ? isPathInWorkspace(filePath, workspacePath)
-          : !isPathInWorkspace(filePath, workspacePath);
-      }
-
-      case "path_matches":
-        return condition.pattern
-          ? commandMatchesPattern(filePath || command, condition.pattern)
-          : false;
-
-      case "url_is_internal": {
-        const url = typeof params.url === "string" ? params.url : "";
-        const urlAnalysis = analyzeURL(url);
-        return condition.value === true
-          ? urlAnalysis.isInternal
-          : !urlAnalysis.isInternal;
-      }
-
-      case "url_is_metadata": {
-        const url = typeof params.url === "string" ? params.url : "";
-        const urlAnalysis = analyzeURL(url);
-        return condition.value === true
-          ? urlAnalysis.isMetadataEndpoint
-          : !urlAnalysis.isMetadataEndpoint;
-      }
-
-      case "url_is_credential": {
-        const url = typeof params.url === "string" ? params.url : "";
-        const urlAnalysis = analyzeURL(url);
-        return condition.value === true
-          ? urlAnalysis.isCredentialEndpoint
-          : !urlAnalysis.isCredentialEndpoint;
-      }
-
-      default:
-        // Unknown condition type — fail-safe: condition doesn't match
-        return false;
+    // Lazy decomposition: only compute when the tool has relevant params
+    if (command !== undefined) {
+      ctx.cmd = decomposeCommand(command, this.platform);
     }
+
+    if (filePath !== undefined) {
+      ctx.file = decomposePath(filePath, workspacePath);
+    } else if (command !== undefined && toolName === "exec") {
+      // For exec tool, also check paths in command for file.inWorkspace
+      const paths = extractPathsFromCommand(command);
+      if (paths.length > 0) {
+        const allInWorkspace = paths.every((p) => isPathInWorkspace(p, workspacePath));
+        ctx.file = {
+          dir: "",
+          name: "",
+          ext: "",
+          inWorkspace: allInWorkspace,
+        };
+      }
+    }
+
+    if (url !== undefined) {
+      ctx.urlParsed = decomposeURL(url);
+    }
+
+    return ctx;
   }
+}
+
+/**
+ * Detect the current platform.
+ */
+export function detectPlatform(): Platform {
+  const p = os.platform();
+  if (p === "darwin") return "macos";
+  if (p === "win32") return "windows";
+  return "linux";
 }

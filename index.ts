@@ -510,6 +510,15 @@ function bootstrapManagedRules(pluginDir: string): void {
     const targetPath = path.join(managedRulesDir, fileName);
     if (!fs.existsSync(targetPath)) {
       fs.copyFileSync(sourcePath, targetPath);
+    } else {
+      // Force-update if the built-in file is newer (e.g., format migration)
+      try {
+        const sourceStat = fs.statSync(sourcePath);
+        const targetStat = fs.statSync(targetPath);
+        if (sourceStat.mtimeMs > targetStat.mtimeMs) {
+          fs.copyFileSync(sourcePath, targetPath);
+        }
+      } catch { /* ignore stat errors */ }
     }
   });
 }
@@ -535,7 +544,24 @@ function reloadRuleEngineFromManagedRules(): void {
     return;
   }
   const activePath = path.join(managedRulesDir, activeFile);
-  ruleEngine.loadRules({ defaultRulesPath: activePath });
+
+  // Auto-load platform-specific rule files alongside the active file
+  const platform = ruleEngine.getPlatform();
+  const extraPaths: string[] = [];
+  const platformFiles = platform === "windows"
+    ? ["windows.yaml"]
+    : ["unix.yaml"];
+  for (const pf of platformFiles) {
+    const pfPath = path.join(managedRulesDir, pf);
+    if (fs.existsSync(pfPath) && pf !== activeFile) {
+      extraPaths.push(pfPath);
+    }
+  }
+
+  ruleEngine.loadRules({
+    defaultRulesPath: activePath,
+    extraRulePaths: extraPaths,
+  });
 }
 
 export function init(ctx: PluginInitContext): void {

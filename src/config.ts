@@ -22,33 +22,105 @@ export interface IntentContext {
   }>;
 }
 
-export interface RuleCondition {
-  type:
-    | "command_matches"
-    | "command_starts_with"
-    | "pipe_to_shell"
-    | "path_in_workspace"
-    | "path_matches"
-    | "url_is_internal"
-    | "has_dynamic_expansion"
-    | "is_dangerous_command"
-    | "reads_sensitive_files"
-    | "is_sensitive_write_path"
-    | "url_is_metadata"
-    | "url_is_credential";
-  pattern?: string;
-  prefix?: string;
-  value?: boolean;
-}
+// ─── Platform ───
 
-export interface Rule {
+export type Platform = "linux" | "macos" | "windows";
+
+// ─── Sigma-Style Rule Types ───
+
+/** Raw YAML rule before compilation */
+export interface SigmaRule {
   id: string;
   name: string;
-  toolMatch: string[];
-  conditions: RuleCondition[];
+  tool: string[];
+  platform?: Platform[];
   tier: Tier;
-  reason?: string;
   priority: number;
+  reason?: string;
+  tags?: string[];
+  detection: DetectionBlock;
+}
+
+/** Detection block: named selections + condition expression */
+export interface DetectionBlock {
+  [selectionName: string]: SelectionFields | string;
+  condition: string;
+}
+
+/** A selection: field|modifier → value mappings (AND within one selection) */
+export type SelectionFields = Record<string, unknown>;
+
+/** Compiled rule ready for matching */
+export interface CompiledRule {
+  id: string;
+  name: string;
+  tool: string[];
+  platform?: Platform[];
+  tier: Tier;
+  priority: number;
+  reason?: string;
+  tags?: string[];
+  matcher: (ctx: MatchContext) => boolean;
+}
+
+/** Command decomposition (exec tool only) */
+export interface CommandDecomposition {
+  primary: string | null;
+  all: string[];
+  segments: string[];
+}
+
+/** File path decomposition */
+export interface FileDecomposition {
+  dir: string;
+  name: string;
+  ext: string;
+  inWorkspace: boolean;
+}
+
+/** URL decomposition */
+export interface URLDecomposition {
+  host: string;
+  port: number | null;
+  path: string;
+  scheme: string;
+  isPrivateIP: boolean;
+}
+
+/** Context passed to rule matchers */
+export interface MatchContext {
+  tool: string;
+  params: Record<string, unknown>;
+  platform: Platform;
+  workspacePath?: string;
+
+  // Raw param shortcuts
+  command?: string;
+  path?: string;
+  url?: string;
+  action?: string;
+  host?: string;
+  elevated?: boolean;
+  content?: string;
+  query?: string;
+
+  // Decomposition caches (lazily computed)
+  cmd?: CommandDecomposition;
+  file?: FileDecomposition;
+  urlParsed?: URLDecomposition;
+
+  // Extension point for future features
+  ext: Record<string, unknown>;
+}
+
+/** Pre-classify hook for future extensions (e.g., script detection) */
+export type PreClassifyHook = (ctx: MatchContext) => void | Promise<void>;
+
+/** YAML rule file structure with lists, macros, and rules */
+export interface RuleFile {
+  lists?: Record<string, string[]>;
+  macros?: Record<string, { detection: DetectionBlock }>;
+  rules: SigmaRule[];
 }
 
 export interface RuleResult {

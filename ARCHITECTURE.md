@@ -59,70 +59,139 @@ index.ts                    Plugin entry point, hook registration, provider reso
                             assets are found. bootstrapManagedRules() also has a
                             fallback to check ../rules/ if pluginDir/rules/ is missing.
 src/
-  config.ts                 Type definitions, configuration schema, defaults
-  rule-engine.ts            Unified rule engine (YAML rules → GREEN/YELLOW/RED)
+  config.ts                 Type definitions (SigmaRule, CompiledRule, MatchContext, Platform, etc.)
+  rule-engine.ts            Sigma-style rule engine: loads/compiles/indexes rules, classify()
+  detection-compiler.ts     Compiles detection blocks: selection matching, field modifiers,
+                            condition expressions (AND/OR/NOT, 1 of sel_*, all of sel_*)
+  rule-resolver.ts          YAML parsing → list/macro expansion → SigmaRule[]
+  rule-index.ts             Tool + platform indexing for fast candidate selection
+  field-registry.ts         FieldRegistry: resolves dotted field paths (cmd.primary, url.host, etc.)
   llm-auditor.ts            LLM audit: prompt construction, API call, response parsing
   async-audit-queue.ts      Background audit queue with deduplication
   audit-log.ts              Console + JSONL logging, log level filtering, subscriber pattern
   intent-context.ts         Intent accumulator (userGoal, message source, tool calls)
   session-state.ts          Per-session state manager (danger flags, audit cache, override state)
   interrupt.ts              Danger flag management, interrupt mechanism
-  patterns/                 Command/URL/path analysis utilities
+  patterns/
+    command-patterns.ts     splitCommandChain() + extractPrimaryCommand() + decomposeCommand()
+    path-patterns.ts        decomposePath() + isPathInWorkspace()
+    url-patterns.ts         decomposeURL() + isPrivateIP()
   dashboard/
     server.ts               HTTP server lifecycle (start/stop, routing)
     api.ts                  REST API + SSE endpoint handlers
     html.ts                 Embedded SPA frontend (dark theme, 4 tabs)
     sender-labels.ts        Sender label registry (scan JSONL logs, persist to JSON)
 rules/
-  default.yaml              28 built-in security rules
+  default.yaml              Cross-platform rules (tools, URLs, file writes)
+  unix.yaml                 Linux/macOS rules (exec commands, shell patterns)
+  windows.yaml              Windows rules (cmd.exe, PowerShell patterns)
 ```
 
-## Rule Engine
+## Rule Engine (Sigma-Style)
 
-### How It Works
+### Design Principles
 
-1. Rules are loaded from YAML files and sorted by priority (descending)
-2. For each tool call, rules are evaluated in priority order
-3. First matching rule wins — returns `{ tier, ruleId, reason }`
-4. If no rule matches, default is `{ tier: "YELLOW" }`
+- **Engine does field extraction and pattern matching; security judgments live in rules**
+- **`tool` is the primary routing field** (OpenClaw tool names: exec, write, web_fetch, etc.)
+- **`command` refers only to exec tool's shell command content**
+- Computed fields provide "raw decomposition" and "RFC-level facts" only
+- Two exceptions kept as computed fields: `url.isPrivateIP` (RFC 1918 fact) and `file.inWorkspace` (runtime-dependent)
 
-### Rule Structure
+### Compilation Pipeline
+
+```
+YAML Files (default.yaml + unix.yaml / windows.yaml)
+  ↓ RuleResolver
+  ↓   ├ Parse lists: → Map<string, string[]>
+  ↓   ├ Expand $list:name in tool arrays
+  ↓   └ Normalize SigmaRule[]
+  ↓
+SigmaRule[]
+  ↓ DetectionCompiler
+  ↓   ├ Parse selection field|modifier → matcher functions
+  ↓   ├ Parse condition expressions → boolean combinators
+  ↓   └ Pre-compile regexes (handles (?i) → case-insensitive flag)
+  ↓
+CompiledRule[]
+  ↓ RuleIndex
+  ↓   ├ Index by tool name
+  ↓   └ Filter by platform
+  ↓
+Ready for classify()
+```
+
+### Rule Structure (Sigma-Style)
 
 ```yaml
-- id: CAT-001                    # Unique rule identifier
-  name: Catastrophic delete       # Human-readable name
-  toolMatch: [exec, bash]         # Tools this rule applies to (or ["*"] for all)
-  conditions:                     # ALL conditions must match (AND logic)
-    - type: command_matches
-      pattern: "rm\\s+.*-rf\\s+/"
-  tier: RED                       # GREEN, YELLOW, or RED
-  reason: "Recursive delete"      # Passed to LLM as context
-  priority: 10000                 # Higher = evaluated first
+lists:
+  dangerous_cmds: [mkfs, dd, nc, ncat, netcat, eval]
+  safe_cmds: [git, npm, yarn, pnpm, bun]
+
+rules:
+  - id: CAT-RM-SYSTEM
+    name: Recursive delete system directories
+    tool: [exec, bash]              # OpenClaw tool names
+    platform: [linux, macos]        # Optional platform filter
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete targeting system directory"
+    tags: [destructive, data_loss]
+    detection:
+      selection:
+        command|re: "rm\\s+.*-rf\\s+/"
+      condition: selection
 ```
 
-### Condition Types
+### Detection Syntax
 
-| Type | Description | Parameters |
-|------|-------------|------------|
-| `command_matches` | Regex match on command string | `pattern` |
-| `command_starts_with` | Command starts with prefix | `prefix` |
-| `pipe_to_shell` | Command pipes to sh/bash/zsh | `value: true/false` |
-| `has_dynamic_expansion` | Contains $() or backticks | `value: true/false` |
-| `is_dangerous_command` | Primary command is in dangerous set | `value: true/false` |
-| `reads_sensitive_files` | Command reads secrets/keys/env | `value: true/false` |
-| `is_sensitive_write_path` | Path targets .ssh/.env/etc | `value: true/false` |
-| `path_in_workspace` | All paths within workspace dir | `value: true/false` |
-| `path_matches` | Regex match on file path | `pattern` |
-| `url_is_internal` | URL targets private/internal IP | `value: true/false` |
-| `url_is_metadata` | URL targets cloud metadata endpoint | `value: true/false` |
-| `url_is_credential` | URL path suggests credential access | `value: true/false` |
+**Selection** — field:value mappings (multiple fields = AND):
+```yaml
+detection:
+  sel_rm:
+    command|re: "rm\\s+-rf"     # regex match
+    file.inWorkspace: false      # boolean match
+  condition: sel_rm
+```
+
+**Field Modifiers**: `|re` (regex), `|contains`, `|startswith`, `|endswith`, `|all`
+
+**Array field matching** (`cmd.all`, `cmd.segments`): any element match = true
+
+**Condition expressions**: `and`, `or`, `not`, parentheses, `1 of sel_*`, `all of sel_*`
+
+### Field System
+
+**Raw Param Fields**: `command`, `path`, `url`, `action`, `host`, `elevated`, `content`, `query`
+
+**Command Decomposition** (`cmd.*`, exec tool only):
+- `cmd.primary` — first command, skipping wrappers
+- `cmd.all` — all commands in chain (split by `|`, `&&`, `||`, `;`)
+- `cmd.segments` — full raw segments
+
+**File Decomposition** (`file.*`):
+- `file.dir`, `file.name`, `file.ext`
+- `file.inWorkspace` — runtime computed
+
+**URL Decomposition** (`url.*`):
+- `url.host`, `url.port`, `url.path`, `url.scheme`
+- `url.isPrivateIP` — RFC 1918 fact
+
+**Extension fields**: `ext.*` for future features (e.g., script detection)
+
+### Multi-File Rule Loading
+
+Rules are loaded from multiple YAML files and merged:
+1. **Active rule file** (default: `default.yaml`) — cross-platform shared rules
+2. **Platform-specific file** — `unix.yaml` on Linux/macOS, `windows.yaml` on Windows
+
+Platform detection uses `os.platform()` → `linux`, `macos`, or `windows`.
 
 ### Priority Tiers
 
 | Range | Tier | Description |
 |-------|------|-------------|
 | 9000-10000 | RED | Catastrophic patterns (rm -rf /, pipe-to-shell, credential theft) |
-| 8000 | RED | Always-RED tools (fs_delete, sessions_spawn, gateway) |
+| 8000-8500 | RED | Always-RED tools, elevated exec |
 | 7000-7500 | GREEN/YELLOW | Known-safe patterns (git, npm → GREEN; workspace rm, docker → YELLOW) |
 | 6000-6500 | RED | Parameter-level RED (dangerous commands, sensitive files, SSRF) |
 | 5000-5500 | GREEN | Always-GREEN tools (read, web_search, memory_*) |

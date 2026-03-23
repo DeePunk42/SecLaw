@@ -1,0 +1,157 @@
+# ─── SecLaw Windows Rules ───
+
+lists:
+  dangerous_cmds_cmd: [format, diskpart, cipher, reg]
+  dangerous_cmds_ps: [format-volume, invoke-expression, iex, set-executionpolicy, new-service]
+  safe_cmds_win: [git, npm, yarn, pnpm, bun, pip, pip3, poetry, cargo, go, dotnet, nuget]
+
+rules:
+  # ═══════════════════════════════════════════════════════
+  # RED — Catastrophic (9000-10000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CAT-WIN-RD
+    name: Recursive delete (cmd)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete of drive root"
+    tags: [destructive]
+    detection:
+      selection:
+        command|re: "(?i)rd\\s+/s\\s+/q\\s+[a-z]:\\\\"
+      condition: selection
+
+  - id: CAT-WIN-PS-RM
+    name: Recursive delete (PowerShell)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete of drive root"
+    tags: [destructive]
+    detection:
+      selection:
+        command|re: "(?i)remove-item\\s+.*-recurse.*-force.*[a-z]:\\\\"
+      condition: selection
+
+  - id: CAT-WIN-IEX
+    name: PowerShell Invoke-Expression
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9500
+    reason: "PowerShell Invoke-Expression execution"
+    tags: [execution, defense_evasion]
+    detection:
+      iex:
+        command|re: "(?i)(invoke-expression|\\biex\\b)\\s+"
+      pipe_iex:
+        command|re: "(?i)\\|\\s*(invoke-expression|iex)"
+      condition: iex or pipe_iex
+
+  - id: CAT-WIN-REGISTRY
+    name: Registry manipulation
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9000
+    reason: "Registry modification"
+    tags: [persistence, privilege_escalation]
+    detection:
+      reg:
+        command|re: "(?i)reg\\s+(add|delete|import)\\b"
+      ps_reg:
+        command|re: "(?i)(set-itemproperty|new-itemproperty|remove-itemproperty)\\s+"
+      condition: reg or ps_reg
+
+  - id: CAT-WIN-SAM
+    name: SAM/NTDS credential access
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9500
+    reason: "SAM/NTDS credential dumping"
+    tags: [credential_access]
+    detection:
+      selection:
+        command|re: "(?i)(sam|ntds\\.dit|security|system).*(save|copy|esentutl)"
+      condition: selection
+
+  - id: CAT-WIN-SERVICE
+    name: Service persistence
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9000
+    reason: "Windows service creation/modification"
+    tags: [persistence]
+    detection:
+      sc:
+        command|re: "(?i)sc\\s+(create|config|start)\\b"
+      ps_svc:
+        command|re: "(?i)new-service\\s+"
+      condition: sc or ps_svc
+
+  # ═══════════════════════════════════════════════════════
+  # RED — Dangerous commands (6500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-WIN-DANGEROUS
+    name: Dangerous Windows command
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 6500
+    tags: [execution]
+    detection:
+      cmd_danger:
+        cmd.all: $list:dangerous_cmds_cmd
+      ps_danger:
+        cmd.all|re: "(?i)^(format-volume|invoke-expression|iex|set-executionpolicy|new-service)$"
+      condition: cmd_danger or ps_danger
+
+  # ═══════════════════════════════════════════════════════
+  # GREEN — Safe patterns (7200)
+  # ═══════════════════════════════════════════════════════
+
+  - id: SAFE-WIN-GIT
+    name: Git operations (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: GREEN
+    priority: 7200
+    tags: [safe, vcs]
+    detection:
+      selection:
+        command|startswith: "git"
+      condition: selection
+
+  - id: SAFE-WIN-PKG
+    name: Package manager (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: GREEN
+    priority: 7200
+    tags: [safe]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds_win
+      action:
+        command|re: "(?i)\\s+(install|add|remove|build|test|run|start|dev|lint|restore)\\b"
+      condition: pkg and action
+
+  # ═══════════════════════════════════════════════════════
+  # YELLOW — Catch-all (4500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-WIN-NORMAL
+    name: Non-dangerous Windows command
+    tool: [exec]
+    platform: [windows]
+    tier: YELLOW
+    priority: 4500
+    detection:
+      any: {}
+      condition: any

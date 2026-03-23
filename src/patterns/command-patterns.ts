@@ -1,62 +1,116 @@
 /**
- * Bash command parsing and pattern matching for security classification.
+ * Command parsing and decomposition for the Sigma-style rule engine.
+ *
+ * Provides structural decomposition of shell commands:
+ * - splitCommandChain(): splits on |, &&, ||, ; (platform-aware)
+ * - extractPrimaryCommand(): first command, skipping safe wrappers
+ * - CommandDecomposition: { primary, all, segments }
+ *
+ * Security judgments (what is "dangerous", "sensitive") are NOT encoded here —
+ * they belong in YAML rules.
  */
 
-/** Commands that are classified as dangerous (trigger RED-tier synchronous audit). */
-const DANGEROUS_COMMANDS = new Set([
-  "mkfs",
-  "dd",
-  "nc",
-  "ncat",
-  "netcat",
-  "eval",
-]);
+import type { Platform, CommandDecomposition } from "../config.js";
 
-/** Regex patterns for pipe-to-shell detection. */
-const PIPE_TO_SHELL_PATTERNS = [
-  /\|\s*(sh|bash|zsh|dash|ksh|csh|fish)\b/,
-  /\|\s*(source|eval)\b/,
-  /\|\s*\.(\s|$)/,
-];
+/**
+ * Split a command string into chain segments by shell operators.
+ * Respects quoting (single, double) and backslash escaping.
+ */
+export function splitCommandChain(cmd: string, platform: Platform = "linux"): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  let i = 0;
 
-/** Patterns for dynamic expansion that can hide intent. */
-const DYNAMIC_EXPANSION_PATTERNS = [
-  /\$\(/,           // $(...)
-  /`[^`]+`/,        // backtick expansion
-  /\$\{[^}]+\}/,    // ${var} with complex expressions
-];
+  while (i < cmd.length) {
+    const ch = cmd[i];
 
-/** Patterns that read sensitive files via command. */
-const SENSITIVE_READ_PATTERNS = [
-  /\bcat\b.*(secret|\benv\b|\.env|credential|private.?key|id_rsa|id_ed25519|\.pem)/i,
-  /\bless\b.*(secret|\.env|credential|private.?key)/i,
-  /\bhead\b.*(secret|\.env|credential|private.?key)/i,
-  /\btail\b.*(secret|\.env|credential|private.?key)/i,
-  /\bgrep\b.*(password|token|api.?key|secret)/i,
-  /\.ssh\//,
-];
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      i++;
+      continue;
+    }
+    if (ch === "\\" && !inSingle) {
+      escaped = true;
+      current += ch;
+      i++;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      i++;
+      continue;
+    }
 
-export interface CommandAnalysis {
-  /** The primary command (first word, resolved past env/sudo wrappers). */
-  primaryCommand: string | null;
-  /** Whether the command pipes into a shell. */
-  pipesToShell: boolean;
-  /** Whether the command contains dynamic expansion. */
-  hasDynamicExpansion: boolean;
-  /** Whether the command reads sensitive files. */
-  readsSensitiveFiles: boolean;
-  /** Whether the primary command is in the dangerous-commands set. */
-  isDangerousCommand: boolean;
-  /** All distinct commands in a pipeline. */
-  pipelineCommands: string[];
+    // Only split outside quotes
+    if (!inSingle && !inDouble) {
+      // Check for || (all platforms)
+      if (ch === "|" && i + 1 < cmd.length && cmd[i + 1] === "|") {
+        const trimmed = current.trim();
+        if (trimmed) segments.push(trimmed);
+        current = "";
+        i += 2;
+        continue;
+      }
+      // Check for | (pipe, all platforms)
+      if (ch === "|") {
+        const trimmed = current.trim();
+        if (trimmed) segments.push(trimmed);
+        current = "";
+        i++;
+        continue;
+      }
+      // Check for && (all platforms)
+      if (ch === "&" && i + 1 < cmd.length && cmd[i + 1] === "&") {
+        const trimmed = current.trim();
+        if (trimmed) segments.push(trimmed);
+        current = "";
+        i += 2;
+        continue;
+      }
+      // Check for single & (Windows cmd.exe sequential execution)
+      if (ch === "&" && platform === "windows") {
+        const trimmed = current.trim();
+        if (trimmed) segments.push(trimmed);
+        current = "";
+        i++;
+        continue;
+      }
+      // Check for ; (all platforms — PowerShell uses it too)
+      if (ch === ";") {
+        const trimmed = current.trim();
+        if (trimmed) segments.push(trimmed);
+        current = "";
+        i++;
+        continue;
+      }
+    }
+
+    current += ch;
+    i++;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) segments.push(trimmed);
+  return segments;
 }
 
 /**
- * Extract the primary command from a shell command string.
- * Skips wrappers like env, nohup, etc. but preserves sudo/su as dangerous.
- * Returns both the resolved command and any wrappers encountered.
+ * Extract the primary command from a shell command segment.
+ * Skips safe wrappers (env, nohup, nice, etc.) but preserves sudo/su.
+ * Strips leading env var assignments (VAR=val).
  */
-function extractPrimaryCommand(cmd: string): string | null {
+export function extractPrimaryCommand(cmd: string): string | null {
   const trimmed = cmd.trim();
   if (!trimmed) return null;
 
@@ -66,124 +120,39 @@ function extractPrimaryCommand(cmd: string): string | null {
   // Skip non-dangerous wrappers only (NOT sudo/su — those are security-relevant)
   const safeWrappers = ["nohup", "env", "nice", "ionice", "time", "strace"];
   const tokens = rest.split(/\s+/);
-  let i = 0;
-  while (i < tokens.length && safeWrappers.includes(tokens[i])) {
-    i++;
+  let idx = 0;
+  while (idx < tokens.length && safeWrappers.includes(tokens[idx])) {
+    idx++;
     // skip flags
-    while (i < tokens.length && tokens[i].startsWith("-")) {
-      i++;
+    while (idx < tokens.length && tokens[idx].startsWith("-")) {
+      idx++;
     }
   }
 
-  return i < tokens.length ? tokens[i] : null;
+  return idx < tokens.length ? tokens[idx] : null;
 }
 
 /**
- * Split a command string into pipeline segments.
- * Handles basic pipe | but not complex quoting perfectly (fail-safe: returns original if ambiguous).
+ * Build a CommandDecomposition from a raw command string.
  */
-function splitPipeline(cmd: string): string[] {
-  // Simple split on | that isn't inside quotes
-  // For security analysis, over-splitting is safer than under-splitting
-  const segments: string[] = [];
-  let current = "";
-  let inSingle = false;
-  let inDouble = false;
-  let escaped = false;
-
-  for (const ch of cmd) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      current += ch;
-      continue;
-    }
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-      current += ch;
-      continue;
-    }
-    if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-      current += ch;
-      continue;
-    }
-    if (ch === "|" && !inSingle && !inDouble) {
-      segments.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  if (current.trim()) {
-    segments.push(current.trim());
-  }
-  return segments;
-}
-
-/**
- * Analyze a bash command string for security-relevant features.
- */
-export function analyzeCommand(command: string): CommandAnalysis {
-  const segments = splitPipeline(command);
-  const pipelineCommands: string[] = [];
+export function decomposeCommand(command: string, platform: Platform = "linux"): CommandDecomposition {
+  const segments = splitCommandChain(command, platform);
+  const all: string[] = [];
 
   for (const seg of segments) {
     const cmd = extractPrimaryCommand(seg);
-    if (cmd) pipelineCommands.push(cmd);
+    if (cmd) all.push(cmd);
   }
 
-  const primaryCommand = pipelineCommands[0] ?? null;
-
-  const pipesToShell = PIPE_TO_SHELL_PATTERNS.some((p) => p.test(command));
-  const hasDynamicExpansion = DYNAMIC_EXPANSION_PATTERNS.some((p) =>
-    p.test(command),
-  );
-  const readsSensitiveFiles = SENSITIVE_READ_PATTERNS.some((p) =>
-    p.test(command),
-  );
-
-  const isDangerousCommand =
-    pipelineCommands.some((cmd) =>
-      DANGEROUS_COMMANDS.has(cmd) ||
-      // Handle dot-suffixed variants like mkfs.ext4, mkfs.xfs
-      DANGEROUS_COMMANDS.has(cmd.split(".")[0]),
-    ) ||
-    pipesToShell;
-
   return {
-    primaryCommand,
-    pipesToShell,
-    hasDynamicExpansion,
-    readsSensitiveFiles,
-    isDangerousCommand,
-    pipelineCommands,
+    primary: all[0] ?? null,
+    all,
+    segments,
   };
 }
 
 /**
- * Check if a command matches additional yellow command patterns (from config).
- */
-export function matchesExtraPatterns(
-  command: string,
-  extraPatterns: string[],
-): boolean {
-  return extraPatterns.some((pattern) => {
-    try {
-      return new RegExp(pattern).test(command);
-    } catch {
-      // Invalid regex pattern, skip
-      return false;
-    }
-  });
-}
-
-/**
- * Check if a command starts with a given prefix.
+ * Check if a command starts with a given prefix (word boundary).
  */
 export function commandStartsWith(command: string, prefix: string): boolean {
   const trimmed = command.trim();
@@ -193,10 +162,7 @@ export function commandStartsWith(command: string, prefix: string): boolean {
 /**
  * Check if a command matches a regex pattern.
  */
-export function commandMatchesPattern(
-  command: string,
-  pattern: string,
-): boolean {
+export function commandMatchesPattern(command: string, pattern: string): boolean {
   try {
     return new RegExp(pattern).test(command);
   } catch {

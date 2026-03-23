@@ -389,11 +389,11 @@ describe("Dashboard", () => {
       {
         id: "TEST-ACTIVE-001",
         name: "Only Rule",
-        toolMatch: ["exec"],
-        conditions: [{ type: "command_matches", pattern: "^echo\\s+" }],
+        tool: ["exec"],
         tier: "GREEN",
         reason: "test",
         priority: 1,
+        detection: { any: {}, condition: "any" },
       },
     ];
 
@@ -420,8 +420,9 @@ describe("Dashboard", () => {
 
     const runtimeRulesRes = await fetch(`${baseUrl}/api/rules`);
     const runtimeRules = await runtimeRulesRes.json() as Array<{ id: string }>;
-    expect(runtimeRules.length).toBe(1);
-    expect(runtimeRules[0].id).toBe("TEST-ACTIVE-001");
+    // Custom rules + platform-specific rules are loaded together
+    expect(runtimeRules.length).toBeGreaterThanOrEqual(1);
+    expect(runtimeRules.some(r => r.id === "TEST-ACTIVE-001")).toBe(true);
 
     const downloadRes = await fetch(`${baseUrl}/api/rules/file/download?name=custom.yaml`);
     expect(downloadRes.status).toBe(200);

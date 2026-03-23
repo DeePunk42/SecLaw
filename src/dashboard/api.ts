@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
-import type { Rule } from "../config.js";
+import type { SigmaRule } from "../config.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
@@ -72,17 +72,19 @@ function listRuleFiles(deps: DashboardDeps): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
-function loadRulesFromYamlFile(filePath: string): Rule[] {
+function loadRulesFromYamlFile(filePath: string): SigmaRule[] {
   const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
   if (!content.trim()) return [];
   const parsed = parseYaml(content);
-  if (!Array.isArray(parsed)) {
-    throw new Error("Rule file must contain a YAML array");
+  // Support both formats: plain array or { rules: [...] }
+  if (Array.isArray(parsed)) return parsed as SigmaRule[];
+  if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).rules)) {
+    return (parsed as Record<string, unknown>).rules as SigmaRule[];
   }
-  return parsed as Rule[];
+  throw new Error("Rule file must contain rules");
 }
 
-function saveRulesToYamlFile(filePath: string, rules: Rule[]): void {
+function saveRulesToYamlFile(filePath: string, rules: SigmaRule[]): void {
   const content = stringifyYaml(rules);
   const normalized = content.endsWith("\n") ? content : `${content}\n`;
   fs.writeFileSync(filePath, normalized, "utf-8");
@@ -396,11 +398,16 @@ async function handleParseRuleFile(
       return;
     }
     const yamlParsed = parseYaml(parsed.content);
-    if (!Array.isArray(yamlParsed)) {
-      json(res, 400, { error: "Rule file must contain a YAML array" });
+    let rules: unknown[];
+    if (Array.isArray(yamlParsed)) {
+      rules = yamlParsed;
+    } else if (yamlParsed && typeof yamlParsed === "object" && Array.isArray((yamlParsed as Record<string, unknown>).rules)) {
+      rules = (yamlParsed as Record<string, unknown>).rules as unknown[];
+    } else {
+      json(res, 400, { error: "Rule file must contain rules" });
       return;
     }
-    json(res, 200, { rules: yamlParsed });
+    json(res, 200, { rules });
   } catch (err: any) {
     json(res, 400, { error: `Invalid rule file: ${err.message}` });
   }
@@ -431,7 +438,7 @@ async function handleSaveRuleFile(
     const rulesDir = getRulesDir(deps);
     fs.mkdirSync(rulesDir, { recursive: true });
     const filePath = path.join(rulesDir, fileName);
-    saveRulesToYamlFile(filePath, parsed.rules as Rule[]);
+    saveRulesToYamlFile(filePath, parsed.rules as SigmaRule[]);
 
     const activeRuleFile = deps.getConfig().rules?.activeRuleFile;
     if (activeRuleFile === fileName) {

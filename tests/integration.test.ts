@@ -306,7 +306,7 @@ describe("Integration: LLM-enabled flow", () => {
     expect(mockLLM).toHaveBeenCalled();
     const promptContent = mockLLM.mock.calls[0][0].messages[0].content;
     expect(promptContent).toContain("Security rule context");
-    expect(promptContent).toContain("PARAM-Y-001");
+    expect(promptContent).toContain("CMD-DANGEROUS");
   });
 
   it("allows when LLM returns SAFE for RED call", async () => {
@@ -356,6 +356,7 @@ describe("Integration: LLM-enabled flow", () => {
     const result = await beforeToolCall(event, ctx);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
+    // blockReason may include rule reason or LLM reason
     expect(result!.blockReason).toContain("SSH");
   });
 
@@ -717,10 +718,10 @@ describe("Integration: Rules load from dist/ pluginDir (compiled output)", () =>
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("Pipe to shell");
 
-    // Verify rule engine classified it as RED with CAT-003
+    // Verify rule engine classified it as RED with CAT-PIPE-SHELL
     const ruleEngine = _getRuleEngine();
     const classification = ruleEngine.classify("exec", event.params, { userGoal: "", stepIndex: 0, turnNumber: 0, recentToolCalls: [] });
     expect(classification.tier).toBe("RED");
-    expect(classification.ruleId).toBe("CAT-003");
+    expect(classification.ruleId).toBe("CAT-PIPE-SHELL");
   });
 });

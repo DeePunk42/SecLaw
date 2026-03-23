@@ -1,0 +1,234 @@
+# ─── SecLaw Unix Rules (Linux + macOS) ───
+
+lists:
+  dangerous_cmds: [mkfs, dd, nc, ncat, netcat, eval]
+  safe_cmds: [git, npm, yarn, pnpm, bun, pip, pip3, poetry, cargo, go]
+
+rules:
+  # ═══════════════════════════════════════════════════════
+  # RED — Catastrophic (9000-10000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CAT-RM-SYSTEM
+    name: Recursive delete system directories
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete targeting system or home directory"
+    tags: [destructive, data_loss]
+    detection:
+      selection:
+        command|re: "rm\\s+.*(-rf|-fr)\\s+(/\\s|/$|/\\*|~/?\\s|~/?$|/etc\\b|/usr\\b|/var\\b|/home\\b|/root\\b|/boot\\b|/sys\\b|/proc\\b)"
+      condition: selection
+
+  - id: CAT-RM-NOPRESERVE
+    name: Force remove root
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 10000
+    reason: "Bypassing root deletion protection"
+    tags: [destructive]
+    detection:
+      selection:
+        command|re: "--no-preserve-root"
+      condition: selection
+
+  - id: CAT-PIPE-SHELL
+    name: Pipe download to shell
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9500
+    reason: "Piping content to shell execution"
+    tags: [execution, defense_evasion]
+    detection:
+      selection:
+        command|re: "\\|\\s*(sh|bash|zsh|dash|ksh|csh|fish|source|eval)\\b"
+      condition: selection
+
+  - id: CAT-EXFIL
+    name: Data exfiltration via curl/wget
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9500
+    reason: "Potential credential exfiltration via HTTP"
+    tags: [exfiltration, credential_access]
+    detection:
+      selection:
+        command|re: "(curl|wget).*\\$\\(.*cat.*(secret|env|credential|ssh|key|token|password)"
+      condition: selection
+
+  - id: CAT-REVERSE-SHELL
+    name: Reverse shell
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9500
+    reason: "Reverse shell attempt"
+    tags: [execution, c2]
+    detection:
+      selection:
+        command|re: "(bash|sh|zsh)\\s+-i\\s+.*[>|&].*(/dev/tcp/|/dev/udp/)"
+      condition: selection
+
+  - id: CAT-DISK-FORMAT
+    name: Disk format/wipe
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9800
+    reason: "Disk format or raw device write"
+    tags: [destructive]
+    detection:
+      format:
+        cmd.all|re: "^(mkfs|wipefs|shred)(\\.|$)"
+      dd_dev:
+        command|re: "dd\\s+.*of=/dev/"
+      condition: format or dd_dev
+
+  - id: CAT-CRON
+    name: Cron/at job creation
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9000
+    reason: "Scheduled task creation (potential persistence)"
+    tags: [persistence]
+    detection:
+      cron:
+        command|re: "crontab\\s+-[^l]|crontab\\s+[^-]"
+      at:
+        command|re: "\\bat\\s+"
+      condition: cron or at
+
+  - id: CAT-USER-MGMT
+    name: User account manipulation
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9000
+    reason: "User account or privilege modification"
+    tags: [persistence, privilege_escalation]
+    detection:
+      selection:
+        cmd.all|re: "^(useradd|usermod|userdel|passwd|visudo|adduser|deluser)$"
+      condition: selection
+
+  - id: CAT-SYSTEMD
+    name: Systemd persistence
+    tool: [exec, bash]
+    platform: [linux]
+    tier: RED
+    priority: 9000
+    reason: "Systemd service persistence modification"
+    tags: [persistence]
+    detection:
+      selection:
+        command|re: "systemctl\\s+(enable|disable|mask|unmask)\\b"
+      condition: selection
+
+  # ═══════════════════════════════════════════════════════
+  # RED — Dangerous commands (6500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-DANGEROUS
+    name: Dangerous command in chain
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 6500
+    reason: "Command classified as dangerous"
+    tags: [execution]
+    detection:
+      selection:
+        cmd.all: $list:dangerous_cmds
+      condition: selection
+
+  - id: CMD-SENSITIVE-READ
+    name: Reads sensitive files
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 6400
+    reason: "Command reads sensitive files"
+    tags: [credential_access]
+    detection:
+      cat_sensitive:
+        command|re: "\\bcat\\b.*(secret|\\benv\\b|\\.env|credential|private.?key|id_rsa|id_ed25519|\\.pem)"
+      grep_secrets:
+        command|re: "\\bgrep\\b.*(password|token|api.?key|secret)"
+      ssh_access:
+        command|re: "\\.ssh/"
+      condition: 1 of cat_sensitive or grep_secrets or ssh_access
+
+  # ═══════════════════════════════════════════════════════
+  # GREEN — Safe patterns (7000-7500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: SAFE-WORKSPACE-RM
+    name: Workspace-scoped delete
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: YELLOW
+    priority: 7500
+    detection:
+      rm:
+        command|startswith: "rm"
+      in_ws:
+        file.inWorkspace: true
+      condition: rm and in_ws
+
+  - id: SAFE-GIT
+    name: Git operations
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: GREEN
+    priority: 7200
+    tags: [safe, vcs]
+    detection:
+      selection:
+        command|startswith: "git"
+      condition: selection
+
+  - id: SAFE-PKG
+    name: Package manager
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: GREEN
+    priority: 7200
+    tags: [safe, package_manager]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds
+      action:
+        command|re: "\\s+(install|add|remove|uninstall|build|test|run|start|init|create|dev|serve|watch|lint|format|check|publish|pack|link|ci)\\b"
+      condition: pkg and action
+
+  - id: SAFE-DOCKER
+    name: Docker safe operations
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: YELLOW
+    priority: 7100
+    tags: [safe]
+    detection:
+      selection:
+        command|re: "^docker\\s+(build|run|ps|images|logs|inspect|compose|pull|push|tag|stop|start|restart|rm|rmi|network|volume)"
+      condition: selection
+
+  # ═══════════════════════════════════════════════════════
+  # YELLOW — Catch-all exec (4500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-NORMAL
+    name: Non-dangerous exec command
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: YELLOW
+    priority: 4500
+    detection:
+      any: {}
+      condition: any

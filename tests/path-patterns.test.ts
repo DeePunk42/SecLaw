@@ -1,69 +1,33 @@
 import { describe, it, expect } from "vitest";
 import {
-  isSensitiveWritePath,
-  isSensitiveReadPath,
+  decomposePath,
   isPathInWorkspace,
   extractPathsFromCommand,
 } from "../src/patterns/path-patterns.js";
 
-describe("isSensitiveWritePath", () => {
-  it("detects ~/.ssh/ paths", () => {
-    expect(isSensitiveWritePath("~/.ssh/authorized_keys")).toBe(true);
-    expect(isSensitiveWritePath("~/.ssh/config")).toBe(true);
+describe("decomposePath", () => {
+  it("decomposes absolute path", () => {
+    const result = decomposePath("/home/user/.ssh/id_rsa");
+    expect(result.dir).toBe("/home/user/.ssh");
+    expect(result.name).toBe("id_rsa");
+    expect(result.ext).toBe("");
   });
 
-  it("detects /home/user/.ssh/ paths", () => {
-    expect(isSensitiveWritePath("/home/user/.ssh/id_rsa")).toBe(true);
+  it("decomposes path with extension", () => {
+    const result = decomposePath("/app/src/index.ts");
+    expect(result.dir).toBe("/app/src");
+    expect(result.name).toBe("index.ts");
+    expect(result.ext).toBe(".ts");
   });
 
-  it("detects .gitconfig", () => {
-    expect(isSensitiveWritePath("~/.gitconfig")).toBe(true);
-    expect(isSensitiveWritePath("/home/user/.gitconfig")).toBe(true);
+  it("computes inWorkspace = true", () => {
+    const result = decomposePath("/workspace/src/file.ts", "/workspace");
+    expect(result.inWorkspace).toBe(true);
   });
 
-  it("detects .env files", () => {
-    expect(isSensitiveWritePath("/app/.env")).toBe(true);
-    expect(isSensitiveWritePath("/project/.env.local")).toBe(true);
-  });
-
-  it("detects .aws paths", () => {
-    expect(isSensitiveWritePath("~/.aws/credentials")).toBe(true);
-    expect(isSensitiveWritePath("~/.aws/config")).toBe(true);
-  });
-
-  it("detects etc system files", () => {
-    expect(isSensitiveWritePath("/etc/passwd")).toBe(true);
-    expect(isSensitiveWritePath("/etc/shadow")).toBe(true);
-    expect(isSensitiveWritePath("/etc/sudoers")).toBe(true);
-  });
-
-  it("allows normal workspace paths", () => {
-    expect(isSensitiveWritePath("/workspace/src/index.ts")).toBe(false);
-    expect(isSensitiveWritePath("/project/package.json")).toBe(false);
-  });
-});
-
-describe("isSensitiveReadPath", () => {
-  it("detects secret files", () => {
-    expect(isSensitiveReadPath("/app/secret.json")).toBe(true);
-  });
-
-  it("detects .env files", () => {
-    expect(isSensitiveReadPath(".env")).toBe(true);
-  });
-
-  it("detects credential files", () => {
-    expect(isSensitiveReadPath("/app/credentials.json")).toBe(true);
-  });
-
-  it("detects private key files", () => {
-    expect(isSensitiveReadPath("/app/private.key")).toBe(true);
-    expect(isSensitiveReadPath("server.pem")).toBe(true);
-  });
-
-  it("allows normal files", () => {
-    expect(isSensitiveReadPath("README.md")).toBe(false);
-    expect(isSensitiveReadPath("src/index.ts")).toBe(false);
+  it("computes inWorkspace = false for outside path", () => {
+    const result = decomposePath("/etc/passwd", "/workspace");
+    expect(result.inWorkspace).toBe(false);
   });
 });
 
