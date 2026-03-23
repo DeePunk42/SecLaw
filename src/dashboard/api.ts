@@ -50,6 +50,17 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 }
 
 const RULE_FILE_NAME_RE = /^[A-Za-z0-9._-]+\.(ya?ml)$/i;
+const RULE_TESTER_VALUE_FIELDS = new Set(["command", "path", "url", "query"]);
+const RULE_TESTER_PATH_TOOLS = new Set([
+  "fs_write",
+  "write",
+  "edit",
+  "apply_patch",
+  "fs_read",
+  "read",
+  "fs_delete",
+  "fs_move",
+]);
 
 function getRulesDir(deps: DashboardDeps): string {
   return path.join(deps.getOpenClawDir(), "seclaw", "rules");
@@ -70,6 +81,25 @@ function listRuleFiles(deps: DashboardDeps): string[] {
     .filter((entry) => entry.isFile() && RULE_FILE_NAME_RE.test(entry.name))
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));
+}
+
+function inferRuleTestValueField(toolName: string): "command" | "path" | "url" | "query" {
+  if (toolName === "exec" || toolName === "bash") return "command";
+  if (toolName === "web_fetch") return "url";
+  if (toolName === "web_search") return "query";
+  if (RULE_TESTER_PATH_TOOLS.has(toolName)) return "path";
+  return "path";
+}
+
+function buildRuleTestParams(
+  toolName: string,
+  value: string,
+  valueField?: string,
+): Record<string, unknown> {
+  const field = valueField && RULE_TESTER_VALUE_FIELDS.has(valueField)
+    ? valueField
+    : inferRuleTestValueField(toolName);
+  return { [field]: value };
 }
 
 function loadRulesFromYamlFile(filePath: string): SigmaRule[] {
@@ -368,7 +398,7 @@ async function handleTestRule(
       return;
     }
 
-    let params: Record<string, unknown>;
+    let params: Record<string, unknown> = {};
     if (typeof parsed.params === "string") {
       try {
         params = JSON.parse(parsed.params);
@@ -378,8 +408,19 @@ async function handleTestRule(
       }
     } else if (parsed.params && typeof parsed.params === "object") {
       params = parsed.params as Record<string, unknown>;
-    } else {
-      params = {};
+    } else if ("value" in parsed) {
+      if (typeof parsed.value !== "string" || parsed.value.trim() === "") {
+        json(res, 400, { error: "value is required when params is omitted" });
+        return;
+      }
+      const valueField = typeof parsed.valueField === "string"
+        ? parsed.valueField.trim()
+        : undefined;
+      if (valueField && !RULE_TESTER_VALUE_FIELDS.has(valueField)) {
+        json(res, 400, { error: "valueField must be one of: command, path, url, query" });
+        return;
+      }
+      params = buildRuleTestParams(toolName, parsed.value.trim(), valueField);
     }
 
     const intentCtx: IntentContext = {

@@ -198,6 +198,9 @@ describe("Dashboard", () => {
     const html = await res.text();
     expect(html).toContain("SecLaw Dashboard");
     expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain('id="test-tool-name"');
+    expect(html).toContain('id="test-input-value"');
+    expect(html).not.toContain('id="test-params"');
   });
 
   it("GET /api/health returns running status", async () => {
@@ -344,6 +347,65 @@ describe("Dashboard", () => {
     expect(Array.isArray(data.rules)).toBe(true);
     expect(data.rules.length).toBeGreaterThan(0);
     expect(typeof data.platform).toBe("string");
+  });
+
+  it("POST /api/rules/test supports simplified exec value", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: "exec", value: "rm -rf /" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { tier: string; ruleId?: string };
+    expect(data.tier).toBe("RED");
+    expect(data.ruleId).toBe("CAT-RM-SYSTEM");
+  });
+
+  it("POST /api/rules/test supports simplified path value", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: "fs_write", value: "/home/user/.ssh/authorized_keys" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { tier: string; ruleId?: string };
+    expect(data.tier).toBe("RED");
+    expect(data.ruleId).toBe("WRITE-SENSITIVE-SSH");
+  });
+
+  it("POST /api/rules/test supports simplified web_fetch value", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: "web_fetch", value: "http://169.254.169.254/latest/meta-data/" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { tier: string; ruleId?: string };
+    expect(data.tier).toBe("RED");
+    expect(data.ruleId).toBeTruthy();
+  });
+
+  it("POST /api/rules/test keeps legacy params format", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: "exec", params: { command: "git status" } }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { tier: string; ruleId?: string };
+    expect(data.tier).toBe("GREEN");
+    expect(data.ruleId).toBe("SAFE-GIT");
+  });
+
+  it("POST /api/rules/test validates empty simplified value", async () => {
+    const res = await fetch(`${baseUrl}/api/rules/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolName: "exec", value: "" }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toContain("value is required");
   });
 
   it("GET /api/rules/files returns file list", async () => {

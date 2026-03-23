@@ -61,6 +61,66 @@ rules:
         command|re: "(curl|wget).*\\$\\(.*cat.*(secret|env|credential|ssh|key|token|password)"
       condition: selection
 
+  - id: CAT-RCE-CMD-SUBST
+    name: Command substitution remote execution
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9450
+    reason: "Remote content executed via command substitution"
+    tags: [execution, defense_evasion]
+    detection:
+      shell_subst:
+        command|re: "(?i)\\b(bash|sh|zsh)\\b\\s+-c\\s+.*\\$\\((curl|wget)\\b"
+      eval_subst:
+        command|re: "(?i)\\beval\\b\\s+\\$\\((curl|wget)\\b"
+      condition: shell_subst or eval_subst
+
+  - id: CAT-RCE-DOWNLOAD-EXEC
+    name: Download then execute payload
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9400
+    reason: "Downloaded payload is executed in same command chain"
+    tags: [execution, defense_evasion]
+    detection:
+      download:
+        command|re: "(?i)\\b(curl|wget)\\b.*(https?://|ftp://).*(\\s(-o|--output|--output-document)\\s+|>\\s*|\\|\\s*tee\\s+)"
+      execute:
+        command|re: "(?i)(?:&&|;|\\|\\|)\\s*(?:sudo\\s+)?(?:(?:bash|sh|zsh)\\s+)?(?:\\./|/tmp/|/var/tmp/|/dev/shm/)[^\\s;&|]+"
+      condition: download and execute
+
+  - id: CAT-EXFIL-SENSITIVE
+    name: Sensitive file exfiltration
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9300
+    reason: "Sensitive file/source piped to network transfer tool"
+    tags: [exfiltration, credential_access]
+    detection:
+      source:
+        command|re: "(?i)(\\.env\\b|id_rsa\\b|id_ed25519\\b|\\.pem\\b|\\.kube/config\\b|\\.docker/config\\.json\\b|\\.aws/(credentials|config)\\b|/proc/\\d+/environ\\b)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|nc|ncat|netcat|scp|rsync|ssh)\\b"
+      condition: source and sink
+
+  - id: CAT-ENV-EXFIL
+    name: Environment variable exfiltration
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9280
+    reason: "Environment dump combined with outbound transfer"
+    tags: [exfiltration, credential_access]
+    detection:
+      env_dump:
+        command|re: "(?i)(\\bprintenv\\b|(^|[;&|]\\s*)env\\b|/proc/\\d+/environ\\b)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|nc|ncat|netcat|scp|rsync|ssh)\\b"
+      condition: env_dump and sink
+
   - id: CAT-REVERSE-SHELL
     name: Reverse shell
     tool: [exec, bash]
@@ -117,6 +177,36 @@ rules:
         cmd.all|re: "^(useradd|usermod|userdel|passwd|visudo|adduser|deluser)$"
       condition: selection
 
+  - id: CAT-OPENCLAW-TAMPER
+    name: OpenClaw core state tampering
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9050
+    reason: "Command modifies openclaw.json or ~/.openclaw/seclaw state"
+    tags: [config_tampering, credential_access]
+    detection:
+      target:
+        command|re: "(?i)(\\.openclaw/(openclaw\\.json|devices/paired\\.json|seclaw(/|\\b))|\\bopenclaw\\.json\\b)"
+      mutate:
+        command|re: "(?i)(>|>>|\\|\\s*tee\\b|\\b(chmod|chown|chgrp|cp|mv|ln|sed|perl|python|python3|ruby|node|jq|yq|truncate|touch|install)\\b)"
+      condition: target and mutate
+
+  - id: CAT-SENSITIVE-CONFIG-TAMPER
+    name: Sensitive system config tampering
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 9030
+    reason: "Command mutates sensitive system authentication or service config"
+    tags: [config_tampering, persistence]
+    detection:
+      target:
+        command|re: "(?i)(/etc/(sudoers|passwd|shadow|ssh/sshd_config|crontab)\\b|/etc/systemd/system/|/usr/lib/systemd/system/|\\.ssh/authorized_keys\\b)"
+      mutate:
+        command|re: "(?i)(\\|\\s*tee\\b|>|>>|\\b(chmod|chown|chgrp|truncate|touch|install)\\b|\\bsed\\s+-i\\b|\\bperl\\s+-i\\b)"
+      condition: target and mutate
+
   - id: CAT-SYSTEMD
     name: Systemd persistence
     tool: [exec, bash]
@@ -167,6 +257,19 @@ rules:
   # ═══════════════════════════════════════════════════════
   # GREEN — Safe patterns (7000-7500)
   # ═══════════════════════════════════════════════════════
+
+  - id: WARN-INTERPRETER-ONELINER
+    name: Interpreter one-liner with dynamic execution
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: YELLOW
+    priority: 7400
+    reason: "Interpreter one-liner includes dynamic execution primitive"
+    tags: [execution]
+    detection:
+      selection:
+        command|re: "(?i)\\b(python|python3|node|perl|ruby)\\b\\s+(-c|-e)\\s+.*\\b(exec|eval|os\\.system|subprocess|child_process|system\\()"
+      condition: selection
 
   - id: SAFE-WORKSPACE-RM
     name: Workspace-scoped delete

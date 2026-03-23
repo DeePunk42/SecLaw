@@ -51,6 +51,53 @@ rules:
         command|re: "(?i)\\|\\s*(invoke-expression|iex)"
       condition: iex or pipe_iex
 
+  - id: CAT-WIN-LOLBIN-DOWNLOAD-EXEC
+    name: LOLBin download and execute chain
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9400
+    reason: "Windows LOLBin chain downloads and executes remote payload"
+    tags: [execution, defense_evasion]
+    detection:
+      download:
+        command|re: "(?i)\\b(certutil|bitsadmin)\\b.*(https?://|ftp://)"
+      execute:
+        command|re: "(?i)(?:&&|;|\\|)\\s*(?:powershell(?:\\.exe)?\\s+-?(?:c|command)\\s+|cmd(?:\\.exe)?\\s+/c\\s+)?(?:[a-z]:\\\\|\\.\\\\|\\\\\\\\)[^\\s]+\\.(exe|dll|js|vbs|hta|ps1|bat|cmd)"
+      direct_remote:
+        command|re: "(?i)\\b(mshta|rundll32|regsvr32)\\b.*(https?://|scrobj\\.dll)"
+      condition: (download and execute) or direct_remote
+
+  - id: CAT-WIN-EXFIL-SENSITIVE
+    name: Sensitive file exfiltration (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9300
+    reason: "Sensitive file/source combined with outbound transfer command"
+    tags: [exfiltration, credential_access]
+    detection:
+      source:
+        command|re: "(?i)(\\.env\\b|id_rsa\\b|id_ed25519\\b|\\.pem\\b|\\.kube\\\\config\\b|\\.docker\\\\config\\.json\\b|\\.aws\\\\credentials\\b|\\.openclaw\\\\openclaw\\.json\\b)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|scp|ssh|nc|ncat|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\\b"
+      condition: source and sink
+
+  - id: CAT-WIN-ENV-EXFIL
+    name: Environment variable exfiltration (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9280
+    reason: "Environment dump combined with outbound transfer command"
+    tags: [exfiltration, credential_access]
+    detection:
+      env_dump:
+        command|re: "(?i)(\\bset\\s+\\w+=|Get-ChildItem\\s+Env:|Get-Item\\s+Env:|\\$env:)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|scp|ssh|nc|ncat|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\\b"
+      condition: env_dump and sink
+
   - id: CAT-WIN-REGISTRY
     name: Registry manipulation
     tool: [exec]
@@ -78,6 +125,36 @@ rules:
       selection:
         command|re: "(?i)(sam|ntds\\.dit|security|system).*(save|copy|esentutl)"
       condition: selection
+
+  - id: CAT-WIN-OPENCLAW-TAMPER
+    name: OpenClaw core state tampering (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9050
+    reason: "Command modifies openclaw.json or .openclaw\\seclaw state"
+    tags: [config_tampering, credential_access]
+    detection:
+      target:
+        command|re: "(?i)(\\.openclaw[\\\\/](openclaw\\.json|devices[\\\\/]paired\\.json|seclaw([\\\\/]|\\b))|\\bopenclaw\\.json\\b)"
+      mutate:
+        command|re: "(?i)(>|>>|\\|\\s*(tee|out-file|set-content|add-content)\\b|\\b(copy|move|ren|del|erase|attrib|icacls|takeown|cacls|xcopy|robocopy|set-content|add-content|out-file)\\b)"
+      condition: target and mutate
+
+  - id: CAT-WIN-SENSITIVE-CONFIG-TAMPER
+    name: Sensitive system config tampering (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9030
+    reason: "Command mutates sensitive Windows host/SSH/task configuration"
+    tags: [config_tampering, persistence]
+    detection:
+      target:
+        command|re: "(?i)(\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts\\b|\\\\ProgramData\\\\ssh\\\\sshd_config\\b|\\\\Users\\\\[^\\\\]+\\\\.ssh\\\\authorized_keys\\b|\\\\Windows\\\\System32\\\\Tasks\\\\)"
+      mutate:
+        command|re: "(?i)(\\|\\s*(tee|out-file|set-content|add-content)\\b|>|>>|\\b(icacls|takeown|attrib|set-content|add-content|out-file)\\b)"
+      condition: target and mutate
 
   - id: CAT-WIN-SERVICE
     name: Service persistence

@@ -135,16 +135,40 @@ rules:
     tags: [credential_access]
     detection:
       selection:
-        url.path|re: "(?i)/(credentials|token$|secret|api-?key|oauth/token|meta-data/iam)"
+        url.path|re: "(?i)/(credentials?(?:/|$)|oauth/token(?:/|$)|api-?keys?(?:/|$)|meta-data/iam|token(?:$|[/?]))"
       condition: selection
 
   # ═══════════════════════════════════════════════════════
   # RED — File Write Security (cross-platform, 6300-9200)
   # ═══════════════════════════════════════════════════════
 
+  - id: WRITE-OPENCLAW-CONFIG
+    name: OpenClaw core config modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9400
+    reason: "Modifying openclaw.json/paired.json is a high-risk operation"
+    tags: [config_tampering, credential_access]
+    detection:
+      selection:
+        path|re: "(?i)((^|[/\\\\])\\.openclaw[/\\\\]openclaw\\.json$|(^|[/\\\\])\\.openclaw[/\\\\]devices[/\\\\]paired\\.json$|(^|[/\\\\])openclaw\\.json$)"
+      condition: selection
+
+  - id: WRITE-OPENCLAW-SECLAW
+    name: OpenClaw seclaw state modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9350
+    reason: "Modifying ~/.openclaw/seclaw content is a high-risk operation"
+    tags: [config_tampering]
+    detection:
+      selection:
+        path|re: "(?i)(^|[/\\\\])\\.openclaw[/\\\\]seclaw([/\\\\]|$)"
+      condition: selection
+
   - id: WRITE-SENSITIVE-SSH
     name: SSH config modification
-    tool: [write, edit, fs_write]
+    tool: [write, edit, apply_patch, fs_write]
     tier: RED
     priority: 9200
     reason: "Modifying SSH configuration files"
@@ -156,7 +180,7 @@ rules:
 
   - id: WRITE-SHELL-PROFILE
     name: Shell profile modification
-    tool: [write, edit, fs_write]
+    tool: [write, edit, apply_patch, fs_write]
     tier: RED
     priority: 9100
     reason: "Modifying shell profile (potential persistence)"
@@ -168,7 +192,7 @@ rules:
 
   - id: WRITE-ENV-FILE
     name: Environment file modification
-    tool: [write, edit, fs_write]
+    tool: [write, edit, apply_patch, fs_write]
     tier: RED
     priority: 6300
     reason: "Writing to environment/credential file"

@@ -409,16 +409,18 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 .test-panel-header:hover { color: var(--text); }
 .test-panel-body { padding: 0 14px 14px; }
 .test-panel-body.collapsed { display: none; }
-.test-panel-body input, .test-panel-body textarea {
+.test-panel-body input, .test-panel-body select {
   width: 100%; padding: 6px 10px; background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-mono);
 }
-.test-panel-body textarea { resize: vertical; }
 .test-panel-body button {
   padding: 6px 14px; background: var(--blue); border: 1px solid var(--blue);
   color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: var(--font-ui);
 }
 .test-panel-body button:hover { opacity: 0.9; }
+.test-input-hint {
+  margin-top: 6px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);
+}
 .test-result {
   margin-top: 8px; padding: 8px 10px; border-radius: 4px; font-size: 12px;
   font-family: var(--font-mono); border-left: 3px solid var(--border); background: var(--bg-input);
@@ -669,11 +671,12 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   <div class="test-panel">
     <div class="test-panel-header" id="test-panel-toggle">&#x25B6; Rule Tester</div>
     <div class="test-panel-body collapsed" id="test-panel-body">
-      <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="test-tool-name" placeholder="Tool name (e.g. exec)" style="flex:0 0 180px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <select id="test-tool-name" style="flex:0 0 220px"></select>
         <button id="btn-test-rule">Test</button>
       </div>
-      <textarea id="test-params" placeholder='{"command":"rm -rf /"}' rows="3"></textarea>
+      <input id="test-input-value" placeholder="Enter command/path/url/query content">
+      <div id="test-input-hint" class="test-input-hint"></div>
       <div id="test-result" class="test-result" style="display:none"></div>
     </div>
   </div>
@@ -1734,32 +1737,105 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   }
 
   // ─── Rule Tester ───
+  var RULE_TESTER_TOOLS = [
+    'exec',
+    'bash',
+    'fs_write',
+    'write',
+    'edit',
+    'apply_patch',
+    'fs_read',
+    'read',
+    'fs_delete',
+    'fs_move',
+    'web_fetch',
+    'web_search',
+  ];
+
+  var RULE_TESTER_PATH_TOOLS = new Set([
+    'fs_write',
+    'write',
+    'edit',
+    'apply_patch',
+    'fs_read',
+    'read',
+    'fs_delete',
+    'fs_move',
+  ]);
+
+  function getRuleTestValueMeta(toolName) {
+    if (toolName === 'exec' || toolName === 'bash') {
+      return { field: 'command', label: 'command', placeholder: 'e.g. rm -rf /tmp/build' };
+    }
+    if (toolName === 'web_fetch') {
+      return { field: 'url', label: 'URL', placeholder: 'e.g. https://example.com/api/data' };
+    }
+    if (toolName === 'web_search') {
+      return { field: 'query', label: 'query', placeholder: 'e.g. git rebase interactive' };
+    }
+    if (RULE_TESTER_PATH_TOOLS.has(toolName)) {
+      return { field: 'path', label: 'path', placeholder: 'e.g. /workspace/src/index.ts' };
+    }
+    return { field: 'path', label: 'path', placeholder: 'e.g. /workspace/file.txt' };
+  }
+
+  function buildRuleTestParams(toolName, value) {
+    var meta = getRuleTestValueMeta(toolName);
+    var params = {};
+    params[meta.field] = value;
+    return params;
+  }
+
+  function initRuleTesterForm() {
+    var toolSelect = document.getElementById('test-tool-name');
+    var valueInput = document.getElementById('test-input-value');
+    var hintEl = document.getElementById('test-input-hint');
+    if (!toolSelect || !valueInput || !hintEl) return;
+
+    toolSelect.innerHTML = RULE_TESTER_TOOLS.map(function(tool) {
+      return '<option value="' + tool + '">' + tool + '</option>';
+    }).join('');
+    toolSelect.value = RULE_TESTER_TOOLS[0];
+
+    function refreshInputMeta() {
+      var meta = getRuleTestValueMeta(toolSelect.value || '');
+      valueInput.placeholder = meta.placeholder;
+      hintEl.textContent = 'Mapped to params.' + meta.field;
+    }
+
+    toolSelect.addEventListener('change', refreshInputMeta);
+    refreshInputMeta();
+  }
+
+  initRuleTesterForm();
+
   document.getElementById('btn-test-rule').addEventListener('click', function() {
     var toolName = document.getElementById('test-tool-name').value.trim();
-    var paramsStr = document.getElementById('test-params').value.trim();
+    var value = document.getElementById('test-input-value').value.trim();
     var resultEl = document.getElementById('test-result');
+    var meta = getRuleTestValueMeta(toolName);
 
     if (!toolName) {
       resultEl.style.display = 'block';
       resultEl.className = 'test-result error';
-      resultEl.textContent = 'Please enter a tool name';
+      resultEl.textContent = 'Please select a tool';
       return;
     }
 
-    var params;
-    try {
-      params = paramsStr ? JSON.parse(paramsStr) : {};
-    } catch(e) {
+    if (!value) {
       resultEl.style.display = 'block';
       resultEl.className = 'test-result error';
-      resultEl.textContent = 'Invalid JSON params: ' + e.message;
+      resultEl.textContent = 'Please enter ' + meta.label + ' content';
       return;
     }
+
+    var params = buildRuleTestParams(toolName, value);
+    var valueField = Object.keys(params)[0];
 
     fetch('/api/rules/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toolName: toolName, params: params }),
+      body: JSON.stringify({ toolName: toolName, value: value, valueField: valueField }),
     })
       .then(function(r) { return r.json(); })
       .then(function(data) {
