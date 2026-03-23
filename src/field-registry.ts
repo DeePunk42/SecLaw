@@ -43,7 +43,10 @@ export function createDefaultFieldRegistry(): FieldRegistry {
   const reg = new FieldRegistry();
 
   // Raw param fields
-  reg.register("command", (ctx) => ctx.command);
+  // `command` resolves to cmd.script when available (includes unwrapped
+  // inner scripts from sh -c "..." so that command|re rules see through
+  // the quoting barrier). Falls back to the raw param for non-exec tools.
+  reg.register("command", (ctx) => ctx.cmd?.script ?? ctx.command);
   reg.register("path", (ctx) => ctx.path);
   reg.register("url", (ctx) => ctx.url);
   reg.register("action", (ctx) => ctx.action);
@@ -56,6 +59,7 @@ export function createDefaultFieldRegistry(): FieldRegistry {
   reg.register("cmd.primary", (ctx) => ctx.cmd?.primary);
   reg.register("cmd.all", (ctx) => ctx.cmd?.all);
   reg.register("cmd.segments", (ctx) => ctx.cmd?.segments);
+  reg.register("cmd.script", (ctx) => ctx.cmd?.script);
 
   // File decomposition
   reg.register("file.dir", (ctx) => ctx.file?.dir);

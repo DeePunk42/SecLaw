@@ -68,6 +68,8 @@ export interface CommandDecomposition {
   primary: string | null;
   all: string[];
   segments: string[];
+  /** Unwrapped inner script from shell -c "..." invocations (concatenated with " && "). */
+  script: string;
 }
 
 /** File path decomposition */
