@@ -48,7 +48,8 @@
         "properties": {
           "enabled": { "type": "boolean" },
           "port": { "type": "number" },
-          "host": { "type": "string" }
+          "host": { "type": "string" },
+          "token": { "type": "string", "description": "Bearer token for dashboard API authentication. Falls back to OPENCLAW_GATEWAY_TOKEN env var." }
         }
       }
     }

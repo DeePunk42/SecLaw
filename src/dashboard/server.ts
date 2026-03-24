@@ -4,6 +4,7 @@
  */
 
 import * as http from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { DashboardConfig, SecLawConfig } from "../config.js";
 import type { AuditLog } from "../audit-log.js";
 import type { RuleEngine } from "../rule-engine.js";
@@ -37,6 +38,13 @@ export interface DashboardDeps {
   getWorkspacePath: () => string | undefined;
   getVarDir: () => string;
   getOpenClawDir: () => string;
+  getToken?: () => string | undefined;
+}
+
+function verifyToken(provided: string | undefined, expected: string): boolean {
+  if (typeof provided !== "string" || provided.length === 0) return false;
+  const hash = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(hash(provided), hash(expected));
 }
 
 let server: http.Server | null = null;
@@ -63,7 +71,7 @@ export function createDashboardRouteHandler(
     // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -75,6 +83,21 @@ export function createDashboardRouteHandler(
 
     // API routes
     if (url.pathname.startsWith("/api/")) {
+      const token = deps.getToken?.();
+      if (token) {
+        const authHeader = req.headers.authorization;
+        const bearerToken = authHeader?.startsWith("Bearer ")
+          ? authHeader.slice(7).trim()
+          : undefined;
+        const queryToken = url.searchParams.get("token") || undefined;
+        const provided = bearerToken || queryToken;
+        if (!verifyToken(provided, token)) {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: { message: "Unauthorized", type: "unauthorized" } }));
+          return true;
+        }
+        url.searchParams.delete("token");
+      }
       handleApiRequest(req, res, url, deps);
       return true;
     }

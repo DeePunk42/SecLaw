@@ -803,6 +803,27 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 - **trustedSenderLabels**: custom multi-select checkbox dropdown with "Select all" / "Clear" actions and a refresh button that scans audit logs for new sender labels via `/api/sender-labels/refresh`
 - **Dashboard settings** (port/host/enabled): read-only, requires restart
 
+### Dashboard Authentication
+
+HTML/SPA pages are freely accessible without authentication. API endpoints (`/api/*`) require a Bearer token when configured.
+
+**Token resolution priority** (in `register()`):
+1. `dashboard.token` — explicit config value
+2. `OPENCLAW_GATEWAY_TOKEN` environment variable — reuses the gateway token
+3. No token → authentication disabled (all API endpoints open)
+
+**Server-side** (`server.ts`):
+- `DashboardDeps.getToken` is an optional field — when absent or returning `undefined`, auth is skipped (test-compatible)
+- Bearer header (`Authorization: Bearer <token>`) is checked first; query param (`?token=xxx`) is a fallback for SSE `EventSource` (which does not support custom headers)
+- Token comparison uses SHA-256 + `crypto.timingSafeEqual` to prevent timing attacks
+- Failed auth returns `401 { error: { message: "Unauthorized", type: "unauthorized" } }`
+
+**Client-side** (`html.ts`):
+- Global `fetch` interceptor adds `Authorization` header to all `/api/` requests; on 401 response, triggers login overlay
+- SSE `EventSource` passes token via `?token=` query parameter
+- Token stored in `sessionStorage` (`seclaw_token` key) — survives page refresh within the tab, cleared on tab close
+- Startup probe: on load, if no stored token, fetches `/api/health` — 401 triggers login overlay
+
 ### SSE Push Mechanism
 
 - `AuditLog.subscribe(fn)` — callback for raw `AuditLogEntry` events

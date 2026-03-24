@@ -253,6 +253,7 @@ export interface DashboardConfig {
   enabled: boolean;
   port: number;
   host: string;
+  token?: string;
 }
 
 export interface SecLawConfig {

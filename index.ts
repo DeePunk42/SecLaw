@@ -1341,6 +1341,10 @@ function register(api: OpenClawPluginApi): void {
   );
 
   if (config.dashboard?.enabled && api.registerHttpRoute) {
+    const dashboardToken = config.dashboard?.token?.trim()
+      || process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
+      || undefined;
+
     const dashboardDeps: import("./src/dashboard/server.js").DashboardDeps = {
       getConfig: () => config,
       updateConfig,
@@ -1369,6 +1373,7 @@ function register(api: OpenClawPluginApi): void {
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
+      getToken: () => dashboardToken,
     };
     api.registerHttpRoute({
       path: "/plugins/seclaw",

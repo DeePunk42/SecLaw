@@ -437,9 +437,30 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 }
 .placeholder h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
 .placeholder p { font-size: 14px; }
+
+/* ─── Login Overlay ─── */
+.login-overlay { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; }
+.login-overlay.hidden { display:none; }
+.login-card { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; padding:32px; width:340px; text-align:center; }
+.login-card h2 { font-size:18px; margin-bottom:4px; }
+.login-sub { font-size:13px; color:var(--text-dim); margin-bottom:16px; }
+.login-card input { width:100%; padding:10px 12px; background:var(--bg-input); border:1px solid var(--border); border-radius:4px; color:var(--text); font-size:14px; font-family:var(--font-mono); margin-bottom:8px; }
+.login-card input:focus { outline:none; border-color:var(--blue); }
+.login-error { color:var(--red); font-size:12px; min-height:18px; margin-bottom:8px; }
+.login-card button { width:100%; padding:10px; background:var(--blue); border:none; border-radius:4px; color:#fff; font-size:14px; cursor:pointer; }
+.login-card button:hover { opacity:0.9; }
 </style>
 </head>
 <body>
+<div id="login-overlay" class="login-overlay hidden">
+  <div class="login-card">
+    <h2>SecLaw Dashboard</h2>
+    <div class="login-sub">Enter your API token to continue</div>
+    <input id="login-token" type="password" placeholder="Bearer token" autocomplete="off" />
+    <div id="login-error" class="login-error"></div>
+    <button id="login-submit">Authenticate</button>
+  </div>
+</div>
 <header>
   <h1><span class="status-dot"></span>Sec<span>Law</span> Dashboard</h1>
   <span style="font-size:12px;color:var(--text-dim)">127.0.0.1</span>
@@ -711,6 +732,58 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 
 <script>
 (function() {
+  // ─── Auth Layer ───
+  var _origFetch = window.fetch;
+  var _dashToken = sessionStorage.getItem('seclaw_token') || '';
+
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    if (_dashToken && typeof url === 'string' && url.indexOf('/api/') !== -1) {
+      opts.headers = Object.assign({}, opts.headers || {}, {
+        'Authorization': 'Bearer ' + _dashToken
+      });
+    }
+    return _origFetch.call(window, url, opts).then(function(resp) {
+      if (resp.status === 401) { showLoginOverlay(); throw new Error('Unauthorized'); }
+      return resp;
+    });
+  };
+
+  function showLoginOverlay() {
+    var overlay = document.getElementById('login-overlay');
+    overlay.classList.remove('hidden');
+    var inp = document.getElementById('login-token');
+    setTimeout(function() { inp.focus(); }, 50);
+  }
+
+  function attemptLogin() {
+    var inp = document.getElementById('login-token');
+    var errEl = document.getElementById('login-error');
+    var token = inp.value.trim();
+    if (!token) { errEl.textContent = 'Token is required'; return; }
+    errEl.textContent = '';
+    _origFetch('/api/health', { headers: { 'Authorization': 'Bearer ' + token } })
+      .then(function(r) {
+        if (r.status === 401) { errEl.textContent = 'Invalid token'; return; }
+        _dashToken = token;
+        sessionStorage.setItem('seclaw_token', token);
+        location.reload();
+      })
+      .catch(function() { errEl.textContent = 'Connection failed'; });
+  }
+
+  document.getElementById('login-submit').addEventListener('click', attemptLogin);
+  document.getElementById('login-token').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') attemptLogin();
+  });
+
+  // Startup probe: check if auth is required
+  if (!_dashToken) {
+    _origFetch('/api/health').then(function(r) {
+      if (r.status === 401) showLoginOverlay();
+    }).catch(function() {});
+  }
+
   // ─── Tab switching ───
   const navBtns = document.querySelectorAll('nav button');
   const tabs = document.querySelectorAll('.tab-content');
@@ -1028,7 +1101,9 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       })
       .catch(function() { /* best-effort */ });
 
-    eventSource = new EventSource('/api/tool-calls/stream');
+    var sseUrl = '/api/tool-calls/stream';
+    if (_dashToken) sseUrl += '?token=' + encodeURIComponent(_dashToken);
+    eventSource = new EventSource(sseUrl);
 
     eventSource.onopen = function() {
       if (sseRetryTimer) {
