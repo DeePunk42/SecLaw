@@ -77,7 +77,7 @@ src/
     path-patterns.ts        decomposePath() + isPathInWorkspace()
     url-patterns.ts         decomposeURL() + isPrivateIP()
   dashboard/
-    server.ts               HTTP server lifecycle (start/stop, routing)
+    server.ts               Gateway route handler + standalone server lifecycle
     api.ts                  REST API + SSE endpoint handlers
     html.ts                 Embedded SPA frontend (dark theme, 4 tabs)
     sender-labels.ts        Sender label registry (scan JSONL logs, persist to JSON)
@@ -685,12 +685,33 @@ On initialization, SecLaw logs (info level):
 
 ## Dashboard (Web UI)
 
-SecLaw includes a built-in web dashboard on port 19198 (configurable) for real-time monitoring and configuration.
+SecLaw includes a built-in web dashboard for real-time monitoring and configuration.
 
-### Server Lifecycle
+### Gateway Route Integration
 
-- `startDashboard(config, deps)` creates an `http.Server` on `config.host:config.port`
-- `stopDashboard()` gracefully shuts down the server
+In production (OpenClaw 3.23+), the dashboard is served as a gateway route at `/plugins/seclaw/` using `api.registerHttpRoute()`:
+
+```typescript
+api.registerHttpRoute({
+  path: "/plugins/seclaw",
+  auth: "plugin",
+  match: "prefix",
+  handler: createDashboardRouteHandler(dashboardDeps, "/plugins/seclaw"),
+});
+```
+
+`createDashboardRouteHandler(deps, basePath)` is the core request handler:
+- Strips `basePath` prefix from incoming URLs (e.g. `/plugins/seclaw/api/logs` → `/api/logs`)
+- Routes `/api/*` paths to `handleApiRequest()` (existing API handler, zero changes)
+- Serves SPA HTML for all other paths via `getDashboardHtml(basePath)`, which rewrites `fetch('/api/...')` URLs to include the base path
+- Returns `Promise<boolean>` for gateway compatibility
+
+When `api.registerHttpRoute` is not available (older gateway), the standalone `http.Server` is used as fallback on port 19198.
+
+### Standalone Server (Testing)
+
+- `startDashboard(config, deps)` — internally uses `createDashboardRouteHandler(deps, "")` with empty basePath
+- `stopDashboard()` — gracefully shuts down the server
 - `server.unref()` ensures the server doesn't block process exit
 - Controlled by `dashboard.enabled` config (default: `true`)
 

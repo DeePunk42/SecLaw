@@ -33,6 +33,7 @@ import {
   updateSource,
 } from "./src/intent-context.js";
 import {
+  createDashboardRouteHandler,
   startDashboard,
   stopDashboard,
   type ModelOption,
@@ -129,6 +130,15 @@ export interface OpenClawPluginApi {
     opts?: { priority?: number },
   ) => void;
   resolvePath: (input: string) => string;
+  registerHttpRoute?: (params: {
+    path: string;
+    handler: (
+      req: import("node:http").IncomingMessage,
+      res: import("node:http").ServerResponse,
+    ) => Promise<boolean | void> | boolean | void;
+    auth: "gateway" | "plugin";
+    match?: "exact" | "prefix";
+  }) => void;
   emitAgentEvent?: EmitAgentEventFn;
   runtime?: {
     config?: {
@@ -373,6 +383,8 @@ export interface PluginInitContext {
   varDir?: string;
   emitAgentEvent?: EmitAgentEventFn;
   llmCall?: LLMCallFn;
+  /** When true, skip standalone dashboard server (used when gateway route is available) */
+  skipDashboard?: boolean;
 }
 
 function getManagedRulesDir(): string {
@@ -494,7 +506,8 @@ export function init(ctx: PluginInitContext): void {
   }
 
   // Start dashboard if enabled (fire-and-forget, don't block init)
-  if (config.dashboard?.enabled) {
+  // Skipped when gateway route handles the dashboard (ctx.skipDashboard)
+  if (config.dashboard?.enabled && !ctx.skipDashboard) {
     startDashboard(config.dashboard, {
       getConfig: () => config,
       updateConfig,
@@ -1250,6 +1263,7 @@ function register(api: OpenClawPluginApi): void {
     workspacePath: wsDir,
     pluginDir: getDirname(),
     emitAgentEvent: api.emitAgentEvent,
+    skipDashboard: !!api.registerHttpRoute,
   });
 
   // First-install bootstrap: seed sender labels and persist default config
@@ -1326,7 +1340,44 @@ function register(api: OpenClawPluginApi): void {
     `[seclaw] 🚀 Initialized rules=${ruleEngine.getRules().length} llm=${config.llm.enabled ? config.llm.model : "disabled"} policy=${config.timeouts.syncTimeoutPolicy}`,
   );
 
-  if (config.dashboard?.enabled) {
+  if (config.dashboard?.enabled && api.registerHttpRoute) {
+    const dashboardDeps: import("./src/dashboard/server.js").DashboardDeps = {
+      getConfig: () => config,
+      updateConfig,
+      getAuditLog: () => auditLog,
+      getRuleEngine: () => ruleEngine,
+      getAsyncQueue: () => asyncQueue,
+      getAvailableModels: () => availableModelsProvider?.() ?? [],
+      testModelAvailability: async (model: string) => {
+        if (!gatewayApi) {
+          return { ok: false, model, error: "Gateway API unavailable", errorCode: "config_invalid" as const };
+        }
+        const testCfg: SecLawConfig = { ...config, llm: { ...config.llm, model, enabled: true } };
+        const call = createGatewayLLMCallFn(testCfg, gatewayApi);
+        if (!call) {
+          return { ok: false, model, error: `Failed to resolve provider for "${model}"`, errorCode: "config_invalid" as const };
+        }
+        const startedAt = Date.now();
+        try {
+          const response = await call({ model, messages: [{ role: "user", content: "Reply with OK only." }], max_tokens: 16 });
+          return { ok: true, model, latencyMs: Date.now() - startedAt, preview: response.content.trim().slice(0, 120) };
+        } catch (error) {
+          const formatted = formatModelTestError(error);
+          return { ok: false, model, error: formatted.error, statusCode: formatted.statusCode, errorCode: formatted.errorCode };
+        }
+      },
+      getWorkspacePath: () => workspacePath,
+      getVarDir: () => varDir,
+      getOpenClawDir: () => getOpenClawDir(),
+    };
+    api.registerHttpRoute({
+      path: "/plugins/seclaw",
+      auth: "plugin",
+      match: "prefix",
+      handler: createDashboardRouteHandler(dashboardDeps, "/plugins/seclaw"),
+    });
+    api.logger.info("[seclaw] 📊 Dashboard: /plugins/seclaw");
+  } else if (config.dashboard?.enabled) {
     api.logger.info(
       `[seclaw] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`,
     );

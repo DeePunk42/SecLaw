@@ -40,10 +40,57 @@ export interface DashboardDeps {
 }
 
 let server: http.Server | null = null;
-let cachedHtml: string | null = null;
 
 /**
- * Start the dashboard HTTP server.
+ * Create a request handler for the dashboard routes.
+ * Used by both the gateway route (production) and standalone server (testing).
+ *
+ * @param deps - Dashboard dependencies (config, audit log, rule engine, etc.)
+ * @param basePath - URL prefix to strip (e.g. "/plugins/seclaw"); empty for standalone
+ */
+export function createDashboardRouteHandler(
+  deps: DashboardDeps,
+  basePath: string,
+): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> {
+  let cachedHtml: string | null = null;
+  return async (req, res) => {
+    const rawUrl = req.url || "/";
+    let path = rawUrl;
+    if (basePath && rawUrl.startsWith(basePath)) {
+      path = rawUrl.slice(basePath.length) || "/";
+    }
+
+    // CORS headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return true;
+    }
+
+    const url = new URL(path, "http://127.0.0.1");
+
+    // API routes
+    if (url.pathname.startsWith("/api/")) {
+      handleApiRequest(req, res, url, deps);
+      return true;
+    }
+
+    // Serve embedded HTML for all other routes (SPA)
+    if (!cachedHtml) {
+      cachedHtml = getDashboardHtml(basePath);
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(cachedHtml);
+    return true;
+  };
+}
+
+/**
+ * Start the dashboard HTTP server (standalone — used for testing).
  * Resolves with the actual port (useful when port=0 for OS-assigned port).
  */
 export function startDashboard(
@@ -57,36 +104,11 @@ export function startDashboard(
   }
 
   const { host, port } = dashboardConfig;
+  const handler = createDashboardRouteHandler(deps, "");
 
   return new Promise((resolve, reject) => {
     const srv = http.createServer((req, res) => {
-      // CORS headers for local development
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-      if (req.method === "OPTIONS") {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-
-      const actualAddr = srv.address();
-      const actualPort = actualAddr && typeof actualAddr !== "string" ? actualAddr.port : port;
-      const url = new URL(req.url || "/", `http://${host}:${actualPort}`);
-
-      // API routes
-      if (url.pathname.startsWith("/api/")) {
-        handleApiRequest(req, res, url, deps);
-        return;
-      }
-
-      // Serve embedded HTML for all other routes (SPA)
-      if (!cachedHtml) {
-        cachedHtml = getDashboardHtml();
-      }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(cachedHtml);
+      handler(req, res);
     });
 
     srv.unref(); // don't block process exit
@@ -110,7 +132,6 @@ export function stopDashboard(): Promise<void> {
       resolve();
       return;
     }
-    cachedHtml = null;
     const srv = server;
     server = null;
     srv.close(() => {

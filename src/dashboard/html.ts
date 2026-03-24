@@ -3,8 +3,8 @@
  * No external resources (no CDN, no font loading).
  */
 
-export function getDashboardHtml(): string {
-  return `<!DOCTYPE html>
+export function getDashboardHtml(basePath: string = ""): string {
+  let html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1952,4 +1952,9 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 </script>
 </body>
 </html>`;
+  if (basePath) {
+    html = html.replaceAll("'/api/", `'${basePath}/api/`);
+    html = html.replaceAll('"/api/', `"${basePath}/api/`);
+  }
+  return html;
 }
