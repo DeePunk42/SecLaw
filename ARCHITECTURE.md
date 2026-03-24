@@ -42,11 +42,11 @@ Tool Call (before_tool_call)
           │
           ├─ Trusted sender → Intent-alignment prompt
           │   ├─ SAFE → Allow execution
-          │   └─ DANGER → BLOCK + override PIN + buttons
+          │   └─ DANGER → BLOCK + override PIN
           │
           └─ Untrusted sender → Security-safety prompt
               ├─ SAFE → Allow execution
-              └─ DANGER → BLOCK (no override, no PIN, no buttons)
+              └─ DANGER → BLOCK (no override, no PIN)
 ```
 
 ## Module Structure
@@ -256,13 +256,8 @@ The same logic applies to `/pin` override consumption in `onUserMessage()`: when
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason, buttons? }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called, PIN is shown in hint, `buttons` is included. **Untrusted**: no override is registered, no PIN, no buttons — the block is final
-2. **Channel-agnostic buttons** — The `buttons` field in the return value is a structured button spec (`Array<Array<{ text, callback_data }>>`). The gateway renders it per channel type:
-   - **Telegram**: inline keyboard via message action `buttons` field
-   - **Slack**: converted to `[[slack_buttons: ...]]` text directive
-   - **Discord**: converted to Discord components v2 buttons
-   - **Web/CLI/other**: ignored; the text `blockReason` already contains the `/pin<pin>` instruction
-3. **User confirms** — Sends `/pin<pin>` (text input or button callback — Telegram callbacks deliver `callback_data` as text)
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called, PIN is shown in hint. **Untrusted**: no override is registered, no PIN — the block is final
+2. **User confirms** — Sends `/pin<pin>` via text input
 4. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 
@@ -356,7 +351,7 @@ LLM errors are classified into categories with different handling strategies:
 
 **Service error vs security finding**: `beforeToolCall` checks `_errorInfo` to distinguish service issues from actual LLM security evaluations:
 - **Service errors** (rate_limited, auth_error, server_error, network_error): block/allow per `syncTimeoutPolicy`, no override PIN (overriding a service issue is meaningless), clear `[SERVICE UNAVAILABLE]` or `[WARNING]` message asking the agent to stop
-- **Security findings** (actual DANGER from LLM): block with override PIN and buttons (existing flow)
+- **Security findings** (actual DANGER from LLM): block with override PIN (existing flow)
 - **Async audit service errors**: silently skipped — do not set danger flag (prevents false interrupts)
 
 **Configuration** (`llm.retry`):
@@ -657,7 +652,7 @@ Or via plugin config `rules.extra` array.
 
 ## OpenClaw Plugin Integration
 
-SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Override buttons are delivered via the `buttons` field in `beforeToolCall` return values, not via SSE.
+SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Note: `emitAgentEvent` was removed from the OpenClaw plugin API in 3.23; when absent, SSE notifications are safely skipped via null guard.
 
 ### Registered Hooks
 

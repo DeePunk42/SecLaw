@@ -523,28 +523,7 @@ describe("Integration: Override flow", () => {
     expect(retryResult!.block).toBe(true);
   });
 
-  it("block result includes buttons field for channel-agnostic override UI", async () => {
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Do something"));
-
-    mockLLM.mockResolvedValue({
-      content: '{"decision": "DANGER", "reason": "Blocked"}',
-    });
-
-    const result = await beforeToolCall(
-      { toolName: "exec", params: { command: "rm -rf /" } },
-      ctx,
-    );
-
-    expect(result).toBeDefined();
-    expect(result!.block).toBe(true);
-    expect(result!.buttons).toBeDefined();
-    expect(result!.buttons!.length).toBe(1);
-    expect(result!.buttons![0].length).toBe(1);
-    expect(result!.buttons![0][0].text).toContain("Override");
-    expect(result!.buttons![0][0].callback_data).toMatch(/^\/pin\d{6}$/);
-  });
-
-  it("untrusted sender sees no PIN and no buttons", async () => {
+  it("untrusted sender sees no PIN", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Bob", "Do something dangerous"));
 
     mockLLM.mockResolvedValue({
@@ -560,7 +539,6 @@ describe("Integration: Override flow", () => {
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("not in llm.trustedSenderLabels");
     expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
-    expect(result!.buttons).toBeUndefined();
   });
 
   it("untrusted DANGER does not register pendingOverride", async () => {

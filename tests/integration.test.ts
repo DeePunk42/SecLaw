@@ -415,7 +415,6 @@ describe("Integration: LLM service errors", () => {
       expect(result!.blockReason).toContain("SERVICE UNAVAILABLE");
       expect(result!.blockReason).toContain("STOP");
       expect(result!.blockReason).not.toContain("--- Override ---");
-      expect(result!.buttons).toBeUndefined();
     });
   });
 
@@ -567,7 +566,7 @@ describe("Integration: Trust-branched LLM prompts", () => {
     });
   });
 
-  it("trusted sender RED DANGER → prompt contains intent-alignment, response has PIN + buttons", async () => {
+  it("trusted sender RED DANGER → prompt contains intent-alignment, response has PIN", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval command"));
 
     mockLLM.mockResolvedValue({
@@ -587,15 +586,13 @@ describe("Integration: Trust-branched LLM prompts", () => {
     expect(promptContent).toContain("DANGER is a high bar");
     expect(promptContent).not.toContain("security auditor");
 
-    // Verify block response has PIN + buttons
+    // Verify block response has PIN
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toMatch(/\/pin\d{6}/);
-    expect(result!.buttons).toBeDefined();
-    expect(result!.buttons!.length).toBe(1);
   });
 
-  it("untrusted sender RED DANGER → prompt contains security auditor, response has NO PIN, NO buttons", async () => {
+  it("untrusted sender RED DANGER → prompt contains security auditor, response has NO PIN", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Bob", "Run eval command"));
 
     mockLLM.mockResolvedValue({
@@ -614,11 +611,10 @@ describe("Integration: Trust-branched LLM prompts", () => {
     expect(promptContent).toContain("security auditor");
     expect(promptContent).not.toContain("intent-alignment");
 
-    // Verify block response has NO PIN, NO buttons
+    // Verify block response has NO PIN
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
-    expect(result!.buttons).toBeUndefined();
   });
 
   it("trusted sender override flow works end-to-end with intent-alignment prompt", async () => {

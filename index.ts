@@ -55,8 +55,6 @@ export interface PluginHookBeforeToolCallResult {
   params?: Record<string, unknown>;
   block?: boolean;
   blockReason?: string;
-  /** Channel-agnostic button spec. Gateway renders per channel type. */
-  buttons?: Array<Array<{ text: string; callback_data: string }>>;
 }
 
 /** OpenClaw PluginHookAfterToolCallEvent */
@@ -120,9 +118,10 @@ export interface OpenClawPluginApi {
   } & Record<string, unknown>;
   pluginConfig?: Record<string, unknown>;
   logger: {
-    info: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
-    debug?: (...args: unknown[]) => void;
+    info: (message: string) => void;
+    warn: (message: string) => void;
+    error: (message: string) => void;
+    debug?: (message: string) => void;
   };
   on: (
     hookName: string,
@@ -362,12 +361,6 @@ function formatOverrideHint(pin: string, showPin: boolean): string {
     `If the user confirms this is intentional, they can reply with: /pin${pin}`,
     "Explain the risk to the user and let them decide whether to proceed.",
   ].join("\n");
-}
-
-function overrideButtons(
-  pin: string,
-): Array<Array<{ text: string; callback_data: string }>> {
-  return [[{ text: "⚠️ Confirm Override", callback_data: `/pin${pin}` }]];
 }
 
 function formatAsyncDangerBlockForAgent(report: DangerReport): string {
@@ -986,7 +979,6 @@ export async function beforeToolCall(
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
-        buttons: overrideButtons(pin),
       };
     } else {
       auditLog.logBlock(
@@ -1074,7 +1066,6 @@ export async function beforeToolCall(
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
-          buttons: overrideButtons(pin),
         };
       } else {
         auditLog.logBlock(
@@ -1215,7 +1206,6 @@ export async function beforeToolCall(
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
-        buttons: overrideButtons(pin),
       };
     } else {
       auditLog.logBlock(
@@ -1364,13 +1354,11 @@ function register(api: OpenClawPluginApi): void {
       // Determine auth mode for logging
       if (config.llm.apiKey) {
         api.logger.info(
-          "[seclaw] 🚀 LLM connected via explicit apiKey override",
-          `model=${config.llm.model}`,
+          `[seclaw] 🚀 LLM connected via explicit apiKey override model=${config.llm.model}`,
         );
       } else if (process.env.SECLAW_API_KEY?.trim()) {
         api.logger.info(
-          "[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var",
-          `model=${config.llm.model}`,
+          `[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var model=${config.llm.model}`,
         );
       } else {
       const resolved = resolveProviderTransport(config.llm.model, api);
@@ -1379,8 +1367,7 @@ function register(api: OpenClawPluginApi): void {
       const hasRuntimeAuth = !!api.runtime?.modelAuth;
       if (!hasStaticKey && hasRuntimeAuth) {
         api.logger.info(
-          "[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth)",
-          `model=${config.llm.model}`,
+          `[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth) model=${config.llm.model}`,
         );
       } else if (!hasStaticKey && !hasRuntimeAuth && (providerAuth === "oauth" || providerAuth === "token")) {
         api.logger.error(
@@ -1389,8 +1376,7 @@ function register(api: OpenClawPluginApi): void {
         );
       } else {
         api.logger.info(
-          "[seclaw] 🚀 LLM connected via provider config",
-          `model=${config.llm.model}`,
+          `[seclaw] 🚀 LLM connected via provider config model=${config.llm.model}`,
         );
       }
       }
@@ -1422,10 +1408,7 @@ function register(api: OpenClawPluginApi): void {
   }
 
   api.logger.info(
-    "[seclaw] 🚀 Initialized",
-    `rules=${ruleEngine.getRules().length}`,
-    `llm=${config.llm.enabled ? config.llm.model : "disabled"}`,
-    `policy=${config.timeouts.syncTimeoutPolicy}`,
+    `[seclaw] 🚀 Initialized rules=${ruleEngine.getRules().length} llm=${config.llm.enabled ? config.llm.model : "disabled"} policy=${config.timeouts.syncTimeoutPolicy}`,
   );
 
   if (config.dashboard?.enabled) {

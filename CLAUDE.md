@@ -43,7 +43,7 @@ After tool execution (`after_tool_call`), YELLOW and RED calls are enqueued for 
 
 ### Override mechanism
 
-When a call is blocked, a 6-digit decimal PIN is generated and a `buttons` field is returned alongside `blockReason` for channel-agnostic inline button rendering (Telegram inline keyboard, Slack buttons, etc.). Trusted senders (`config.llm.trustedSenderLabels`) can reply `/pin<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
+When a call is blocked, a 6-digit decimal PIN is generated and included in the `blockReason` text. Trusted senders (`config.llm.trustedSenderLabels`) can reply `/pin<pin>` to unblock. The override is **turn-scoped** — it covers all tool calls of the same `toolName` within the same turn (until the next user message).
 
 ### Module map
 
@@ -73,7 +73,7 @@ Rule IDs follow prefixes: `CAT-` (catastrophic, priority 9000-10000), `TOOL-Y-` 
 
 `register(api: OpenClawPluginApi)` hooks into: `before_tool_call` (priority 9999), `after_tool_call` (100), `before_prompt_build`, `llm_input`, `session_start`, `before_reset`, `before_compaction`.
 
-The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` for output routing, `pluginConfig` for seclaw settings, `emitAgentEvent` for SSE (async danger notifications only), `config.workspace.dir` for workspace path.
+The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` (with `info`/`warn`/`error`/`debug?`, single-string signatures) for output routing, `pluginConfig` for seclaw settings, `config.workspace.dir` for workspace path. `emitAgentEvent` was removed in OpenClaw 3.23; SecLaw handles its absence via null guard.
 
 ### Dashboard
 
