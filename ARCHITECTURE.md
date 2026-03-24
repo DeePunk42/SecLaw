@@ -469,7 +469,7 @@ If the auth profile is found but the provider has no known base URL, resolution 
 Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 4-level priority order:
 
 1. **Explicit `config.llm.apiKey`** — if set in SecLaw plugin config, used directly as `Bearer` token. This is the highest-priority override, bypassing all provider-level auth. The key is never persisted to `openclaw.json` (stripped before writing). Set via dashboard `PUT /api/config` or environment-injected plugin config.
-2. **Runtime auth resolution** — `api.runtime?.modelAuth?.resolveApiKeyForProvider({ provider })` handles all provider-level auth internally: static API keys, auth profiles, OAuth token refresh, file-based secrets (JSON pointer / RFC 6901), and environment variables. SecLaw delegates entirely to the runtime for provider auth resolution. For `oauth`/`token` auth modes, failure or empty result throws `LLMHttpError(401)`.
+2. **Runtime auth resolution** — `api.runtime?.modelAuth?.resolveApiKeyForProvider({ provider, cfg })` handles all provider-level auth internally: static API keys, auth profiles, OAuth token refresh, file-based secrets (JSON pointer / RFC 6901), and environment variables. SecLaw delegates entirely to the runtime for provider auth resolution. For `oauth`/`token` auth modes, failure or empty result throws `LLMHttpError(401)`.
 3. **`SECLAW_API_KEY` env var** — if the runtime resolver is unavailable or returns empty (for non-oauth providers), the `SECLAW_API_KEY` environment variable is used as a last-resort fallback.
 4. **No auth available** — if none of the above produces a key, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama).
 
@@ -478,7 +478,7 @@ The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it
 ```typescript
 runtime?: {
   modelAuth?: {
-    resolveApiKeyForProvider: (params: { provider: string }) =>
+    resolveApiKeyForProvider: (params: { provider: string; cfg?: Record<string, unknown> }) =>
       Promise<{ apiKey?: string; source: string; mode: string }>
   }
 }

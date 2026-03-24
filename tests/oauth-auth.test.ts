@@ -129,7 +129,9 @@ describe("OAuth provider auth", () => {
     });
 
     // Runtime resolver is called with provider name
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "myapi" });
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "myapi" }),
+    );
     // Verify Authorization header uses the resolved key
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const headers = fetchMock.mock.calls[0][1].headers;
@@ -178,7 +180,9 @@ describe("OAuth provider auth", () => {
     });
 
     // resolveApiKeyForProvider should be called since no static apiKey + auth is oauth
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "codex" });
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex" }),
+    );
     // Verify Authorization uses the resolved OAuth token
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["Authorization"]).toBe("Bearer oauth-token-123");
@@ -264,8 +268,10 @@ describe("OAuth provider auth", () => {
       max_tokens: 100,
     });
 
-    // Resolver called with provider name only
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "deepseek" });
+    // Resolver called with provider name
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "deepseek" }),
+    );
     // Verify Authorization uses the resolved key
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["Authorization"]).toBe("Bearer sk-resolved-from-file");
@@ -1172,8 +1178,10 @@ describe("Runtime auth resolver delegation", () => {
       max_tokens: 100,
     });
 
-    // Runtime resolver called with provider name only
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "deepseek" });
+    // Runtime resolver called with provider name
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "deepseek" }),
+    );
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["Authorization"]).toBe("Bearer sk-resolved-by-runtime");
   });
@@ -1295,7 +1303,9 @@ describe("Runtime auth resolver delegation", () => {
       max_tokens: 100,
     });
 
-    expect(resolveApiKey).toHaveBeenCalledWith({ provider: "codex" });
+    expect(resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex" }),
+    );
     const headers = fetchMock.mock.calls[0][1].headers;
     expect(headers["Authorization"]).toBe("Bearer oauth-token-abc");
   });

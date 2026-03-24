@@ -137,6 +137,7 @@ export interface OpenClawPluginApi {
     modelAuth?: {
       resolveApiKeyForProvider: (params: {
         provider: string;
+        cfg?: Record<string, unknown>;
       }) => Promise<{
         apiKey?: string;
         source: string;
@@ -1709,7 +1710,10 @@ async function resolveBearerToken(
   const resolver = api.runtime?.modelAuth?.resolveApiKeyForProvider;
   if (resolver) {
     try {
-      const authResult = await resolver({ provider: transport.providerName });
+      const authResult = await resolver({
+        provider: transport.providerName,
+        cfg: resolveRuntimeConfig(api),
+      });
       const token = authResult.apiKey?.trim();
       if (token) return token;
     } catch (error: unknown) {
