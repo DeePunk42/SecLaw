@@ -733,8 +733,20 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
 <script>
 (function() {
   // ─── Auth Layer ───
+  function findGatewayToken() {
+    try {
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var key = sessionStorage.key(i);
+        if (key && key.indexOf('openclaw.control.token.v1:') === 0) {
+          var val = sessionStorage.getItem(key);
+          if (val && val.trim()) return val.trim();
+        }
+      }
+    } catch(e) {}
+    return '';
+  }
   var _origFetch = window.fetch;
-  var _dashToken = sessionStorage.getItem('seclaw_token') || '';
+  var _dashToken = sessionStorage.getItem('seclaw_token') || findGatewayToken();
 
   window.fetch = function(url, opts) {
     opts = opts || {};

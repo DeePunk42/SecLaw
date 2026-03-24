@@ -821,7 +821,10 @@ HTML/SPA pages are freely accessible without authentication. API endpoints (`/ap
 **Client-side** (`html.ts`):
 - Global `fetch` interceptor adds `Authorization` header to all `/api/` requests; on 401 response, triggers login overlay
 - SSE `EventSource` passes token via `?token=` query parameter
-- Token stored in `sessionStorage` (`seclaw_token` key) — survives page refresh within the tab, cleared on tab close
+- Token initialization priority:
+  1. `sessionStorage['seclaw_token']` — user manually entered via login overlay
+  2. OpenClaw gateway token — auto-discovered from `sessionStorage` keys matching `openclaw.control.token.v1:*` prefix (SSO: when SecLaw is mounted as a gateway route, it shares `sessionStorage` with the OpenClaw dashboard, enabling auto-login)
+  3. Empty → startup probe detects auth requirement → login overlay
 - Startup probe: on load, if no stored token, fetches `/api/health` — 401 triggers login overlay
 
 ### SSE Push Mechanism
