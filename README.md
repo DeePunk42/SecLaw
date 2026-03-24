@@ -20,7 +20,7 @@ openclaw plugins install @deepunk/seclaw
 启动 OpenClaw 后，访问 SecLaw Dashboard：
 
 ```
-http://127.0.0.1:19198
+http://localhost:18789/plugins/seclaw
 ```
 
 在 **Config** 标签页中：
@@ -38,7 +38,7 @@ http://127.0.0.1:19198
 ```
 [seclaw] 🚀 LLM connected via provider config model=myapi/gpt-4o
 [seclaw] 🚀 Initialized rules=28 llm=myapi/gpt-4o policy=fail_closed
-[seclaw] 📊 Dashboard: http://0.0.0.0:19198
+[seclaw] 📊 Dashboard: /plugins/seclaw
 ```
 
 此时 SecLaw 已在工作，所有 Agent 工具调用都会经过实时安全审计。在 Dashboard 的 **Audit Log** 标签页可以看到实时审计卡片。
