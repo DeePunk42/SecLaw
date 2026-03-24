@@ -137,13 +137,10 @@ export interface OpenClawPluginApi {
     modelAuth?: {
       resolveApiKeyForProvider: (params: {
         provider: string;
-        cfg?: Record<string, unknown>;
-        apiKeyRef?: unknown;
       }) => Promise<{
         apiKey?: string;
-        profileId?: string;
         source: string;
-        mode: "api-key" | "oauth" | "token" | "aws-sdk";
+        mode: string;
       }>;
     };
   };
@@ -156,90 +153,6 @@ type GatewayProviderConfig = {
   api?: string;
   models?: Array<{ id: string; name?: string; [key: string]: unknown }>;
 };
-
-// ─── File-based secret resolution ───
-
-interface FileSecretRef {
-  source: "file";
-  provider: string;
-  id: string;
-}
-
-function isFileSecretRef(value: unknown): value is FileSecretRef {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return obj.source === "file" && typeof obj.provider === "string" && typeof obj.id === "string";
-}
-
-function resolveFileSecret(ref: FileSecretRef, api: OpenClawPluginApi): string | undefined {
-  const providerDef = lookupSecretsProviderDef(ref.provider, api);
-  if (!providerDef) return undefined;
-
-  const filePath = providerDef.path.startsWith("~")
-    ? path.join(os.homedir(), providerDef.path.slice(1))
-    : providerDef.path;
-
-  try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    if (providerDef.mode === "text") return content.trim() || undefined;
-    return navigateJsonPointer(JSON.parse(content), ref.id);
-  } catch {
-    return undefined;
-  }
-}
-
-function navigateJsonPointer(obj: unknown, pointer: string): string | undefined {
-  const segments = pointer.split("/").filter(Boolean);
-  let current: unknown = obj;
-  for (const seg of segments) {
-    if (current == null || typeof current !== "object") return undefined;
-    const key = seg.replace(/~1/g, "/").replace(/~0/g, "~"); // RFC 6901
-    current = (current as Record<string, unknown>)[key];
-  }
-  return typeof current === "string" ? current : undefined;
-}
-
-function lookupSecretsProviderDef(
-  name: string,
-  api: OpenClawPluginApi,
-): { path: string; mode: "json" | "text" } | undefined {
-  // Try api.config.secrets.providers first
-  const fromConfig = extractSecretsProviderDef(api.config as Record<string, unknown>, name);
-  if (fromConfig) return fromConfig;
-
-  // Try runtime config
-  try {
-    const runtimeCfg = resolveRuntimeConfig(api);
-    if (runtimeCfg) {
-      const fromRuntime = extractSecretsProviderDef(runtimeCfg, name);
-      if (fromRuntime) return fromRuntime;
-    }
-  } catch { /* ignore */ }
-
-  // Try reading openclaw.json from disk
-  try {
-    const raw = fs.readFileSync(path.join(getOpenClawDir(), "openclaw.json"), "utf-8");
-    const fromDisk = extractSecretsProviderDef(JSON.parse(raw), name);
-    if (fromDisk) return fromDisk;
-  } catch { /* ignore */ }
-
-  return undefined;
-}
-
-function extractSecretsProviderDef(
-  cfg: Record<string, unknown>,
-  name: string,
-): { path: string; mode: "json" | "text" } | undefined {
-  const secrets = cfg?.secrets;
-  if (!secrets || typeof secrets !== "object") return undefined;
-  const providers = (secrets as Record<string, unknown>).providers;
-  if (!providers || typeof providers !== "object") return undefined;
-  const def = (providers as Record<string, unknown>)[name];
-  if (!def || typeof def !== "object") return undefined;
-  const d = def as Record<string, unknown>;
-  if (d.source !== "file" || typeof d.path !== "string") return undefined;
-  return { path: d.path, mode: d.mode === "text" ? "text" : "json" };
-}
 
 // ─── LLMHttpError ───
 
@@ -1363,7 +1276,8 @@ function register(api: OpenClawPluginApi): void {
       } else {
       const resolved = resolveProviderTransport(config.llm.model, api);
       const providerAuth = resolved?.authMode;
-      const hasStaticKey = !!resolved?.staticApiKey;
+      const providerCfg = findProviderConfig(getMergedProviders(api), resolved?.providerName ?? "");
+      const hasStaticKey = typeof providerCfg?.apiKey === "string";
       const hasRuntimeAuth = !!api.runtime?.modelAuth;
       if (!hasStaticKey && hasRuntimeAuth) {
         api.logger.info(
@@ -1481,8 +1395,6 @@ type ResolvedProviderTransport = {
   modelId: string;
   apiSurface: ProviderApiSurface;
   endpoint: string;
-  staticApiKey?: string;
-  apiKeyRef?: unknown; // raw apiKey from provider config (may be secret reference object)
   authMode?: string;
 };
 
@@ -1645,37 +1557,11 @@ function resolveProviderTransport(
         ? appendEndpoint(provider.baseUrl, "/responses")
         : appendEndpoint(provider.baseUrl, "/chat/completions");
 
-  // When apiKey is not a string (e.g. file-based secret reference object),
-  // try to resolve it from the runtime config snapshot where secrets are
-  // already resolved to plain strings.
-  let resolvedApiKey: string | undefined;
-  if (typeof provider.apiKey === "string") {
-    resolvedApiKey = provider.apiKey;
-  } else if (provider.apiKey != null) {
-    try {
-      const runtimeCfg = resolveRuntimeConfig(api);
-      const runtimeProviders = extractProvidersFromConfig(runtimeCfg);
-      const runtimeProvider = findProviderConfig(runtimeProviders, providerName);
-      if (typeof runtimeProvider?.apiKey === "string") {
-        resolvedApiKey = runtimeProvider.apiKey;
-      }
-    } catch {
-      // Fall through — resolveBearerToken will attempt runtime auth resolution
-    }
-
-    // Fallback: resolve file-based secret reference directly
-    if (!resolvedApiKey && isFileSecretRef(provider.apiKey)) {
-      resolvedApiKey = resolveFileSecret(provider.apiKey, api);
-    }
-  }
-
   return {
     providerName,
     modelId,
     apiSurface,
     endpoint,
-    staticApiKey: resolvedApiKey,
-    apiKeyRef: provider.apiKey, // keep original reference for runtime resolver
     authMode: provider.auth,
   };
 }
@@ -1815,65 +1701,46 @@ async function resolveBearerToken(
   transport: ResolvedProviderTransport,
   api: OpenClawPluginApi,
 ): Promise<string | undefined> {
-  // Explicit SecLaw config override — highest priority
+  // 1. Explicit SecLaw config override — highest priority
   const configApiKey = config.llm.apiKey?.trim();
   if (configApiKey) return configApiKey;
 
-  const staticToken = transport.staticApiKey?.trim();
-  const dynamicRequired =
-    !staticToken || transport.authMode === "oauth" || transport.authMode === "token";
-
-  if (!dynamicRequired) {
-    return staticToken;
-  }
-
+  // 2. Runtime auth resolution (handles static keys, file secrets, OAuth, profiles, env vars)
   const resolver = api.runtime?.modelAuth?.resolveApiKeyForProvider;
-  if (!resolver) {
-    if (staticToken) return staticToken;
-    if (transport.authMode === "oauth" || transport.authMode === "token") {
-      throw new LLMHttpError(
-        401,
-        `Provider "${transport.providerName}" requires runtime auth resolution, but runtime.modelAuth is unavailable`,
-      );
+  if (resolver) {
+    try {
+      const authResult = await resolver({ provider: transport.providerName });
+      const token = authResult.apiKey?.trim();
+      if (token) return token;
+    } catch (error: unknown) {
+      if (transport.authMode === "oauth" || transport.authMode === "token") {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new LLMHttpError(
+          401,
+          `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
+        );
+      }
+      // Non-oauth: fall through to SECLAW_API_KEY
     }
-    return undefined;
-  }
-
-  try {
-    const authResult = await resolver({
-      provider: transport.providerName,
-      cfg: resolveRuntimeConfig(api),
-      apiKeyRef: transport.apiKeyRef,
-    });
-    const token = authResult.apiKey?.trim();
-    if (token) return token;
+    // Runtime resolver returned empty — for oauth/token this is fatal
     if (transport.authMode === "oauth" || transport.authMode === "token") {
       throw new LLMHttpError(
         401,
         `Auth resolution returned empty token for provider "${transport.providerName}"`,
       );
     }
-    return staticToken;
-  } catch (error: unknown) {
+  } else {
+    // No runtime resolver available
     if (transport.authMode === "oauth" || transport.authMode === "token") {
-      const detail = error instanceof Error ? error.message : String(error);
       throw new LLMHttpError(
         401,
-        `Auth resolution failed for provider "${transport.providerName}": ${detail}`,
+        `Provider "${transport.providerName}" requires runtime auth resolution, but runtime.modelAuth is unavailable`,
       );
     }
-    // Non-oauth providers: log warning when no static key available so silent
-    // auth failures are diagnosable (e.g. file-based secret reference that
-    // couldn't be resolved).
-    if (!staticToken && transport.apiKeyRef != null && !process.env.SECLAW_API_KEY?.trim()) {
-      const detail = error instanceof Error ? error.message : String(error);
-      auditLog.warn(
-        `Auth resolution for provider "${transport.providerName}" failed (${detail}), ` +
-        `and no static API key is available. LLM calls may fail with 401.`,
-      );
-    }
-    return staticToken;
   }
+
+  // 3. SECLAW_API_KEY env var — last resort (handled in createGatewayLLMCallFn caller)
+  return undefined;
 }
 
 /**

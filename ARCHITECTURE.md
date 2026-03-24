@@ -466,27 +466,20 @@ If the auth profile is found but the provider has no known base URL, resolution 
 
 ### Auth Resolution
 
-Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 7-level priority order:
+Auth is resolved **per-call** inside `createGatewayLLMCallFn()`, with a 4-level priority order:
 
 1. **Explicit `config.llm.apiKey`** — if set in SecLaw plugin config, used directly as `Bearer` token. This is the highest-priority override, bypassing all provider-level auth. The key is never persisted to `openclaw.json` (stripped before writing). Set via dashboard `PUT /api/config` or environment-injected plugin config.
-2. **Static provider `apiKey`** — if the provider has `apiKey` set as a string and `auth` is not `"oauth"` or `"token"`, use it directly as `Bearer` token
-3. **File-based / object `apiKey` (runtime config)** — if `apiKey` is an object (e.g. `{ source: "file", provider: "filemain", id: "..." }` for file-based secret providers), `resolveProviderTransport()` first attempts to resolve it to a string by reading the runtime config snapshot (`loadConfig()`), which returns secrets already resolved. If successful, the resolved string is used as `staticApiKey`.
-3b. **File-based / object `apiKey` (direct resolution)** — if the runtime config snapshot didn't resolve the key, `resolveProviderTransport()` falls back to direct file-based secret resolution. It looks up the secret provider definition (e.g. `filemain → { path: "~/.openclaw/secrets.json", mode: "json" }`) from `api.config.secrets.providers`, runtime config, or `openclaw.json` on disk. Then reads the file, parses JSON, and navigates the JSON pointer (RFC 6901) to extract the API key string. This ensures auth works even when the runtime resolver is unavailable or the gateway doesn't pre-resolve secrets for plugins.
-4. **Dynamic auth** — if no static `apiKey` OR `auth` is `"oauth"` or `"token"`:
-   - Check `api.runtime?.modelAuth?.resolveApiKeyForProvider` (provided by the OpenClaw gateway)
-   - Call it with `{ provider: providerName, cfg, apiKeyRef }` to get a fresh token (handles OAuth refresh and file-based secret resolution automatically)
-   - `apiKeyRef` is the raw `apiKey` value from the provider config — it may be a string or an object
-   - Use the resolved `apiKey` as `Bearer` token
-5. **`SECLAW_API_KEY` env var** — if all provider-level resolution fails (no static key, no runtime resolver, or resolver returns empty), the `SECLAW_API_KEY` environment variable is used as a last-resort fallback. When this env var is set, the auth resolution warning for unresolved file-based secrets is suppressed.
-6. **No auth available** — if none of the above produces a key, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama)
+2. **Runtime auth resolution** — `api.runtime?.modelAuth?.resolveApiKeyForProvider({ provider })` handles all provider-level auth internally: static API keys, auth profiles, OAuth token refresh, file-based secrets (JSON pointer / RFC 6901), and environment variables. SecLaw delegates entirely to the runtime for provider auth resolution. For `oauth`/`token` auth modes, failure or empty result throws `LLMHttpError(401)`.
+3. **`SECLAW_API_KEY` env var** — if the runtime resolver is unavailable or returns empty (for non-oauth providers), the `SECLAW_API_KEY` environment variable is used as a last-resort fallback.
+4. **No auth available** — if none of the above produces a key, the request proceeds without an `Authorization` header (for local/unauthenticated providers like Ollama).
 
-The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when OAuth providers are configured:
+The `runtime` field on `OpenClawPluginApi` is optional. The gateway populates it when providers are configured:
 
 ```typescript
 runtime?: {
   modelAuth?: {
-    resolveApiKeyForProvider: (params: { provider: string; cfg?: Record<string, unknown>; apiKeyRef?: unknown }) =>
-      Promise<{ apiKey?: string; source: string; mode: "api-key" | "oauth" | "token" | "aws-sdk" }>
+    resolveApiKeyForProvider: (params: { provider: string }) =>
+      Promise<{ apiKey?: string; source: string; mode: string }>
   }
 }
 ```
