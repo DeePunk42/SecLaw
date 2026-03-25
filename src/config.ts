@@ -256,29 +256,12 @@ export interface DashboardConfig {
   token?: string;
 }
 
-export interface ScriptAuditConfig {
-  enabled: boolean;
-  /** File extensions eligible for script audit */
-  extensions: string[];
-  /** Skip files larger than this (bytes). Default 100_000 (100KB). */
-  maxFileSizeBytes: number;
-  /** Override hash cache file path */
-  hashCachePath?: string;
-}
-
 export interface SecLawConfig {
   llm: LLMConfig;
   timeouts: TimeoutConfig;
   logging: LoggingConfig;
   dashboard?: DashboardConfig;
-  scriptAudit?: ScriptAuditConfig;
 }
-
-const DEFAULT_SCRIPT_AUDIT_CONFIG: ScriptAuditConfig = {
-  enabled: true,
-  extensions: [".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".zsh", ".rb", ".pl"],
-  maxFileSizeBytes: 100_000,
-};
 
 const DEFAULT_CONFIG: SecLawConfig = {
   llm: {
@@ -306,16 +289,14 @@ const DEFAULT_CONFIG: SecLawConfig = {
     port: 19198,
     host: "0.0.0.0",
   },
-  scriptAudit: { ...DEFAULT_SCRIPT_AUDIT_CONFIG },
 };
 
 export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
-  if (!partial) return { ...DEFAULT_CONFIG, scriptAudit: { ...DEFAULT_SCRIPT_AUDIT_CONFIG } };
+  if (!partial) return { ...DEFAULT_CONFIG };
   return {
     llm: { ...DEFAULT_CONFIG.llm, ...partial.llm },
     timeouts: { ...DEFAULT_CONFIG.timeouts, ...partial.timeouts },
     logging: { ...DEFAULT_CONFIG.logging, ...partial.logging },
     dashboard: { ...DEFAULT_CONFIG.dashboard!, ...partial.dashboard },
-    scriptAudit: { ...DEFAULT_SCRIPT_AUDIT_CONFIG, ...partial.scriptAudit },
   };
 }

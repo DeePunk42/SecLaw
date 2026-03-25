@@ -31,11 +31,6 @@ Tool Call (before_tool_call)
   │
   └─ Rule Engine: classify(toolName, params, intentCtx, wsPath) → GREEN / YELLOW / RED
       │
-      ├─ Script Audit (exec/bash tools only, independent of tier)
-      │   └─ detectScripts(command, cwd) → script file list
-      │       └─ For each: readFile → SHA-256 → cache check → LLM audit (if miss)
-      │           └─ Any DANGER → BLOCK (with override PIN for trusted senders)
-      │
       ├─ GREEN → Allow execution (silent, no audit)
       │
       ├─ YELLOW → Allow execution
@@ -71,10 +66,7 @@ src/
   rule-resolver.ts          YAML parsing → list/macro expansion → SigmaRule[]
   rule-index.ts             Tool + platform indexing for fast candidate selection
   field-registry.ts         FieldRegistry: resolves dotted field paths (cmd.primary, url.host, etc.)
-  llm-auditor.ts            LLM audit: prompt construction, API call, response parsing.
-                            Includes auditScript() / auditScriptWithTimeout() for script content audit.
-  script-audit.ts           Script content audit: detectScripts(), auditScripts(), hash cache I/O.
-                            Detects direct script execution + package manager lifecycle scripts.
+  llm-auditor.ts            LLM audit: prompt construction, API call, response parsing
   async-audit-queue.ts      Background audit queue with deduplication
   audit-log.ts              Console + JSONL logging, log level filtering, subscriber pattern
   intent-context.ts         Intent accumulator (userGoal, message source, tool calls)
@@ -390,80 +382,6 @@ The danger flag blocks **all subsequent tool calls** for that session until the 
 
 When this async danger-flag block triggers, the returned `blockReason` uses a dedicated agent-facing message that explicitly instructs the model to stop the current call immediately. Trusted senders still receive the existing override hint with `/pin<pin>` appended in the override section.
 
-## Script Audit
-
-SecLaw audits the **content** of script files that a command will execute, independent of rule engine tier classification. This catches malicious scripts even when the command pattern matches GREEN/YELLOW rules (e.g. `python script.py` or `npm install` with dangerous lifecycle hooks).
-
-### Flow
-
-Script audit runs in `beforeToolCall` (step 2.5), after rule classification but before tier handling. It applies only to `exec`/`bash` tool calls.
-
-1. `detectScripts(command, cwd)` extracts all script files the command will execute
-2. For each script file:
-   - Read file content → compute SHA-256 hash
-   - **Cache hit** (hash matches): return cached SAFE/DANGER decision, skip LLM
-   - **Cache miss**: sync LLM audit via `auditScriptWithTimeout()` → update cache
-3. If **any** script returns DANGER → block the tool call (with override PIN for trusted senders)
-
-### Script Detection
-
-**Direct execution** — extracts script file paths from interpreter commands:
-- Supported interpreters: `python`, `python3`, `node`, `bash`, `sh`, `zsh`, `ruby`, `perl`, `tsx`, `ts-node`, `npx tsx`
-- Skips inline execution modes (`-c`, `-e`, `-m`)
-- Tracks `cd` segments to maintain effective working directory
-- Resolves relative paths against effective cwd
-
-**Package manager lifecycle** — reads `package.json` to extract lifecycle scripts:
-- `npm install` / `npm ci` / `yarn` / `pnpm install` → checks `preinstall`, `install`, `postinstall`, `prepare`
-- `npm run <name>` → checks `pre<name>`, `<name>`, `post<name>`
-- `npm test` / `npm start` → checks corresponding lifecycle scripts
-- `pip install .` / `pip install -e .` → audits `setup.py`
-- For each lifecycle script value, recursively applies direct execution detection
-- Pure inline commands (no file reference) are audited as "virtual scripts"
-
-**Auditable extensions**: `.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.sh`, `.bash`, `.zsh`, `.rb`, `.pl` (configurable via `scriptAudit.extensions`).
-
-### Hash Cache
-
-- **Storage**: `<varDir>/script-hashes.json` (persistent across process restarts)
-- **Cache key**: absolute file path
-- **Cache hit**: `cache[filePath].contentHash === SHA-256(currentContent)` → skip LLM
-- **Virtual scripts**: use synthetic paths like `<cwd>/package.json::scripts.postinstall`
-- **Lazy loading**: cache file loaded on first access, written back after each update
-
-### LLM Audit Prompt
-
-`LLMAuditor.auditScript()` uses a dedicated prompt template (`SCRIPT_AUDIT_PROMPT`) that includes:
-- File path and trigger command
-- User's current goal
-- Script content (truncated at 30KB with `[TRUNCATED]` marker)
-- Analysis checklist: data exfiltration, destructive operations, unauthorized system modification, network attacks, obfuscated payloads, supply-chain risk
-
-Reuses `LLMAuditor`'s retry, cooldown, timeout mechanisms via `callLLMRaw()`. `max_tokens: 256`.
-
-### Configuration (`scriptAudit`)
-
-```json
-{
-  "scriptAudit": {
-    "enabled": true,
-    "extensions": [".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".zsh", ".rb", ".pl"],
-    "maxFileSizeBytes": 100000,
-    "hashCachePath": "/custom/path/script-hashes.json"
-  }
-}
-```
-
-- `enabled`: default `true`. Set to `false` to disable script content audit entirely.
-- `maxFileSizeBytes`: files larger than this are skipped (logged as `script_audit_skipped`). Default 100KB.
-
-### Audit Log Events
-
-| Event Type | Description |
-|---|---|
-| `script_audit` | Script audit result (filePath, decision, cached, reason) |
-| `script_audit_skipped` | Script skipped (file not found, too large, read error) |
-
 ## Logging
 
 ### Console Output
@@ -496,8 +414,6 @@ When `logging.auditJsonl: true`, structured events are written to `seclaw-audit.
 | `danger_detected` | Async audit found danger |
 | `override_used` | Trusted sender override consumed |
 | `llm_service_error` | LLM service error (429, 5xx, auth, network) |
-| `script_audit` | Script file audit result (filePath, decision, cached, reason) |
-| `script_audit_skipped` | Script file skipped (not found, too large, read error) |
 
 All events carry a `toolCallId` field (when available) that links events from the same tool call together. The `toolCallId` comes from OpenClaw's `event.toolCallId` / `ctx.toolCallId`, or is generated via `crypto.randomUUID()` if not provided.
 
@@ -664,11 +580,6 @@ The bootstrap calls (`seedSenderLabels`, `persistConfigToOpenClaw`) are in `regi
   "logging": {
     "level": "debug",
     "auditJsonl": true
-  },
-  "scriptAudit": {
-    "enabled": true,
-    "extensions": [".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".sh", ".bash", ".zsh", ".rb", ".pl"],
-    "maxFileSizeBytes": 100000
   },
   "rules": {
     "extra": []
