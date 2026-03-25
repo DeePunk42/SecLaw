@@ -706,7 +706,7 @@ api.registerHttpRoute({
 - Serves SPA HTML for all other paths via `getDashboardHtml(basePath)`, which rewrites `fetch('/api/...')` URLs to include the base path
 - Returns `Promise<boolean>` for gateway compatibility
 
-When `api.registerHttpRoute` is not available (older gateway), the standalone `http.Server` is used as fallback on port 19198.
+When `api.registerHttpRoute` is not available (standalone/testing), the built-in `http.Server` is used as fallback (default port 19198).
 
 ### Standalone Server (Testing)
 
@@ -801,7 +801,7 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 
 - **Model selector**: dropdown populated from `/api/models` (gateway providers)
 - **trustedSenderLabels**: custom multi-select checkbox dropdown with "Select all" / "Clear" actions and a refresh button that scans audit logs for new sender labels via `/api/sender-labels/refresh`
-- **Dashboard settings** (port/host/enabled): read-only, requires restart
+- **Dashboard settings** (enabled): read-only, requires restart
 
 ### Dashboard Authentication
 

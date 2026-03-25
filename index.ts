@@ -619,7 +619,13 @@ function upsertSecLawPluginConfig(
       : {};
 
   const { apiKey: _stripApiKey, ...llmSafe } = seclawConfig.llm;
-  seclawEntry.config = { ...seclawConfig, llm: llmSafe };
+  // Strip internal-only fields before persisting (port/host are standalone-only)
+  const { port: _p, host: _h, ...dashboardSafe } = seclawConfig.dashboard ?? {};
+  seclawEntry.config = {
+    ...seclawConfig,
+    llm: llmSafe,
+    dashboard: Object.keys(dashboardSafe).length > 0 ? dashboardSafe : undefined,
+  };
   entriesObj.seclaw = seclawEntry;
   pluginsObj.entries = entriesObj;
   next.plugins = pluginsObj;
@@ -1232,140 +1238,129 @@ export function onSessionReset(sessionKey: string): void {
 
 // ─── OpenClaw Plugin Registration ───
 
-let registeredOnce = false;
+let initialized = false;
 
 function register(api: OpenClawPluginApi): void {
-  // The gateway may call register() multiple times (once per agent context).
-  // Only do the full initialization on the first call; subsequent calls just
-  // update the api reference so provider lists and auth stay current.
-  if (registeredOnce) {
-    gatewayApi = api;
-    availableModelsProvider = () => buildModelOptions(api);
-    return;
-  }
-  registeredOnce = true;
+  // The gateway calls register() multiple times (once per agent context).
+  // Heavy init (rule engine, LLM, audit log) runs once; hook and route
+  // registration runs every time since each api object needs its own bindings.
+  if (!initialized) {
+    initialized = true;
 
-  const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
-  const wsDir = api.config.workspace?.dir;
+    const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
+    const wsDir = api.config.workspace?.dir;
 
-  // Default model from main config agents.defaults.model.primary when not explicitly set
-  if (!pluginConfig.llm?.model) {
-    const agents = api.config.agents as
-      | { defaults?: { model?: { primary?: string } } }
-      | undefined;
-    const primaryModel = agents?.defaults?.model?.primary;
-    if (primaryModel && typeof primaryModel === "string") {
-      if (!pluginConfig.llm) {
-        pluginConfig.llm = { model: primaryModel } as Partial<SecLawConfig>["llm"];
+    // Default model from main config agents.defaults.model.primary when not explicitly set
+    if (!pluginConfig.llm?.model) {
+      const agents = api.config.agents as
+        | { defaults?: { model?: { primary?: string } } }
+        | undefined;
+      const primaryModel = agents?.defaults?.model?.primary;
+      if (primaryModel && typeof primaryModel === "string") {
+        if (!pluginConfig.llm) {
+          pluginConfig.llm = { model: primaryModel } as Partial<SecLawConfig>["llm"];
+        } else {
+          pluginConfig.llm.model = primaryModel;
+        }
+      }
+    }
+
+    init({
+      config: pluginConfig,
+      workspacePath: wsDir,
+      pluginDir: getDirname(),
+      emitAgentEvent: api.emitAgentEvent,
+      skipDashboard: !!api.registerHttpRoute,
+    });
+
+    // First-install bootstrap: seed sender labels and persist default config.
+    seedSenderLabels(varDir, config.llm.trustedSenderLabels ?? []);
+    {
+      const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
+      let needsBootstrap = true;
+      try {
+        const raw = fs.readFileSync(openClawPath, "utf-8");
+        const parsed = JSON.parse(raw);
+        const existing = parsed?.plugins?.entries?.seclaw?.config;
+        if (existing && typeof existing === "object") {
+          needsBootstrap = false;
+        }
+      } catch {
+        // File missing or malformed → needs bootstrap
+      }
+      if (needsBootstrap) {
+        persistConfigToOpenClaw(config);
+      }
+    }
+
+    // Wire up LLM call function via gateway providers
+    if (config.llm.enabled) {
+      const llmCallFn = createGatewayLLMCallFn(config, api);
+      if (llmCallFn) {
+        llmAuditor.setLLMCallFn(llmCallFn);
+        if (config.llm.apiKey) {
+          api.logger.info(
+            `[seclaw] 🚀 LLM connected via explicit apiKey override model=${config.llm.model}`,
+          );
+        } else if (process.env.SECLAW_API_KEY?.trim()) {
+          api.logger.info(
+            `[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var model=${config.llm.model}`,
+          );
+        } else {
+          const resolved = resolveProviderTransport(config.llm.model, api);
+          const providerAuth = resolved?.authMode;
+          const providerCfg = findProviderConfig(getMergedProviders(api), resolved?.providerName ?? "");
+          const hasStaticKey = typeof providerCfg?.apiKey === "string";
+          const hasRuntimeAuth = !!api.runtime?.modelAuth;
+          if (!hasStaticKey && hasRuntimeAuth) {
+            api.logger.info(
+              `[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth) model=${config.llm.model}`,
+            );
+          } else if (!hasStaticKey && !hasRuntimeAuth && (providerAuth === "oauth" || providerAuth === "token")) {
+            api.logger.error(
+              `[seclaw] ⚠️ LLM provider "${resolved?.providerName}" uses ${providerAuth} auth but runtime.modelAuth is not available -- ` +
+                "LLM calls will fail with 401. Ensure the gateway provides runtime.modelAuth.",
+            );
+          } else {
+            api.logger.info(
+              `[seclaw] 🚀 LLM connected via provider config model=${config.llm.model}`,
+            );
+          }
+        }
       } else {
-        pluginConfig.llm.model = primaryModel;
+        if (config.llm.model.includes("/")) {
+          const providerName = config.llm.model.slice(0, config.llm.model.indexOf("/"));
+          api.logger.error(
+            `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in effective providers -- ` +
+              "check openclaw.json configuration. RED operations will pass without real LLM audit.",
+          );
+        } else if (!config.llm.model) {
+          api.logger.error(
+            "[seclaw] ⚠️ LLM enabled but no model configured -- " +
+              "set llm.model in plugin config or agents.defaults.model.primary in openclaw.json. " +
+              "RED operations will pass without real LLM audit.",
+          );
+        } else {
+          api.logger.error(
+            "[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
+              "set llm.model as provider/model in plugin config. " +
+              "RED operations will pass without real LLM audit.",
+          );
+        }
       }
     }
+
+    api.logger.info(
+      `[seclaw] 🚀 Initialized rules=${ruleEngine.getRules().length} llm=${config.llm.enabled ? config.llm.model : "disabled"} policy=${config.timeouts.syncTimeoutPolicy}`,
+    );
   }
 
-  // Build available models list from effective providers
+  // ─── Per-api updates (runs every call) ───
+  gatewayApi = api;
   availableModelsProvider = () => buildModelOptions(api);
-
-  init({
-    config: pluginConfig,
-    workspacePath: wsDir,
-    pluginDir: getDirname(),
-    emitAgentEvent: api.emitAgentEvent,
-    skipDashboard: !!api.registerHttpRoute,
-  });
-
-  // First-install bootstrap: seed sender labels and persist default config.
-  // Only persist config if seclaw entry doesn't already exist in openclaw.json —
-  // avoids triggering the gateway's file watcher on every plugin registration.
-  seedSenderLabels(varDir, config.llm.trustedSenderLabels ?? []);
-  {
-    const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
-    let needsBootstrap = true;
-    try {
-      const raw = fs.readFileSync(openClawPath, "utf-8");
-      const parsed = JSON.parse(raw);
-      const existing = parsed?.plugins?.entries?.seclaw?.config;
-      if (existing && typeof existing === "object") {
-        needsBootstrap = false;
-      }
-    } catch {
-      // File missing or malformed → needs bootstrap
-    }
-    if (needsBootstrap) {
-      persistConfigToOpenClaw(config);
-    }
-  }
-
-  // Route all seclaw log output through the gateway's logger
   auditLog.setExternalLogger(api.logger);
 
-  // ─── Wire up LLM call function via gateway providers ───
-  gatewayApi = api;
-  if (config.llm.enabled) {
-    const llmCallFn = createGatewayLLMCallFn(config, api);
-    if (llmCallFn) {
-      llmAuditor.setLLMCallFn(llmCallFn);
-      // Determine auth mode for logging
-      if (config.llm.apiKey) {
-        api.logger.info(
-          `[seclaw] 🚀 LLM connected via explicit apiKey override model=${config.llm.model}`,
-        );
-      } else if (process.env.SECLAW_API_KEY?.trim()) {
-        api.logger.info(
-          `[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var model=${config.llm.model}`,
-        );
-      } else {
-      const resolved = resolveProviderTransport(config.llm.model, api);
-      const providerAuth = resolved?.authMode;
-      const providerCfg = findProviderConfig(getMergedProviders(api), resolved?.providerName ?? "");
-      const hasStaticKey = typeof providerCfg?.apiKey === "string";
-      const hasRuntimeAuth = !!api.runtime?.modelAuth;
-      if (!hasStaticKey && hasRuntimeAuth) {
-        api.logger.info(
-          `[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth) model=${config.llm.model}`,
-        );
-      } else if (!hasStaticKey && !hasRuntimeAuth && (providerAuth === "oauth" || providerAuth === "token")) {
-        api.logger.error(
-          `[seclaw] ⚠️ LLM provider "${resolved?.providerName}" uses ${providerAuth} auth but runtime.modelAuth is not available -- ` +
-            "LLM calls will fail with 401. Ensure the gateway provides runtime.modelAuth.",
-        );
-      } else {
-        api.logger.info(
-          `[seclaw] 🚀 LLM connected via provider config model=${config.llm.model}`,
-        );
-      }
-      }
-    } else {
-      if (config.llm.model.includes("/")) {
-        const providerName = config.llm.model.slice(
-          0,
-          config.llm.model.indexOf("/"),
-        );
-        api.logger.error(
-          `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in effective providers -- ` +
-            "check openclaw.json configuration. " +
-            "RED operations will pass without real LLM audit.",
-        );
-      } else if (!config.llm.model) {
-        api.logger.error(
-          "[seclaw] ⚠️ LLM enabled but no model configured -- " +
-            "set llm.model in plugin config or agents.defaults.model.primary in openclaw.json. " +
-            "RED operations will pass without real LLM audit.",
-        );
-      } else {
-        api.logger.error(
-          "[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
-            "set llm.model as provider/model in plugin config. " +
-            "RED operations will pass without real LLM audit.",
-        );
-      }
-    }
-  }
-
-  api.logger.info(
-    `[seclaw] 🚀 Initialized rules=${ruleEngine.getRules().length} llm=${config.llm.enabled ? config.llm.model : "disabled"} policy=${config.timeouts.syncTimeoutPolicy}`,
-  );
-
+  // ─── Register dashboard route ───
   if (config.dashboard?.enabled && api.registerHttpRoute) {
     const dashboardDeps: import("./src/dashboard/server.js").DashboardDeps = {
       getConfig: () => config,
@@ -1395,9 +1390,6 @@ function register(api: OpenClawPluginApi): void {
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
-      // Gateway mode: no plugin-level token check. The gateway's network-level
-      // access controls are the security boundary (same as the Control UI).
-      // If explicit plugin-level auth is needed, set dashboard.token in config.
       getToken: () => config.dashboard?.token?.trim() || undefined,
     };
     api.registerHttpRoute({
@@ -1406,11 +1398,6 @@ function register(api: OpenClawPluginApi): void {
       match: "prefix",
       handler: createDashboardRouteHandler(dashboardDeps, "/plugins/seclaw"),
     });
-    api.logger.info("[seclaw] 📊 Dashboard: /plugins/seclaw");
-  } else if (config.dashboard?.enabled) {
-    api.logger.info(
-      `[seclaw] 📊 Dashboard: http://${config.dashboard.host}:${config.dashboard.port}`,
-    );
   }
 
   // ─── Core hooks ───
@@ -1965,7 +1952,7 @@ export function _setGatewayApi(api: OpenClawPluginApi | null): void {
   gatewayApi = api;
 }
 export function _resetRegistration(): void {
-  registeredOnce = false;
+  initialized = false;
 }
 export { computeParamsFingerprint as _computeParamsFingerprint };
 export { stopDashboard } from "./src/dashboard/server.js";

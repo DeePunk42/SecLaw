@@ -44,12 +44,9 @@
       },
       "dashboard": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
           "enabled": { "type": "boolean" },
-          "port": { "type": "number" },
-          "host": { "type": "string" },
-          "token": { "type": "string", "description": "Bearer token for dashboard API authentication. Falls back to OPENCLAW_GATEWAY_TOKEN env var." }
+          "token": { "type": "string", "description": "Optional Bearer token for plugin-level dashboard API auth. By default, no token is required (gateway network security is the boundary)." }
         }
       }
     }

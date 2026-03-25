@@ -251,9 +251,11 @@ export interface LoggingConfig {
 
 export interface DashboardConfig {
   enabled: boolean;
-  port: number;
-  host: string;
   token?: string;
+  /** @internal Standalone server port (testing only, not used in gateway mode). */
+  port?: number;
+  /** @internal Standalone server host (testing only, not used in gateway mode). */
+  host?: string;
 }
 
 export interface SecLawConfig {
@@ -286,8 +288,6 @@ const DEFAULT_CONFIG: SecLawConfig = {
   },
   dashboard: {
     enabled: true,
-    port: 19198,
-    host: "0.0.0.0",
   },
 };
 

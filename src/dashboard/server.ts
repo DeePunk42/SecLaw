@@ -120,13 +120,14 @@ export function startDashboard(
   dashboardConfig: DashboardConfig,
   deps: DashboardDeps,
 ): Promise<number> {
+  const port = dashboardConfig.port ?? 19198;
+  const host = dashboardConfig.host ?? "0.0.0.0";
+
   if (server) {
     const addr = server.address();
-    const port = addr && typeof addr !== "string" ? addr.port : dashboardConfig.port;
-    return Promise.resolve(port);
+    const actualPort = addr && typeof addr !== "string" ? addr.port : port;
+    return Promise.resolve(actualPort);
   }
-
-  const { host, port } = dashboardConfig;
   const handler = createDashboardRouteHandler(deps, "");
 
   return new Promise((resolve, reject) => {
