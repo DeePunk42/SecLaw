@@ -1,6 +1,6 @@
 {
   "name": "@deepunk/seclaw",
-  "version": "1.0.0-0",
+  "version": "2.0.0-0",
   "description": "OpenClaw SecLaw - Real-time security audit layer for AI Agent tool calls",
   "type": "module",
   "main": "dist/index.js",
