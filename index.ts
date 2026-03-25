@@ -263,6 +263,7 @@ function registerPendingOverride(
   sessionState.addPendingOverride(sessionKey, {
     pin,
     toolName,
+    params,
     paramsFingerprint: computeParamsFingerprint(toolName, params),
     timestamp: Date.now(),
     toolCallId,
@@ -1402,6 +1403,29 @@ function register(api: OpenClawPluginApi): void {
         onUserMessage(sk, event.prompt, config.llm.trustedSenderLabels);
         auditLog.debug(`🧠 Intent: userGoal updated via before_prompt_build`);
       }
+
+      // Inject override context when PIN was just activated by onUserMessage above.
+      // This mutates event.prompt so the LLM sees an explicit retry instruction
+      // before generating its response, rather than relying on implicit understanding.
+      const activePin = sessionState.getActiveOverridePin(sk);
+      if (activePin) {
+        const pending = sessionState.getPendingOverride(sk, activePin);
+        if (pending) {
+          const paramsSummary = JSON.stringify(pending.params);
+          const truncated = paramsSummary.length > 800
+            ? paramsSummary.slice(0, 800) + "…"
+            : paramsSummary;
+          const prefix = [
+            `[SecLaw: Override confirmed — the user has approved the previously blocked operation via /pin.`,
+            `You MUST now retry the blocked tool call exactly as before.`,
+            `Tool: ${pending.toolName}`,
+            `Params: ${truncated}`,
+            `Do not ask for further confirmation. Execute the tool call immediately.]`,
+          ].join("\n");
+          event.prompt = prefix + "\n\n" + (event.prompt ?? "");
+        }
+      }
+
       updateSource(sk, {
         channelId: ctx.channelId,
         trigger: ctx.trigger,

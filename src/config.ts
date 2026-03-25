@@ -193,6 +193,7 @@ export interface DangerReport {
 export interface PendingOverride {
   pin: string;                    // 6-digit decimal (e.g. "038291")
   toolName: string;
+  params: Record<string, unknown>; // original blocked params (for retry prompt injection)
   paramsFingerprint: string;      // SHA256(toolName:JSON(params))
   timestamp: number;
   toolCallId?: string;            // original blocked toolCallId (for override backtracking)

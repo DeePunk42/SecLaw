@@ -256,9 +256,10 @@ The same logic applies to `/pin` override consumption in `onUserMessage()`: when
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called, PIN is shown in hint. **Untrusted**: no override is registered, no PIN — the block is final
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called (stores toolName + params + PIN), PIN is shown in hint. **Untrusted**: no override is registered, no PIN — the block is final
 2. **User confirms** — Sends `/pin<pin>` via text input
-4. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
+3. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
+4. **Prompt injection** — `before_prompt_build` detects active override → mutates `event.prompt` to prepend explicit retry instruction with the original tool name and params, so the LLM knows exactly what to re-execute
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 
 ### Turn-scoped override
@@ -653,7 +654,7 @@ SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the ty
 |------|----------|---------|
 | `before_tool_call` | 9999 | Core: rule classification + LLM audit gate |
 | `after_tool_call` | 100 | Core: record tool outcome, enqueue async audit |
-| `before_prompt_build` | — | Intent: extract `userGoal` from prompt, message source from context |
+| `before_prompt_build` | — | Intent: extract `userGoal` from prompt, message source from context; inject override retry instruction when PIN activated |
 | `session_start` | — | Lifecycle: reset session state |
 | `before_reset` | — | Lifecycle: reset session state |
 | `before_compaction` | — | Lifecycle: reset session state |
