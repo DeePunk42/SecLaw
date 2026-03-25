@@ -1232,7 +1232,19 @@ export function onSessionReset(sessionKey: string): void {
 
 // ─── OpenClaw Plugin Registration ───
 
+let registeredOnce = false;
+
 function register(api: OpenClawPluginApi): void {
+  // The gateway may call register() multiple times (once per agent context).
+  // Only do the full initialization on the first call; subsequent calls just
+  // update the api reference so provider lists and auth stay current.
+  if (registeredOnce) {
+    gatewayApi = api;
+    availableModelsProvider = () => buildModelOptions(api);
+    return;
+  }
+  registeredOnce = true;
+
   const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
   const wsDir = api.config.workspace?.dir;
 
@@ -1252,22 +1264,7 @@ function register(api: OpenClawPluginApi): void {
   }
 
   // Build available models list from effective providers
-  availableModelsProvider = () => {
-    const providers = getMergedProviders(api);
-    if (Object.keys(providers).length === 0) return [];
-    const options: ModelOption[] = [];
-    for (const [providerName, provider] of Object.entries(providers)) {
-      if (provider.models) {
-        for (const m of provider.models) {
-          options.push({
-            value: `${providerName}/${m.id}`,
-            label: `${providerName}/${m.name || m.id}`,
-          });
-        }
-      }
-    }
-    return options;
-  };
+  availableModelsProvider = () => buildModelOptions(api);
 
   init({
     config: pluginConfig,
@@ -1928,6 +1925,25 @@ function getDirname(): string {
   }
 }
 
+// ─── Helpers ───
+
+function buildModelOptions(api: OpenClawPluginApi): ModelOption[] {
+  const providers = getMergedProviders(api);
+  if (Object.keys(providers).length === 0) return [];
+  const options: ModelOption[] = [];
+  for (const [providerName, provider] of Object.entries(providers)) {
+    if (provider.models) {
+      for (const m of provider.models) {
+        options.push({
+          value: `${providerName}/${m.id}`,
+          label: `${providerName}/${m.name || m.id}`,
+        });
+      }
+    }
+  }
+  return options;
+}
+
 // ─── Exported for Testing ───
 
 export function _getRuleEngine(): RuleEngine {
@@ -1947,6 +1963,9 @@ export function _setVarDir(dir: string): void {
 }
 export function _setGatewayApi(api: OpenClawPluginApi | null): void {
   gatewayApi = api;
+}
+export function _resetRegistration(): void {
+  registeredOnce = false;
 }
 export { computeParamsFingerprint as _computeParamsFingerprint };
 export { stopDashboard } from "./src/dashboard/server.js";
