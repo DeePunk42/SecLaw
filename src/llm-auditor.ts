@@ -80,6 +80,32 @@ Respond with ONLY a JSON object in one of these formats:
 {"decision": "SAFE"}
 {"decision": "DANGER", "reason": "...", "recommendation": "..."}`;
 
+const SCRIPT_AUDIT_PROMPT = `You are a security auditor. A script file is about to be executed by an AI agent.
+Review its content for security risks.
+
+## Execution context
+- File: {filePath}
+- Triggered by: {triggerCommand}
+- User's current goal: {userGoal}
+
+## Script content
+\`\`\`{extension}
+{content}
+\`\`\`
+
+Analyze for:
+1. Data exfiltration (sending sensitive files, env vars, credentials to external services)
+2. Destructive operations (deleting files, wiping data, modifying critical configs)
+3. Unauthorized system modification (backdoors, persistence mechanisms, cron jobs)
+4. Network attacks (reverse shells, unauthorized outbound connections)
+5. Obfuscated or encoded payloads
+6. Supply-chain risk patterns (downloading and executing remote code)
+
+Respond with ONLY a JSON object:
+{"decision": "SAFE", "reason": "brief explanation"}
+or
+{"decision": "DANGER", "reason": "specific threat description"}`;
+
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const DEFAULT_RETRY_CONFIG: RetryConfig = {
@@ -438,6 +464,172 @@ export class LLMAuditor {
     }
 
     return prompt;
+  }
+
+  // ─── Script Audit ───
+
+  /**
+   * Audit a script file's content for security risks.
+   * Does NOT use the fingerprint session cache (script audit has its own hash cache).
+   */
+  async auditScript(params: {
+    filePath: string;
+    content: string;
+    triggerCommand: string;
+    intentContext: IntentContext;
+    sessionKey: string;
+    trusted?: boolean;
+  }): Promise<LLMAuditResult> {
+    if (!this.config.enabled || !this.llmCall) {
+      return { decision: "SAFE" };
+    }
+
+    if (this.isCoolingDown()) {
+      return this.buildErrorResult({
+        category: "rate_limited",
+        message: "Script audit skipped: cooling down after sustained rate limiting",
+        timestamp: Date.now(),
+      });
+    }
+
+    if (this.activeCalls >= this.config.maxConcurrent) {
+      return this.timeoutConfig.syncTimeoutPolicy === "fail_closed"
+        ? { decision: "DANGER", reason: "LLM audit at capacity" }
+        : { decision: "SAFE" };
+    }
+
+    const prompt = this.buildScriptPrompt(params);
+    try {
+      this.activeCalls++;
+      return await this.callLLMRaw(prompt);
+    } finally {
+      this.activeCalls--;
+    }
+  }
+
+  /**
+   * Audit a script file with a timeout.
+   */
+  async auditScriptWithTimeout(
+    params: {
+      filePath: string;
+      content: string;
+      triggerCommand: string;
+      intentContext: IntentContext;
+      sessionKey: string;
+      trusted?: boolean;
+    },
+    timeoutMs?: number,
+  ): Promise<LLMAuditResult> {
+    const timeout = timeoutMs ?? this.timeoutConfig.auditTimeoutMs;
+    return Promise.race([
+      this.auditScript(params),
+      this.createTimeout(timeout),
+    ]);
+  }
+
+  private buildScriptPrompt(params: {
+    filePath: string;
+    content: string;
+    triggerCommand: string;
+    intentContext: IntentContext;
+  }): string {
+    const ext = params.filePath.split(".").pop() || "";
+    const userGoal = params.intentContext.userGoal || "(not specified)";
+    const truncatedGoal = userGoal.length > 500 ? userGoal.slice(0, 500) + "..." : userGoal;
+
+    // Truncate script content at 30KB
+    const MAX_CONTENT_BYTES = 30 * 1024;
+    let content = params.content;
+    if (Buffer.byteLength(content, "utf-8") > MAX_CONTENT_BYTES) {
+      const totalSize = Buffer.byteLength(content, "utf-8");
+      content = content.slice(0, MAX_CONTENT_BYTES) + `\n[TRUNCATED at 30KB of ${totalSize}]`;
+    }
+
+    return SCRIPT_AUDIT_PROMPT
+      .replace("{filePath}", params.filePath)
+      .replace("{triggerCommand}", params.triggerCommand)
+      .replace("{userGoal}", truncatedGoal)
+      .replace("{extension}", ext)
+      .replace("{content}", content);
+  }
+
+  /**
+   * Execute a raw prompt against the LLM with retry/cooldown logic.
+   * No fingerprint caching — used by script audit which has its own cache.
+   */
+  private async callLLMRaw(prompt: string): Promise<LLMAuditResult> {
+    const retryConfig = this.config.retry ?? DEFAULT_RETRY_CONFIG;
+
+    if (this.isCoolingDown()) {
+      return this.buildErrorResult({
+        category: "rate_limited",
+        message: "LLM audit skipped: cooling down after sustained rate limiting",
+        timestamp: Date.now(),
+      }, prompt);
+    }
+
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      try {
+        const response = await this.llmCall!({
+          model: this.config.model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 256,
+        });
+
+        this.consecutive429Count = 0;
+        const result = this.parseResponse(response.content);
+        result._prompt = prompt;
+        result._rawResponse = response.content;
+        return result;
+      } catch (error) {
+        const category = this.classifyError(error);
+        const statusCode = error && typeof error === "object" && "statusCode" in error
+          ? (error as { statusCode: number }).statusCode
+          : undefined;
+        const retryAfterMs = error && typeof error === "object" && "retryAfterMs" in error
+          ? (error as { retryAfterMs?: number }).retryAfterMs
+          : undefined;
+        const errorInfo: LLMErrorInfo = {
+          category,
+          statusCode,
+          retryAfterMs,
+          message: error instanceof Error ? error.message : "unknown error",
+          timestamp: Date.now(),
+        };
+
+        if (!this.isRetryable(category)) {
+          return this.buildErrorResult(errorInfo, prompt);
+        }
+
+        if (category === "rate_limited") {
+          this.consecutive429Count++;
+          if (this.consecutive429Count >= retryConfig.cooldownThreshold) {
+            this.cooldownUntil = Date.now() + retryConfig.cooldownMs;
+            return this.buildErrorResult({
+              ...errorInfo,
+              message: `Rate limited — cooldown activated after ${this.consecutive429Count} consecutive 429s`,
+            }, prompt);
+          }
+        }
+
+        if (attempt >= retryConfig.maxRetries) {
+          return this.buildErrorResult({
+            ...errorInfo,
+            message: `${errorInfo.message} (after ${retryConfig.maxRetries} retries)`,
+          }, prompt);
+        }
+
+        const backoffMs = retryConfig.initialBackoffMs * Math.pow(2, attempt);
+        await this.sleep(backoffMs);
+      }
+    }
+
+    return this.buildErrorResult({
+      category: "unknown_error",
+      message: "Retry loop exited unexpectedly",
+      timestamp: Date.now(),
+    }, prompt);
   }
 
   private parseResponse(content: string): LLMAuditResult {

@@ -26,7 +26,9 @@ export type AuditEventType =
   | "async_audit_enqueued"
   | "async_audit_complete"
   | "intent_context"
-  | "llm_service_error";
+  | "llm_service_error"
+  | "script_audit"
+  | "script_audit_skipped";
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -754,6 +756,51 @@ export class AuditLog {
       errorCategory: errorInfo.category,
       statusCode: errorInfo.statusCode,
       reason: errorInfo.message,
+      toolCallId,
+    });
+  }
+
+  logScriptAudit(
+    sessionKey: string,
+    filePath: string,
+    decision: string,
+    cached: boolean,
+    reason?: string,
+    toolCallId?: string,
+  ): void {
+    const msg = cached
+      ? `📜 Script audit (cached): ${filePath} → ${decision}`
+      : `📜 Script audit: ${filePath} → ${decision}${reason ? ` — ${reason}` : ""}`;
+    if (decision === "DANGER") {
+      this.error(msg);
+    } else {
+      this.debug(msg);
+    }
+    this.log({
+      timestamp: new Date().toISOString(),
+      eventType: "script_audit",
+      sessionKey,
+      filePath,
+      decision,
+      cached,
+      reason,
+      toolCallId,
+    });
+  }
+
+  logScriptAuditSkipped(
+    sessionKey: string,
+    filePath: string,
+    reason: string,
+    toolCallId?: string,
+  ): void {
+    this.debug(`📜 Script audit skipped: ${filePath} — ${reason}`);
+    this.log({
+      timestamp: new Date().toISOString(),
+      eventType: "script_audit_skipped",
+      sessionKey,
+      filePath,
+      reason,
       toolCallId,
     });
   }

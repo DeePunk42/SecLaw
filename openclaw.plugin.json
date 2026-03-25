@@ -51,6 +51,17 @@
           "host": { "type": "string" },
           "token": { "type": "string", "description": "Bearer token for dashboard API authentication. Falls back to OPENCLAW_GATEWAY_TOKEN env var." }
         }
+      },
+      "scriptAudit": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Script content audit: reads and audits script files before execution.",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable script content audit (default: true)." },
+          "extensions": { "type": "array", "items": { "type": "string" }, "description": "File extensions eligible for audit (e.g. [\".py\", \".js\", \".sh\"])." },
+          "maxFileSizeBytes": { "type": "number", "description": "Skip files larger than this (default: 100000)." },
+          "hashCachePath": { "type": "string", "description": "Override path for the hash cache file." }
+        }
       }
     }
   }

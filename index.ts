@@ -40,6 +40,7 @@ import {
 } from "./src/dashboard/server.js";
 import { seedSenderLabels } from "./src/dashboard/sender-labels.js";
 import { getOpenClawDir } from "./src/hardening/platform.js";
+import { checkScripts, initScriptAudit } from "./src/script-audit.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
 
@@ -500,6 +501,9 @@ export function init(ctx: PluginInitContext): void {
 
   asyncQueue = new AsyncAuditQueue(ruleEngine, llmAuditor, auditLog, config);
 
+  // Initialize script audit module
+  initScriptAudit(varDir, config.scriptAudit, auditLog);
+
   if (ctx.emitAgentEvent) {
     setEmitAgentEvent(ctx.emitAgentEvent);
     emitAgentEventFn = ctx.emitAgentEvent;
@@ -949,6 +953,25 @@ export async function beforeToolCall(
     ruleResult.tier,
     toolCallId,
   );
+
+  // 2.5 Script audit for exec/bash tools (independent of tier)
+  if (config.scriptAudit?.enabled !== false && (toolName === "exec" || toolName === "bash")) {
+    const command = typeof params.command === "string" ? params.command : "";
+    const cwd = (typeof params.cwd === "string" ? params.cwd : undefined) || wsPath || "";
+    if (command) {
+      const scriptResult = await checkScripts(command, cwd, llmAuditor, sessionKey, intentCtx, isSenderTrusted(sessionKey), toolCallId);
+      if (scriptResult.block) {
+        const trusted = isSenderTrusted(sessionKey);
+        if (trusted) {
+          const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
+          auditLog.logBlock(sessionKey, toolName, scriptResult.blockReason!, "sync", toolCallId, pin, params, intentCtx);
+          return { block: true, blockReason: scriptResult.blockReason + formatOverrideHint(pin, true) };
+        }
+        auditLog.logBlock(sessionKey, toolName, scriptResult.blockReason!, "sync", toolCallId, undefined, params, intentCtx);
+        return { block: true, blockReason: scriptResult.blockReason + formatOverrideHint("", false) };
+      }
+    }
+  }
 
   // 3. GREEN → allow execution, no audit at all
   if (ruleResult.tier === "GREEN") {
