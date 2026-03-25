@@ -638,10 +638,11 @@ function persistConfigToOpenClaw(nextConfig: SecLawConfig): {
   const openClawPath = path.join(openClawDir, "openclaw.json");
   try {
     fs.mkdirSync(openClawDir, { recursive: true });
+    let existingRaw: string | undefined;
     let parsed: Record<string, unknown>;
     try {
-      const raw = fs.readFileSync(openClawPath, "utf-8");
-      parsed = JSON.parse(raw);
+      existingRaw = fs.readFileSync(openClawPath, "utf-8");
+      parsed = JSON.parse(existingRaw);
     } catch (readErr: any) {
       if (readErr.code === "ENOENT") {
         parsed = {};
@@ -666,7 +667,17 @@ function persistConfigToOpenClaw(nextConfig: SecLawConfig): {
       parsed as Record<string, unknown>,
       nextConfig,
     );
-    fs.writeFileSync(openClawPath, JSON.stringify(updated, null, 2), "utf-8");
+    const newContent = JSON.stringify(updated, null, 2);
+    // Skip write if content is unchanged to avoid triggering gateway file watcher reload.
+    // The gateway watches openclaw.json; any mtime change causes a full plugin re-register
+    // cycle, which without this guard creates an infinite init→write→reload→init loop.
+    if (existingRaw !== undefined) {
+      const existingNormalized = JSON.stringify(parsed, null, 2);
+      if (newContent === existingNormalized) {
+        return { ok: true };
+      }
+    }
+    fs.writeFileSync(openClawPath, newContent, "utf-8");
     return { ok: true };
   } catch (err: any) {
     return {
@@ -1289,9 +1300,27 @@ function register(api: OpenClawPluginApi): void {
     skipDashboard: !!api.registerHttpRoute,
   });
 
-  // First-install bootstrap: seed sender labels and persist default config
+  // First-install bootstrap: seed sender labels and persist default config.
+  // Only persist config if seclaw entry doesn't already exist in openclaw.json —
+  // avoids triggering the gateway's file watcher on every plugin registration.
   seedSenderLabels(varDir, config.llm.trustedSenderLabels ?? []);
-  persistConfigToOpenClaw(config);
+  {
+    const openClawPath = path.join(getOpenClawDir(), "openclaw.json");
+    let needsBootstrap = true;
+    try {
+      const raw = fs.readFileSync(openClawPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      const existing = parsed?.plugins?.entries?.seclaw?.config;
+      if (existing && typeof existing === "object") {
+        needsBootstrap = false;
+      }
+    } catch {
+      // File missing or malformed → needs bootstrap
+    }
+    if (needsBootstrap) {
+      persistConfigToOpenClaw(config);
+    }
+  }
 
   // Route all seclaw log output through the gateway's logger
   auditLog.setExternalLogger(api.logger);
