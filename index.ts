@@ -1239,6 +1239,7 @@ export function onSessionReset(sessionKey: string): void {
 // ─── OpenClaw Plugin Registration ───
 
 let initialized = false;
+let dashboardLogged = false;
 
 function register(api: OpenClawPluginApi): void {
   // The gateway calls register() multiple times (once per agent context).
@@ -1298,60 +1299,38 @@ function register(api: OpenClawPluginApi): void {
       const llmCallFn = createGatewayLLMCallFn(config, api);
       if (llmCallFn) {
         llmAuditor.setLLMCallFn(llmCallFn);
+        // Log LLM auth source
+        let authSource = "provider config";
         if (config.llm.apiKey) {
-          api.logger.info(
-            `[seclaw] 🚀 LLM connected via explicit apiKey override model=${config.llm.model}`,
-          );
+          authSource = "explicit apiKey override";
         } else if (process.env.SECLAW_API_KEY?.trim()) {
-          api.logger.info(
-            `[seclaw] 🚀 LLM connected via SECLAW_API_KEY env var model=${config.llm.model}`,
-          );
+          authSource = "SECLAW_API_KEY env var";
         } else {
           const resolved = resolveProviderTransport(config.llm.model, api);
-          const providerAuth = resolved?.authMode;
           const providerCfg = findProviderConfig(getMergedProviders(api), resolved?.providerName ?? "");
           const hasStaticKey = typeof providerCfg?.apiKey === "string";
           const hasRuntimeAuth = !!api.runtime?.modelAuth;
           if (!hasStaticKey && hasRuntimeAuth) {
-            api.logger.info(
-              `[seclaw] 🚀 LLM connected via provider config (OAuth/dynamic auth) model=${config.llm.model}`,
-            );
-          } else if (!hasStaticKey && !hasRuntimeAuth && (providerAuth === "oauth" || providerAuth === "token")) {
+            authSource = "provider config (OAuth/dynamic)";
+          } else if (!hasStaticKey && !hasRuntimeAuth && (resolved?.authMode === "oauth" || resolved?.authMode === "token")) {
             api.logger.error(
-              `[seclaw] ⚠️ LLM provider "${resolved?.providerName}" uses ${providerAuth} auth but runtime.modelAuth is not available -- ` +
-                "LLM calls will fail with 401. Ensure the gateway provides runtime.modelAuth.",
-            );
-          } else {
-            api.logger.info(
-              `[seclaw] 🚀 LLM connected via provider config model=${config.llm.model}`,
+              `[seclaw] LLM provider "${resolved?.providerName}" uses ${resolved?.authMode} auth but runtime.modelAuth is unavailable — LLM calls will fail`,
             );
           }
         }
+        api.logger.info(`[seclaw] LLM: ${config.llm.model} via ${authSource}`);
       } else {
-        if (config.llm.model.includes("/")) {
-          const providerName = config.llm.model.slice(0, config.llm.model.indexOf("/"));
-          api.logger.error(
-            `[seclaw] ⚠️ LLM enabled but provider "${providerName}" not found in effective providers -- ` +
-              "check openclaw.json configuration. RED operations will pass without real LLM audit.",
-          );
-        } else if (!config.llm.model) {
-          api.logger.error(
-            "[seclaw] ⚠️ LLM enabled but no model configured -- " +
-              "set llm.model in plugin config or agents.defaults.model.primary in openclaw.json. " +
-              "RED operations will pass without real LLM audit.",
-          );
-        } else {
-          api.logger.error(
-            "[seclaw] ⚠️ LLM enabled but model is not provider/model -- " +
-              "set llm.model as provider/model in plugin config. " +
-              "RED operations will pass without real LLM audit.",
-          );
-        }
+        const hint = !config.llm.model
+          ? "no model configured — set llm.model or agents.defaults.model.primary"
+          : config.llm.model.includes("/")
+            ? `provider "${config.llm.model.slice(0, config.llm.model.indexOf("/"))}" not found in effective providers`
+            : "model must be in provider/model format";
+        api.logger.error(`[seclaw] LLM unavailable: ${hint}. RED operations will pass without audit.`);
       }
     }
 
     api.logger.info(
-      `[seclaw] 🚀 Initialized rules=${ruleEngine.getRules().length} llm=${config.llm.enabled ? config.llm.model : "disabled"} policy=${config.timeouts.syncTimeoutPolicy}`,
+      `[seclaw] Initialized: ${ruleEngine.getRules().length} rules, policy=${config.timeouts.syncTimeoutPolicy}${config.llm.enabled ? "" : ", LLM disabled"}`,
     );
   }
 
@@ -1398,6 +1377,13 @@ function register(api: OpenClawPluginApi): void {
       match: "prefix",
       handler: createDashboardRouteHandler(dashboardDeps, "/plugins/seclaw"),
     });
+    // Log full dashboard URL once
+    if (!dashboardLogged) {
+      dashboardLogged = true;
+      const gw = api.config.gateway as { port?: number } | undefined;
+      const port = gw?.port ?? 18789;
+      api.logger.info(`[seclaw] Dashboard: http://localhost:${port}/plugins/seclaw`);
+    }
   }
 
   // ─── Core hooks ───
@@ -1953,6 +1939,7 @@ export function _setGatewayApi(api: OpenClawPluginApi | null): void {
 }
 export function _resetRegistration(): void {
   initialized = false;
+  dashboardLogged = false;
 }
 export { computeParamsFingerprint as _computeParamsFingerprint };
 export { stopDashboard } from "./src/dashboard/server.js";
