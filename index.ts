@@ -1370,10 +1370,6 @@ function register(api: OpenClawPluginApi): void {
   );
 
   if (config.dashboard?.enabled && api.registerHttpRoute) {
-    const dashboardToken = config.dashboard?.token?.trim()
-      || process.env.OPENCLAW_GATEWAY_TOKEN?.trim()
-      || undefined;
-
     const dashboardDeps: import("./src/dashboard/server.js").DashboardDeps = {
       getConfig: () => config,
       updateConfig,
@@ -1402,7 +1398,10 @@ function register(api: OpenClawPluginApi): void {
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
-      getToken: () => dashboardToken,
+      // Gateway mode: no plugin-level token check. The gateway's network-level
+      // access controls are the security boundary (same as the Control UI).
+      // If explicit plugin-level auth is needed, set dashboard.token in config.
+      getToken: () => config.dashboard?.token?.trim() || undefined,
     };
     api.registerHttpRoute({
       path: "/plugins/seclaw",

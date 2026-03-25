@@ -805,27 +805,21 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 
 ### Dashboard Authentication
 
-HTML/SPA pages are freely accessible without authentication. API endpoints (`/api/*`) require a Bearer token when configured.
+**Gateway mode** (production): The route is registered with `auth: "plugin"`. By default no plugin-level token is required — the gateway's network-level access controls are the security boundary (same pattern as the Control UI, which serves HTML without auth). If explicit plugin-level auth is needed, set `dashboard.token` in the SecLaw plugin config; the frontend will auto-discover the OpenClaw gateway token from `sessionStorage` or show a login overlay.
 
-**Token resolution priority** (in `register()`):
-1. `dashboard.token` — explicit config value
-2. `OPENCLAW_GATEWAY_TOKEN` environment variable — reuses the gateway token
-3. No token → authentication disabled (all API endpoints open)
+**Standalone mode** (testing via `init()`): `DashboardDeps.getToken` is not set, so no authentication is required. This is appropriate since standalone mode is for local development/testing only.
 
 **Server-side** (`server.ts`):
-- `DashboardDeps.getToken` is an optional field — when absent or returning `undefined`, auth is skipped (test-compatible)
-- Bearer header (`Authorization: Bearer <token>`) is checked first; query param (`?token=xxx`) is a fallback for SSE `EventSource` (which does not support custom headers)
+- `DashboardDeps.getToken` is an optional field — when absent or returning `undefined`, plugin-level auth is skipped
+- When set, Bearer header (`Authorization: Bearer <token>`) is checked first; query param (`?token=xxx`) is a fallback for SSE `EventSource` (which does not support custom headers)
 - Token comparison uses SHA-256 + `crypto.timingSafeEqual` to prevent timing attacks
 - Failed auth returns `401 { error: { message: "Unauthorized", type: "unauthorized" } }`
 
 **Client-side** (`html.ts`):
-- Global `fetch` interceptor adds `Authorization` header to all `/api/` requests; on 401 response, triggers login overlay
-- SSE `EventSource` passes token via `?token=` query parameter
-- Token initialization priority:
-  1. `sessionStorage['seclaw_token']` — user manually entered via login overlay
-  2. OpenClaw gateway token — auto-discovered from `sessionStorage` keys matching `openclaw.control.token.v1:*` prefix (SSO: when SecLaw is mounted as a gateway route, it shares `sessionStorage` with the OpenClaw dashboard, enabling auto-login)
-  3. Empty → startup probe detects auth requirement → login overlay
-- Startup probe: on load, if no stored token, fetches `/api/health` — 401 triggers login overlay
+- Global `fetch` interceptor adds `Authorization` header to all `/api/` requests when a token is available; on 401 response, triggers login overlay
+- SSE `EventSource` passes token via `?token=` query parameter when available
+- Token initialization: checks `sessionStorage['seclaw_token']` then auto-discovers OpenClaw gateway token from `sessionStorage` keys matching `openclaw.control.token.v1:*` prefix
+- Startup probe: on load, if no stored token, fetches `/api/health` — 401 triggers login overlay (only relevant if plugin-level auth is active)
 
 ### SSE Push Mechanism
 
