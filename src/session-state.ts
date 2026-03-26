@@ -212,6 +212,22 @@ class SessionStateManager {
   }
 
   /**
+   * Clear all pending overrides that are NOT the currently active one.
+   * Prevents memory leaks from blocked-but-never-overridden entries.
+   * Must be called AFTER pin detection in onUserMessage so we don't
+   * delete the override the user is trying to activate.
+   */
+  clearStalePendingOverrides(sessionKey: string): void {
+    const state = this.getSession(sessionKey);
+    const activePin = state.activeOverridePin;
+    for (const pin of [...state.pendingOverrides.keys()]) {
+      if (pin !== activePin) {
+        state.pendingOverrides.delete(pin);
+      }
+    }
+  }
+
+  /**
    * Clear the active override and its pending entry.
    * Called at the start of each new turn (onUserMessage) to ensure
    * overrides don't leak across turns.

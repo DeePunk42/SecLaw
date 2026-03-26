@@ -135,6 +135,61 @@ describe("SessionState override management", () => {
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
   });
 
+  it("clearStalePendingOverrides removes non-active overrides", () => {
+    // Add several pending overrides
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "111111",
+      toolName: "exec",
+      paramsFingerprint: "fp1",
+      timestamp: Date.now(),
+    });
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "222222",
+      toolName: "exec",
+      paramsFingerprint: "fp2",
+      timestamp: Date.now(),
+    });
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "333333",
+      toolName: "exec",
+      paramsFingerprint: "fp3",
+      timestamp: Date.now(),
+    });
+
+    // Activate one of them
+    sessionState.activateOverride(sessionKey, "222222");
+
+    // Clear stale
+    sessionState.clearStalePendingOverrides(sessionKey);
+
+    // Active one survives
+    expect(sessionState.getPendingOverride(sessionKey, "222222")).not.toBeNull();
+    // Others are gone
+    expect(sessionState.getPendingOverride(sessionKey, "111111")).toBeNull();
+    expect(sessionState.getPendingOverride(sessionKey, "333333")).toBeNull();
+  });
+
+  it("clearStalePendingOverrides removes all when none active", () => {
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "111111",
+      toolName: "exec",
+      paramsFingerprint: "fp1",
+      timestamp: Date.now(),
+    });
+    sessionState.addPendingOverride(sessionKey, {
+      pin: "222222",
+      toolName: "exec",
+      paramsFingerprint: "fp2",
+      timestamp: Date.now(),
+    });
+
+    // No active override
+    sessionState.clearStalePendingOverrides(sessionKey);
+
+    expect(sessionState.getPendingOverride(sessionKey, "111111")).toBeNull();
+    expect(sessionState.getPendingOverride(sessionKey, "222222")).toBeNull();
+  });
+
   it("resetSession clears override state", () => {
     sessionState.addPendingOverride(sessionKey, {
       pin: "334455",
@@ -593,6 +648,141 @@ describe("Integration: Override flow", () => {
 
     // No danger flag should be set
     expect(sessionState.hasDangerFlag(sessionKey)).toBe(false);
+  });
+});
+
+describe("Integration: Stale override cleanup", () => {
+  const mockLLM = vi.fn();
+
+  beforeEach(() => {
+    sessionState.clear();
+    mockLLM.mockReset();
+    init({
+      workspacePath: "/workspace",
+      pluginDir: __dirname + "/..",
+      config: {
+        llm: {
+          model: "test",
+          enabled: true,
+          maxConcurrent: 2,
+          trustedSenderLabels: trustedLabels,
+        },
+        logging: { level: "error", auditJsonl: false },
+      },
+      llmCall: mockLLM,
+    });
+  });
+
+  it("stale pending overrides are cleared on next user message (no /pin)", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Do something"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Blocked"}',
+    });
+
+    // Block three times → three pending overrides
+    for (let i = 0; i < 3; i++) {
+      await beforeToolCall(
+        { toolName: "exec", params: { command: `eval payload${i}` } },
+        ctx,
+      );
+    }
+
+    // Verify we have pending overrides
+    const session = sessionState.getSession(sessionKey);
+    expect(session.pendingOverrides.size).toBe(3);
+
+    // Next turn: normal message (no /pin)
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "just chatting"));
+
+    // All stale overrides should be cleared
+    expect(session.pendingOverrides.size).toBe(0);
+  });
+
+  it("normal /pin flow still works after stale cleanup is added", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run command"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Blocked"}',
+    });
+
+    // Block → get PIN
+    const result = await beforeToolCall(
+      { toolName: "exec", params: { command: "eval payload" } },
+      ctx,
+    );
+    const pin = result!.blockReason!.match(/\/pin(\d{6})/)![1];
+
+    // User sends /pin → activates override, stale cleanup preserves the active one
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
+
+    // Override is active
+    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
+  });
+});
+
+describe("Integration: Blocked calls recorded in recentToolCalls", () => {
+  const mockLLM = vi.fn();
+
+  beforeEach(() => {
+    sessionState.clear();
+    mockLLM.mockReset();
+    init({
+      workspacePath: "/workspace",
+      pluginDir: __dirname + "/..",
+      config: {
+        llm: {
+          model: "test",
+          enabled: true,
+          maxConcurrent: 2,
+          trustedSenderLabels: trustedLabels,
+        },
+        logging: { level: "error", auditJsonl: false },
+      },
+      llmCall: mockLLM,
+    });
+  });
+
+  it("sync DANGER block records blocked outcome in recentToolCalls", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run eval"));
+
+    mockLLM.mockResolvedValue({
+      content: '{"decision": "DANGER", "reason": "Blocked"}',
+    });
+
+    await beforeToolCall(
+      { toolName: "exec", params: { command: "eval payload" } },
+      ctx,
+    );
+
+    const intentCtx = getIntentContext(sessionKey);
+    const lastCall = intentCtx.recentToolCalls[intentCtx.recentToolCalls.length - 1];
+    expect(lastCall).toBeDefined();
+    expect(lastCall.toolName).toBe("exec");
+    expect(lastCall.outcome).toBe("blocked");
+  });
+
+  it("danger flag block records blocked outcome in recentToolCalls", async () => {
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run command"));
+
+    sessionState.setDangerFlag(sessionKey, {
+      toolName: "exec",
+      params: { command: "suspicious" },
+      reason: "Async danger",
+      timestamp: Date.now(),
+      source: "async",
+    });
+
+    await beforeToolCall(
+      { toolName: "exec", params: { command: "next command" } },
+      ctx,
+    );
+
+    const intentCtx = getIntentContext(sessionKey);
+    const lastCall = intentCtx.recentToolCalls[intentCtx.recentToolCalls.length - 1];
+    expect(lastCall).toBeDefined();
+    expect(lastCall.toolName).toBe("exec");
+    expect(lastCall.outcome).toBe("blocked");
   });
 });
 

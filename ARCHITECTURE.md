@@ -233,7 +233,8 @@ This ensures `userGoal` contains only the user's actual instruction, reducing LL
 | Hook | Data Source | What It Populates |
 |------|------------|-------------------|
 | `before_prompt_build` | `event.prompt` (user input), `ctx` (agent context) | `userGoal` — current user message; `channelId`, `trigger`, `agentId`, `messageProvider` — from hook context |
-| `after_tool_call` | `event.toolName`, `event.params`, `event.error` | `stepIndex`, `recentToolCalls` |
+| `before_tool_call` (block paths) | `toolName`, `params` | `recentToolCalls` with `outcome: "blocked"` — recorded before returning `{ block: true }` so blocked operations appear in LLM audit context |
+| `after_tool_call` | `event.toolName`, `event.params`, `event.error` | `stepIndex`, `recentToolCalls` with `outcome: "success"` or `"error"` |
 | `session_start` / `before_reset` / `before_compaction` | — | Reset all intent state |
 
 `before_prompt_build` is the primary intent source. It fires before every LLM call and provides the user prompt, full `messages[]` array, plus source information (`channelId`, `trigger`, `agentId`, `messageProvider`) in context.
@@ -265,6 +266,10 @@ The same logic applies to `/pin` override consumption in `onUserMessage()`: when
 ### Turn-scoped override
 
 The override stays active for the **entire turn** (until the next `onUserMessage`). This handles multi-tool-call scenarios where the LLM retries with different params after the first attempt errors. All calls of the matching `toolName` within the same turn are covered. Cleanup happens via `clearTurnOverride()` at the start of each new turn.
+
+### Stale override cleanup
+
+When an operation is blocked, a `PendingOverride` entry is registered in the session. If the user never sends `/pin` to activate it, the entry would leak. `clearStalePendingOverrides()` runs in `onUserMessage()` **after** pin detection to remove all pending overrides except the currently active one. This prevents unbounded growth of the `pendingOverrides` Map across turns.
 
 ### Security properties
 

@@ -63,6 +63,10 @@ export function onUserMessage(
         sessionState.activateOverride(sessionKey, pin);
       }
     }
+
+    // Clean up stale pending overrides (blocked but never /pin'd).
+    // Must run AFTER pin detection so we don't delete the one being activated.
+    sessionState.clearStalePendingOverrides(sessionKey);
   }
 }
 

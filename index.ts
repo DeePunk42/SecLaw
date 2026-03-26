@@ -921,6 +921,7 @@ export async function beforeToolCall(
         params,
         dangerIntentCtx,
       );
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
@@ -936,6 +937,7 @@ export async function beforeToolCall(
         params,
         dangerIntentCtx,
       );
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint("", false),
@@ -1008,6 +1010,7 @@ export async function beforeToolCall(
           params,
           intentCtx,
         );
+        onToolCallComplete(sessionKey, toolName, params, "blocked");
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
@@ -1023,6 +1026,7 @@ export async function beforeToolCall(
           params,
           intentCtx,
         );
+        onToolCallComplete(sessionKey, toolName, params, "blocked");
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint("", false),
@@ -1112,6 +1116,7 @@ export async function beforeToolCall(
         params,
         intentCtx,
       );
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return { block: true, blockReason };
     } else {
       // fail_open: allow but warn the agent to stop
@@ -1148,6 +1153,7 @@ export async function beforeToolCall(
         params,
         intentCtx,
       );
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
@@ -1163,6 +1169,7 @@ export async function beforeToolCall(
         params,
         intentCtx,
       );
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint("", false),
