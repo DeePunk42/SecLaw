@@ -55,7 +55,7 @@ Respond with ONLY a JSON object in one of these formats:
 {"decision": "SAFE"}
 {"decision": "DANGER", "reason": "...", "recommendation": "..."}`;
 
-const UNTRUSTED_AUDIT_PROMPT = `You are a security auditor for an AI Agent system. The sender is NOT a trusted operator. Analyze the following tool call for security risks.
+const UNTRUSTED_AUDIT_PROMPT = `You are a security auditor for an AI Agent system. The sender is NOT a trusted operator. Analyze the following tool call for actual security impact.
 
 ## Context
 - User goal: {userGoal}
@@ -71,10 +71,16 @@ const UNTRUSTED_AUDIT_PROMPT = `You are a security auditor for an AI Agent syste
 - Parameters: {params}
 
 ## Decision criteria
-- SAFE: The operation poses no security risk — no data loss, credential leakage, or unauthorized access
-- DANGER: The operation may cause data loss, credential leakage, unauthorized access, or other security harm
+- SAFE: The operation is read-only, diagnostic, or low-impact — even from an untrusted sender it cannot cause meaningful harm (e.g. ping, ls, cat, git status, file reads, web searches)
+- DANGER: The operation could CONCRETELY cause one or more of:
+  1) Irreversible data loss or corruption (rm, truncate, DROP TABLE)
+  2) Credential or secret leakage (reading/exfiltrating keys, tokens, .env files)
+  3) Unauthorized privilege escalation (sudo, chmod 777, adding users)
+  4) System integrity compromise (modifying binaries, startup scripts, cron jobs)
+  5) Network abuse (port scanning, reverse shells, SSRF to internal services)
 
-Apply strict scrutiny. When in doubt, flag as DANGER.
+Focus on what the operation ACTUALLY DOES, not on who triggered it. An untrusted sender running "ping google.com" is SAFE; an untrusted sender running "rm -rf /" is DANGER.
+Do NOT flag as DANGER based solely on the sender being untrusted — evaluate the concrete impact of the specific operation.
 
 Respond with ONLY a JSON object in one of these formats:
 {"decision": "SAFE"}
@@ -126,7 +132,12 @@ export class LLMAuditor {
     userGoal: string,
     trusted?: boolean,
   ): string {
-    const raw = JSON.stringify({ toolName, params, userGoal, trusted: !!trusted });
+    const raw = JSON.stringify({
+      toolName,
+      params,
+      userGoal,
+      trusted: !!trusted,
+    });
     return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
   }
 
@@ -149,13 +160,16 @@ export class LLMAuditor {
    * Run an LLM audit on a tool call.
    * Returns cached result if available.
    */
-  async audit(params: {
-    toolName: string;
-    params: Record<string, unknown>;
-    intentContext: IntentContext;
-    sessionKey: string;
-    trusted?: boolean;
-  }, ruleContext?: { ruleId?: string; reason?: string }): Promise<LLMAuditResult> {
+  async audit(
+    params: {
+      toolName: string;
+      params: Record<string, unknown>;
+      intentContext: IntentContext;
+      sessionKey: string;
+      trusted?: boolean;
+    },
+    ruleContext?: { ruleId?: string; reason?: string },
+  ): Promise<LLMAuditResult> {
     if (!this.config.enabled || !this.llmCall) {
       return { decision: "SAFE" };
     }
@@ -180,7 +194,8 @@ export class LLMAuditor {
     if (this.isCoolingDown()) {
       return this.buildErrorResult({
         category: "rate_limited",
-        message: "LLM audit skipped: cooling down after sustained rate limiting",
+        message:
+          "LLM audit skipped: cooling down after sustained rate limiting",
         timestamp: Date.now(),
       });
     }
@@ -266,7 +281,12 @@ export class LLMAuditor {
     }
     if (error && typeof error === "object" && "code" in error) {
       const code = (error as { code: string }).code;
-      if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT" || code === "ECONNRESET") {
+      if (
+        code === "ECONNREFUSED" ||
+        code === "ENOTFOUND" ||
+        code === "ETIMEDOUT" ||
+        code === "ECONNRESET"
+      ) {
         return "network_error";
       }
     }
@@ -278,9 +298,10 @@ export class LLMAuditor {
   }
 
   buildErrorResult(errorInfo: LLMErrorInfo, prompt?: string): LLMAuditResult {
-    const decision = this.timeoutConfig.syncTimeoutPolicy === "fail_closed"
-      ? "DANGER" as const
-      : "SAFE" as const;
+    const decision =
+      this.timeoutConfig.syncTimeoutPolicy === "fail_closed"
+        ? ("DANGER" as const)
+        : ("SAFE" as const);
     return {
       decision,
       reason: this.formatErrorReason(errorInfo),
@@ -307,22 +328,29 @@ export class LLMAuditor {
 
   // ─── Core LLM Call with Retry ───
 
-  private async callLLM(params: {
-    toolName: string;
-    params: Record<string, unknown>;
-    intentContext: IntentContext;
-    trusted?: boolean;
-  }, ruleContext?: { ruleId?: string; reason?: string }): Promise<LLMAuditResult> {
+  private async callLLM(
+    params: {
+      toolName: string;
+      params: Record<string, unknown>;
+      intentContext: IntentContext;
+      trusted?: boolean;
+    },
+    ruleContext?: { ruleId?: string; reason?: string },
+  ): Promise<LLMAuditResult> {
     const prompt = this.buildPrompt(params, ruleContext);
     const retryConfig = this.config.retry ?? DEFAULT_RETRY_CONFIG;
 
     // Check cooldown before attempting
     if (this.isCoolingDown()) {
-      return this.buildErrorResult({
-        category: "rate_limited",
-        message: "LLM audit skipped: cooling down after sustained rate limiting",
-        timestamp: Date.now(),
-      }, prompt);
+      return this.buildErrorResult(
+        {
+          category: "rate_limited",
+          message:
+            "LLM audit skipped: cooling down after sustained rate limiting",
+          timestamp: Date.now(),
+        },
+        prompt,
+      );
     }
 
     for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
@@ -344,12 +372,14 @@ export class LLMAuditor {
         const category = this.classifyError(error);
 
         // Build error info
-        const statusCode = error && typeof error === "object" && "statusCode" in error
-          ? (error as { statusCode: number }).statusCode
-          : undefined;
-        const retryAfterMs = error && typeof error === "object" && "retryAfterMs" in error
-          ? (error as { retryAfterMs?: number }).retryAfterMs
-          : undefined;
+        const statusCode =
+          error && typeof error === "object" && "statusCode" in error
+            ? (error as { statusCode: number }).statusCode
+            : undefined;
+        const retryAfterMs =
+          error && typeof error === "object" && "retryAfterMs" in error
+            ? (error as { retryAfterMs?: number }).retryAfterMs
+            : undefined;
         const errorInfo: LLMErrorInfo = {
           category,
           statusCode,
@@ -368,19 +398,25 @@ export class LLMAuditor {
           this.consecutive429Count++;
           if (this.consecutive429Count >= retryConfig.cooldownThreshold) {
             this.cooldownUntil = Date.now() + retryConfig.cooldownMs;
-            return this.buildErrorResult({
-              ...errorInfo,
-              message: `Rate limited — cooldown activated after ${this.consecutive429Count} consecutive 429s`,
-            }, prompt);
+            return this.buildErrorResult(
+              {
+                ...errorInfo,
+                message: `Rate limited — cooldown activated after ${this.consecutive429Count} consecutive 429s`,
+              },
+              prompt,
+            );
           }
         }
 
         // If this was the last attempt, return error
         if (attempt >= retryConfig.maxRetries) {
-          return this.buildErrorResult({
-            ...errorInfo,
-            message: `${errorInfo.message} (after ${retryConfig.maxRetries} retries)`,
-          }, prompt);
+          return this.buildErrorResult(
+            {
+              ...errorInfo,
+              message: `${errorInfo.message} (after ${retryConfig.maxRetries} retries)`,
+            },
+            prompt,
+          );
         }
 
         // Wait before retrying (exponential backoff)
@@ -390,19 +426,25 @@ export class LLMAuditor {
     }
 
     // Should not reach here, but just in case
-    return this.buildErrorResult({
-      category: "unknown_error",
-      message: "Retry loop exited unexpectedly",
-      timestamp: Date.now(),
-    }, prompt);
+    return this.buildErrorResult(
+      {
+        category: "unknown_error",
+        message: "Retry loop exited unexpectedly",
+        timestamp: Date.now(),
+      },
+      prompt,
+    );
   }
 
-  private buildPrompt(params: {
-    toolName: string;
-    params: Record<string, unknown>;
-    intentContext: IntentContext;
-    trusted?: boolean;
-  }, ruleContext?: { ruleId?: string; reason?: string }): string {
+  private buildPrompt(
+    params: {
+      toolName: string;
+      params: Record<string, unknown>;
+      intentContext: IntentContext;
+      trusted?: boolean;
+    },
+    ruleContext?: { ruleId?: string; reason?: string },
+  ): string {
     const { intentContext } = params;
 
     // Limit recent tool calls to configured N (default 3)
@@ -417,14 +459,18 @@ export class LLMAuditor {
 
     // Truncate userGoal to 500 chars
     const userGoal = intentContext.userGoal || "(not specified)";
-    const truncatedGoal = userGoal.length > 500 ? userGoal.slice(0, 500) + "..." : userGoal;
+    const truncatedGoal =
+      userGoal.length > 500 ? userGoal.slice(0, 500) + "..." : userGoal;
 
     // Compact params with 500 char limit
     const compactParams = JSON.stringify(params.params).slice(0, 500);
 
-    const template = params.trusted ? TRUSTED_AUDIT_PROMPT : UNTRUSTED_AUDIT_PROMPT;
+    const template = params.trusted
+      ? TRUSTED_AUDIT_PROMPT
+      : UNTRUSTED_AUDIT_PROMPT;
 
-    let prompt = template.replace("{userGoal}", truncatedGoal)
+    let prompt = template
+      .replace("{userGoal}", truncatedGoal)
       .replaceAll("{senderLabel}", intentContext.senderLabel || "(unknown)")
       .replace("{channelId}", intentContext.channelId || "(unknown)")
       .replace("{trigger}", intentContext.trigger || "(unknown)")
@@ -434,7 +480,7 @@ export class LLMAuditor {
       .replace("{params}", compactParams);
 
     if (ruleContext && (ruleContext.ruleId || ruleContext.reason)) {
-      prompt += `\n\n## Security rule context\nRule ${ruleContext.ruleId || "unknown"} flagged this operation: ${ruleContext.reason || "no reason given"}\nGive extra weight to this warning.`;
+      prompt += `\n\n## Security rule context\nRule ${ruleContext.ruleId || "unknown"} flagged this operation: ${ruleContext.reason || "no reason given"}\nConsider this context but still evaluate the actual impact of the operation.`;
     }
 
     return prompt;
@@ -447,7 +493,10 @@ export class LLMAuditor {
       if (!jsonMatch) {
         // If no JSON found, try to detect keywords
         if (content.toLowerCase().includes("danger")) {
-          return { decision: "DANGER", reason: "LLM flagged as dangerous (unparseable response)" };
+          return {
+            decision: "DANGER",
+            reason: "LLM flagged as dangerous (unparseable response)",
+          };
         }
         return { decision: "SAFE" };
       }
@@ -464,7 +513,10 @@ export class LLMAuditor {
     } catch {
       // Parse error — fail-safe
       if (this.timeoutConfig.syncTimeoutPolicy === "fail_closed") {
-        return { decision: "DANGER", reason: "Failed to parse LLM audit response" };
+        return {
+          decision: "DANGER",
+          reason: "Failed to parse LLM audit response",
+        };
       }
       return { decision: "SAFE" };
     }
