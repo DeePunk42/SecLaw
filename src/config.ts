@@ -275,6 +275,7 @@ const DEFAULT_CONFIG: SecLawConfig = {
     model: "",
     enabled: true,
     maxConcurrent: 2,
+    promptRecentCalls: 3,
     trustedSenderLabels: ["openclaw-control-ui"],
     retry: {
       maxRetries: 2,
@@ -298,8 +299,12 @@ const DEFAULT_CONFIG: SecLawConfig = {
 
 export function loadConfig(partial?: Partial<SecLawConfig>): SecLawConfig {
   if (!partial) return { ...DEFAULT_CONFIG };
+  const llm = { ...DEFAULT_CONFIG.llm, ...partial.llm };
+  if (partial.llm?.retry) {
+    llm.retry = { ...DEFAULT_CONFIG.llm.retry!, ...partial.llm.retry };
+  }
   return {
-    llm: { ...DEFAULT_CONFIG.llm, ...partial.llm },
+    llm,
     timeouts: { ...DEFAULT_CONFIG.timeouts, ...partial.timeouts },
     logging: { ...DEFAULT_CONFIG.logging, ...partial.logging },
     dashboard: { ...DEFAULT_CONFIG.dashboard!, ...partial.dashboard },

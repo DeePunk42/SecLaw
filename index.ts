@@ -814,9 +814,13 @@ function updateConfig(partial: Partial<SecLawConfig>): {
   // Capture pre-change state for enable toggle detection
   const wasLLMEnabled = config.llm.enabled;
 
+  const nextLlm = partial.llm ? { ...config.llm, ...partial.llm } : config.llm;
+  if (partial.llm?.retry && config.llm.retry) {
+    nextLlm.retry = { ...config.llm.retry, ...partial.llm.retry };
+  }
   const nextConfig: SecLawConfig = {
     ...config,
-    llm: partial.llm ? { ...config.llm, ...partial.llm } : config.llm,
+    llm: nextLlm,
     timeouts: partial.timeouts
       ? { ...config.timeouts, ...partial.timeouts }
       : config.timeouts,
