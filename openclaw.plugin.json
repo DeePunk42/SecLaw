@@ -34,14 +34,6 @@
           "syncTimeoutPolicy": { "type": "string", "enum": ["fail_closed", "fail_open"] }
         }
       },
-      "logging": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
-          "auditJsonl": { "type": "boolean" }
-        }
-      },
       "dashboard": {
         "type": "object",
         "properties": {

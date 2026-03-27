@@ -520,15 +520,8 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     <div class="config-field"><label>Timeout Policy</label><select id="cfg-timeouts-syncTimeoutPolicy"><option value="fail_closed">fail_closed</option><option value="fail_open">fail_open</option></select><span class="config-hint">fail_closed = block, fail_open = allow</span></div>
   </div>
   <div class="config-section">
-    <h3>Logging</h3>
-    <div class="config-field"><label>Log Level</label><select id="cfg-logging-level"><option value="debug">debug</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option></select></div>
-    <div class="config-field"><label>JSONL Audit Log</label><input id="cfg-logging-auditJsonl" type="checkbox"><span class="config-hint">Write structured logs to disk</span></div>
-  </div>
-  <div class="config-section">
     <h3>Dashboard</h3>
     <div class="config-field"><label>Enabled</label><input id="cfg-dashboard-enabled" type="checkbox" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
-    <div class="config-field"><label>Port</label><input id="cfg-dashboard-port" type="number" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
-    <div class="config-field"><label>Bind Address</label><input id="cfg-dashboard-host" type="text" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
   </div>
   <button class="btn-save" id="btn-save-config">Save Configuration</button>
 </div>
@@ -1278,13 +1271,8 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         // Timeouts
         document.getElementById('cfg-timeouts-auditTimeoutMs').value = cfg.timeouts?.auditTimeoutMs || 60000;
         document.getElementById('cfg-timeouts-syncTimeoutPolicy').value = cfg.timeouts?.syncTimeoutPolicy || 'fail_closed';
-        // Logging
-        document.getElementById('cfg-logging-level').value = cfg.logging?.level || 'info';
-        document.getElementById('cfg-logging-auditJsonl').checked = cfg.logging?.auditJsonl ?? true;
         // Dashboard (read-only)
         document.getElementById('cfg-dashboard-enabled').checked = cfg.dashboard?.enabled ?? true;
-        document.getElementById('cfg-dashboard-port').value = cfg.dashboard?.port ?? 19198;
-        document.getElementById('cfg-dashboard-host').value = cfg.dashboard?.host || '127.0.0.1';
       })
       .catch(function() { showToast('Failed to load config', 'error'); });
   }
@@ -1343,10 +1331,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       timeouts: {
         auditTimeoutMs: parseInt(document.getElementById('cfg-timeouts-auditTimeoutMs').value, 10),
         syncTimeoutPolicy: document.getElementById('cfg-timeouts-syncTimeoutPolicy').value,
-      },
-      logging: {
-        level: document.getElementById('cfg-logging-level').value,
-        auditJsonl: document.getElementById('cfg-logging-auditJsonl').checked,
       },
     };
     fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })

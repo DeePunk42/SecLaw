@@ -202,7 +202,7 @@ Give extra weight to this warning.
 
 ### 日志系统
 
-- **控制台日志**：受 `logging.level` 控制。GREEN 完全静默，YELLOW 产生 1 行调试输出，RED 产生约 10 行详细输出
+- **控制台日志**：默认 debug 级别。GREEN 完全静默，YELLOW 产生 1 行调试输出，RED 产生约 10 行详细输出
 - **JSONL 文件**：结构化事件日志（`seclaw-audit.jsonl`），记录分类、规则匹配、LLM 审计、阻断/放行等事件，每条携带 `toolCallId` 关联同一次调用
 
 ## Dashboard 仪表盘
@@ -301,8 +301,4 @@ Dashboard 同时提供 REST API，可供外部系统集成：
 | `llm.trustedSenderLabels` | 受信任发送者标签列表 | `["openclaw-control-ui"]` |
 | `timeouts.auditTimeoutMs` | 审计超时（毫秒） | `60000` |
 | `timeouts.syncTimeoutPolicy` | 超时策略 | `"fail_closed"` |
-| `logging.level` | 日志级别 | `"debug"` |
-| `logging.auditJsonl` | 是否写入 JSONL 审计日志 | `true` |
 | `dashboard.enabled` | 是否启用 Dashboard | `true` |
-| `dashboard.port` | Dashboard 端口 | `19198` |
-| `dashboard.host` | Dashboard 监听地址 | `"0.0.0.0"` |
