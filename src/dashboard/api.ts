@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
-import type { SigmaRule, IntentContext } from "../config.js";
+import type { SigmaRule, IntentContext, Platform } from "../config.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
@@ -83,6 +83,14 @@ function listRuleFiles(deps: DashboardDeps): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function resolveActiveFileNames(platform: Platform, allFiles: string[]): string[] {
+  const active: string[] = [];
+  if (allFiles.includes("default.yaml")) active.push("default.yaml");
+  const platformFile = platform === "windows" ? "windows.yaml" : "unix.yaml";
+  if (allFiles.includes(platformFile)) active.push(platformFile);
+  return active;
+}
+
 function inferRuleTestValueField(toolName: string): "command" | "path" | "url" | "query" {
   if (toolName === "exec" || toolName === "bash") return "command";
   if (toolName === "web_fetch") return "url";
@@ -151,6 +159,8 @@ export function handleApiRequest(
     handleHealthReport(res, deps);
   } else if (path === "/api/health" && method === "GET") {
     handleHealth(res);
+  } else if (path === "/api/rules/files/meta" && method === "GET") {
+    handleGetRuleFilesMeta(res, deps);
   } else if (path === "/api/rules/files" && method === "GET") {
     handleGetRuleFiles(res, deps);
   } else if (path === "/api/rules/file" && method === "GET") {
@@ -450,6 +460,22 @@ function handleGetRuleFiles(
 ): void {
   const files = listRuleFiles(deps);
   json(res, 200, { files });
+}
+
+// ─── GET /api/rules/files/meta ───
+
+function handleGetRuleFilesMeta(
+  res: http.ServerResponse,
+  deps: DashboardDeps,
+): void {
+  const allFiles = listRuleFiles(deps);
+  const platform = deps.getRuleEngine().getPlatform();
+  const activeFiles = resolveActiveFileNames(platform, allFiles);
+  const files = allFiles.map((name) => ({
+    name,
+    active: activeFiles.includes(name),
+  }));
+  json(res, 200, { files, platform });
 }
 
 // ─── GET /api/rules/file?name=xxx.yaml ───

@@ -20,7 +20,13 @@ export function resolveRuleFile(filePath: string): {
     const absPath = path.resolve(filePath);
     if (!fs.existsSync(absPath)) return { rules: [], lists: new Map() };
     const content = fs.readFileSync(absPath, "utf-8");
-    return resolveRuleContent(content);
+    const result = resolveRuleContent(content);
+    // Stamp source file name on each rule
+    const sourceFile = path.basename(filePath);
+    for (const rule of result.rules) {
+      rule.sourceFile = sourceFile;
+    }
+    return result;
   } catch {
     return { rules: [], lists: new Map() };
   }

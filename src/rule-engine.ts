@@ -157,6 +157,7 @@ export class RuleEngine {
       tags: rule.tags,
       detection: rule.detection,
       matcher: compileDetection(rule.detection, this.fieldRegistry, this.lists),
+      sourceFile: rule.sourceFile,
     }));
   }
 

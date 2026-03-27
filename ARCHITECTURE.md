@@ -732,7 +732,8 @@ When `api.registerHttpRoute` is not available (standalone/testing), the built-in
 | GET | `/api/config` | Current config (apiKey masked as `"***"`) |
 | PUT | `/api/config` | Update runtime config (endpoint blocked; apiKey accepted) |
 | GET | `/api/health` | Health check (`{ status: "running" }`) |
-| GET | `/api/rules` | `{ rules, platform }` — compiled rules with detection blocks |
+| GET | `/api/rules` | `{ rules, platform }` — compiled rules with `sourceFile` annotation |
+| GET | `/api/rules/files/meta` | `{ files: [{name, active}], platform }` — file metadata with platform activity |
 | POST | `/api/rules/test` | Test tool call against rules: `{ toolName, params }` → `RuleResult` |
 | GET | `/api/models` | Available models from gateway providers |
 | GET | `/api/sender-labels` | Known sender labels (from persisted registry) |
@@ -789,17 +790,27 @@ The dashboard Audit Log tab shows tool calls as **grouped cards** in a 60/40 spl
   - Pause/Resume toggle + count display
 - Cards update in-place via SSE (`/api/tool-calls/stream`), refreshing the sidebar if the selected card was updated
 
-### Rules Tab (Two-Column Layout)
+### Rules Tab (Dual-Mode)
 
-The Rules tab displays all compiled rules (merged from all rule files) in a 60/40 split layout:
+The Rules tab has two modes, switchable via pill toggle:
 
-- **Collapsible Rule Tester**: input tool name + JSON params → `POST /api/rules/test` → shows matched tier/rule/reason; clicking a matched rule scrolls to it in the list
-- **Toolbar**: pill-style tier filter (`ALL | GREEN | YELLOW | RED`), rule count, file selector dropdown, Upload/Download/Save buttons
-- **Left panel (60%)**: scrollable rule card list. Each card shows rule ID + tier badge, name, tool list, priority, platform tags
-- **Right panel (40%)**: fixed detail sidebar showing full rule info (ID, name, tools, platform, priority, reason, tags, detection YAML)
-- `CompiledRule` includes `detection?: DetectionBlock` for dashboard display
-- `GET /api/rules` returns `{ rules, platform }` (rules include detection blocks)
-- File operations (upload/download/save) use the existing `/api/rules/file/*` endpoints
+**Rule Files mode** (management):
+- **File tabs** at the top, one per YAML file (default.yaml, unix.yaml, windows.yaml). Files not loaded on the current platform are shown dimmed with a "not active" note
+- Selecting a file tab loads its rules from `GET /api/rules/file?name=` (raw parsed rules, not compiled)
+- **Toolbar**: tier filter pills, rule count, Upload/Download/Save buttons
+- **60/40 split**: left = scrollable rule cards for the selected file; right = detail panel
+- Upload/Save operate on the currently selected file — file target is always unambiguous
+
+**Effective Rules mode** (read-only, debugging):
+- Shows all compiled rules from the rule engine, merged and sorted by priority
+- Each rule card and detail panel shows a **source file badge** (`badge-source`); clicking it switches to Rule Files mode for that file
+- **Collapsible Rule Tester**: `POST /api/rules/test` → shows matched tier/rule/reason; clicking a matched rule scrolls to it in the list
+- **Toolbar**: tier filter pills, rule count
+
+**Source file tracking**:
+- `SigmaRule` and `CompiledRule` have an optional `sourceFile` field (e.g. `"unix.yaml"`)
+- `resolveRuleFile()` stamps `path.basename(filePath)` on each rule during loading
+- `GET /api/rules` returns rules with `sourceFile`; `GET /api/rules/files/meta` returns file metadata with `active` status per platform
 
 ### Config Editor
 

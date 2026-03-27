@@ -39,6 +39,8 @@ export interface SigmaRule {
   reason?: string;
   tags?: string[];
   detection: DetectionBlock;
+  /** Source YAML file name (e.g. "default.yaml"), stamped by the resolver. */
+  sourceFile?: string;
 }
 
 /** Detection block: named selections + condition expression */
@@ -62,6 +64,8 @@ export interface CompiledRule {
   tags?: string[];
   detection?: DetectionBlock;
   matcher: (ctx: MatchContext) => boolean;
+  /** Source YAML file name (e.g. "default.yaml"), stamped by the resolver. */
+  sourceFile?: string;
 }
 
 /** Command decomposition (exec tool only) */
