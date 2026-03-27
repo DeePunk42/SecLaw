@@ -910,43 +910,34 @@ export async function beforeToolCall(
     const dangerIntentCtx = getIntentContext(sessionKey);
     const blockReason = formatAsyncDangerBlockForAgent(dangerReport);
     const trusted = isSenderTrusted(sessionKey);
+    // Always generate PIN — trusted senders see it in blockReason,
+    // untrusted senders must obtain it from an admin via the dashboard.
+    const pin = registerPendingOverride(
+      sessionKey,
+      toolName,
+      params,
+      toolCallId,
+    );
+    auditLog.logBlock(
+      sessionKey,
+      toolName,
+      blockReason,
+      "async",
+      toolCallId,
+      pin,
+      params,
+      dangerIntentCtx,
+    );
+    onToolCallComplete(sessionKey, toolName, params, "blocked");
     if (trusted) {
-      const pin = registerPendingOverride(
-        sessionKey,
-        toolName,
-        params,
-        toolCallId,
-      );
-      auditLog.logBlock(
-        sessionKey,
-        toolName,
-        blockReason,
-        "async",
-        toolCallId,
-        pin,
-        params,
-        dangerIntentCtx,
-      );
-      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
       };
     } else {
-      auditLog.logBlock(
-        sessionKey,
-        toolName,
-        blockReason,
-        "async",
-        toolCallId,
-        undefined,
-        params,
-        dangerIntentCtx,
-      );
-      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
-        blockReason: blockReason + formatOverrideHint("", false),
+        blockReason: blockReason + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
       };
     }
   }
@@ -999,43 +990,18 @@ export async function beforeToolCall(
     if (config.timeouts.syncTimeoutPolicy === "fail_closed") {
       const reason = `RED operation blocked: LLM audit disabled (fail_closed policy)`;
       const trusted = isSenderTrusted(sessionKey);
+      const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
+      auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin, params, intentCtx);
+      onToolCallComplete(sessionKey, toolName, params, "blocked");
       if (trusted) {
-        const pin = registerPendingOverride(
-          sessionKey,
-          toolName,
-          params,
-          toolCallId,
-        );
-        auditLog.logBlock(
-          sessionKey,
-          toolName,
-          reason,
-          "sync",
-          toolCallId,
-          pin,
-          params,
-          intentCtx,
-        );
-        onToolCallComplete(sessionKey, toolName, params, "blocked");
         return {
           block: true,
           blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
         };
       } else {
-        auditLog.logBlock(
-          sessionKey,
-          toolName,
-          reason,
-          "sync",
-          toolCallId,
-          undefined,
-          params,
-          intentCtx,
-        );
-        onToolCallComplete(sessionKey, toolName, params, "blocked");
         return {
           block: true,
-          blockReason: `[SecLaw] ${reason}` + formatOverrideHint("", false),
+          blockReason: `[SecLaw] ${reason}\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.`,
         };
       }
     }
@@ -1142,43 +1108,18 @@ export async function beforeToolCall(
     const reason = llmResult.reason || "Blocked by LLM security audit";
     const ruleTag = ruleResult.ruleId ? ` (rule: ${ruleResult.ruleId})` : "";
     const blockReason = `[SecLaw] ${reason}${ruleTag}${llmResult.recommendation ? `\nRecommendation: ${llmResult.recommendation}` : ""}`;
+    const pin = registerPendingOverride(sessionKey, toolName, params, toolCallId);
+    auditLog.logBlock(sessionKey, toolName, reason, "sync", toolCallId, pin, params, intentCtx);
+    onToolCallComplete(sessionKey, toolName, params, "blocked");
     if (trusted) {
-      const pin = registerPendingOverride(
-        sessionKey,
-        toolName,
-        params,
-        toolCallId,
-      );
-      auditLog.logBlock(
-        sessionKey,
-        toolName,
-        reason,
-        "sync",
-        toolCallId,
-        pin,
-        params,
-        intentCtx,
-      );
-      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
         blockReason: blockReason + formatOverrideHint(pin, true),
       };
     } else {
-      auditLog.logBlock(
-        sessionKey,
-        toolName,
-        reason,
-        "sync",
-        toolCallId,
-        undefined,
-        params,
-        intentCtx,
-      );
-      onToolCallComplete(sessionKey, toolName, params, "blocked");
       return {
         block: true,
-        blockReason: blockReason + formatOverrideHint("", false),
+        blockReason: blockReason + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
       };
     }
   }
@@ -1437,6 +1378,23 @@ function register(api: OpenClawPluginApi): void {
             `Do not ask for further confirmation. Execute the tool call immediately.]`,
           ].join("\n");
           event.prompt = prefix + "\n\n" + (event.prompt ?? "");
+        }
+      }
+
+      // Inject async danger alert so the agent is notified immediately,
+      // rather than only discovering the block on the next tool call.
+      if (!activePin && sessionState.hasDangerFlag(sk)) {
+        const dangerReport = sessionState.peekDangerFlag(sk);
+        if (dangerReport) {
+          const alert = [
+            `[SecLaw Security Alert: A previously executed operation has been flagged as dangerous by async audit.`,
+            `Tool: ${dangerReport.toolName}`,
+            `Reason: ${dangerReport.reason}`,
+            dangerReport.recommendation ? `Recommendation: ${dangerReport.recommendation}` : null,
+            `Subsequent calls to ${dangerReport.toolName} will be blocked until confirmed.`,
+            `STOP using ${dangerReport.toolName} and inform the user about this security finding immediately.]`,
+          ].filter(Boolean).join("\n");
+          event.prompt = alert + "\n\n" + (event.prompt ?? "");
         }
       }
 

@@ -42,11 +42,11 @@ Tool Call (before_tool_call)
           │
           ├─ Trusted sender → Intent-alignment prompt
           │   ├─ SAFE → Allow execution
-          │   └─ DANGER → BLOCK + override PIN
+          │   └─ DANGER → BLOCK + override PIN (shown)
           │
           └─ Untrusted sender → Security-safety prompt
               ├─ SAFE → Allow execution
-              └─ DANGER → BLOCK (no override, no PIN)
+              └─ DANGER → BLOCK + override PIN (admin-only, via dashboard)
 ```
 
 ## Module Structure
@@ -241,7 +241,7 @@ This ensures `userGoal` contains only the user's actual instruction, reducing LL
 
 ## Trusted Sender Override
 
-When a tool call is blocked (sync DANGER, async danger flag, or fail_closed policy), a 6-digit decimal PIN is generated and included in the `blockReason`. Trusted senders can reply `/pin<pin>` to unblock the operation.
+When a tool call is blocked (sync DANGER, async danger flag, or fail_closed policy), a 6-digit decimal PIN is always generated. Any sender can reply `/pin<pin>` to unblock the operation — the PIN itself serves as an admin-granted authorization credential.
 
 ### Trust Determination
 
@@ -257,9 +257,9 @@ The same logic applies to `/pin` override consumption in `onUserMessage()`: when
 
 ### Flow
 
-1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }`. Trust is determined before the LLM call. **Trusted**: `registerPendingOverride()` is called (stores toolName + params + PIN), PIN is shown in hint. **Untrusted**: no override is registered, no PIN — the block is final
-2. **User confirms** — Sends `/pin<pin>` via text input
-3. **Detection** — `onUserMessage()` checks `senderLabel ∈ trustedSenderLabels` + PIN validity → activates override
+1. **Block** — `beforeToolCall` returns `{ block: true, blockReason }`. `registerPendingOverride()` is always called (stores toolName + params + PIN). **Trusted**: PIN shown in blockReason hint. **Untrusted**: PIN not shown in blockReason; agent is told to contact administrator. Admin retrieves PIN from the SecLaw dashboard.
+2. **User confirms** — Sends `/pin<pin>` via text input (any sender — PIN is the credential)
+3. **Detection** — `onUserMessage()` checks PIN validity → activates override (trust check removed; possessing the PIN proves admin authorization)
 4. **Prompt injection** — `before_prompt_build` detects active override → mutates `event.prompt` to prepend explicit retry instruction with the original tool name and params, so the LLM knows exactly what to re-execute
 5. **Allow** — Next `beforeToolCall` finds active override → allows without audit
 
@@ -384,9 +384,11 @@ After every tool call (`afterToolCall`), the operation is checked:
 6. **YELLOW/RED → LLM audit**: runs with `auditTimeoutMs` timeout
 7. **DANGER → interrupt**: sets per-session danger flag, emits `security` event
 
-The danger flag blocks **all subsequent tool calls** for that session until the session is reset.
+The danger flag blocks **all subsequent tool calls** for that session until overridden or the session is reset.
 
-When this async danger-flag block triggers, the returned `blockReason` uses a dedicated agent-facing message that explicitly instructs the model to stop the current call immediately. Trusted senders still receive the existing override hint with `/pin<pin>` appended in the override section.
+**Immediate agent notification**: When the danger flag is set, the next `before_prompt_build` hook injects a security alert into `event.prompt` (before the override injection point). The agent sees the alert at the start of its next turn and can inform the user immediately, rather than only discovering the block on the next tool call attempt.
+
+When this async danger-flag block triggers, the returned `blockReason` uses a dedicated agent-facing message that explicitly instructs the model to stop the current call immediately. A PIN is always generated (for both trusted and untrusted senders). Trusted senders see the PIN in the blockReason; untrusted senders are told to contact the administrator to obtain the PIN from the dashboard.
 
 ## Logging
 
@@ -659,7 +661,7 @@ SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the ty
 |------|----------|---------|
 | `before_tool_call` | 9999 | Core: rule classification + LLM audit gate |
 | `after_tool_call` | 100 | Core: record tool outcome, enqueue async audit |
-| `before_prompt_build` | — | Intent: extract `userGoal` from prompt, message source from context; inject override retry instruction when PIN activated |
+| `before_prompt_build` | — | Intent: extract `userGoal` from prompt, message source from context; inject override retry instruction when PIN activated; inject async danger alert when danger flag is set |
 | `session_start` | — | Lifecycle: reset session state |
 | `before_reset` | — | Lifecycle: reset session state |
 | `before_compaction` | — | Lifecycle: reset session state |

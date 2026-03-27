@@ -73,6 +73,13 @@ class SessionStateManager {
   }
 
   /**
+   * Peek at the danger flag without consuming it.
+   */
+  peekDangerFlag(sessionKey: string): DangerReport | null {
+    return this.getSession(sessionKey).dangerFlag;
+  }
+
+  /**
    * Get the intent context for a session.
    */
   getIntentContext(sessionKey: string): IntentContext {

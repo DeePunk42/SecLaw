@@ -58,8 +58,9 @@ export function onUserMessage(
     const match = userMessage.match(/\/pin(\d{6})/);
     if (match) {
       const pin = match[1].toLowerCase();
-      const isTrusted = senderLabel == null || trustedSenderLabels.includes(senderLabel);
-      if (isTrusted && sessionState.getPendingOverride(sessionKey, pin)) {
+      // Any sender can activate a PIN — the PIN itself is the authorization
+      // credential, obtainable only from an admin via the dashboard.
+      if (sessionState.getPendingOverride(sessionKey, pin)) {
         sessionState.activateOverride(sessionKey, pin);
       }
     }

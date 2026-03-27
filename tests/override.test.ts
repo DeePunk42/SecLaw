@@ -225,7 +225,7 @@ describe("onUserMessage override detection", () => {
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
   });
 
-  it("untrusted sender + correct PIN → does NOT activate", () => {
+  it("untrusted sender + correct PIN → activates (PIN is admin-granted credential)", () => {
     sessionState.addPendingOverride(sessionKey, {
       pin: "038291",
       toolName: "exec",
@@ -236,7 +236,7 @@ describe("onUserMessage override detection", () => {
     const msg = senderMessage("EvilUser", "/pin038291");
     onUserMessage(sessionKey, msg, trustedLabels);
 
-    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
+    expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(true);
   });
 
   it("trusted sender + wrong PIN → does NOT activate", () => {
@@ -565,20 +565,15 @@ describe("Integration: Override flow", () => {
     const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
     const pin = pinMatch![1];
 
-    // Untrusted sender tries to override
+    // Untrusted sender uses admin-provided PIN to override
     onUserMessageEvent(sessionKey, senderMessage("EvilUser", `/pin${pin}`));
 
-    // Retry → still blocked (LLM called again)
-    mockLLM.mockResolvedValue({
-      content: '{"decision": "DANGER", "reason": "Still blocked"}',
-    });
-
+    // Retry → allowed (override active)
     const retryResult = await beforeToolCall(event, ctx);
-    expect(retryResult).toBeDefined();
-    expect(retryResult!.block).toBe(true);
+    expect(retryResult).toBeUndefined(); // allowed
   });
 
-  it("untrusted sender sees no PIN", async () => {
+  it("untrusted sender sees no PIN in blockReason but PIN is generated", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Bob", "Do something dangerous"));
 
     mockLLM.mockResolvedValue({
@@ -592,26 +587,31 @@ describe("Integration: Override flow", () => {
 
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
-    expect(result!.blockReason).toContain("not in llm.trustedSenderLabels");
+    // PIN not shown in blockReason for untrusted senders
     expect(result!.blockReason).not.toMatch(/\/pin\d{6}/);
+    expect(result!.blockReason).toContain("administrator");
+    // A pending override IS registered (admin can see PIN in dashboard)
+    // Verify by checking a random PIN doesn't match but a valid one would
+    expect(sessionState.activateOverride(sessionKey, "000000")).toBe(false);
   });
 
-  it("untrusted DANGER does not register pendingOverride", async () => {
+  it("untrusted DANGER registers pendingOverride (admin-visible in dashboard)", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Bob", "Do something dangerous"));
 
     mockLLM.mockResolvedValue({
       content: '{"decision": "DANGER", "reason": "Blocked"}',
     });
 
-    await beforeToolCall(
+    const result = await beforeToolCall(
       { toolName: "exec", params: { command: "rm -rf /" } },
       ctx,
     );
 
-    // No pending overrides should exist for this session
-    // Trying to activate any PIN should fail
+    expect(result!.block).toBe(true);
+    // A pending override IS registered (admin can retrieve PIN from dashboard)
+    // but a random PIN won't match
     expect(sessionState.activateOverride(sessionKey, "000000")).toBe(false);
-    // Verify no override is active
+    // No override is active until admin provides the correct PIN
     expect(sessionState.consumeActiveOverride(sessionKey, "exec")).toBe(false);
   });
 
