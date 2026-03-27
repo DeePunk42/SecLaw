@@ -271,7 +271,7 @@ function registerPendingOverride(
   return pin;
 }
 
-const STOP_INSTRUCTION = `\nACTION REQUIRED: STOP all tool execution immediately. Do NOT continue with additional tool calls.\nExplain the risk to the user and wait for their decision.`;
+const STOP_INSTRUCTION = `\nACTION REQUIRED: STOP all tool execution immediately. Do NOT continue with additional tool calls.\nExplain the risk to the user and wait for their decision.\nDo NOT take any other action until the user provides their next instruction.`;
 
 function formatOverrideHint(pin: string, showPin: boolean): string {
   if (!showPin) {
@@ -295,7 +295,8 @@ function formatAsyncDangerBlockForAgent(report: DangerReport): string {
     `[SecLaw] SECURITY ALERT — Operation blocked`,
     ``,
     `ACTION REQUIRED: STOP this tool call immediately.`,
-    `Do NOT execute this call and do NOT continue with additional tool calls until user confirmation.`,
+    `Do NOT execute this call and do NOT continue with additional tool calls.`,
+    `Do NOT take any other action until the user provides their next instruction.`,
     ``,
     `Previous dangerous operation (async audit): ${report.toolName}`,
     `Reason: ${report.reason}`,
@@ -1386,7 +1387,8 @@ function register(api: OpenClawPluginApi): void {
             `Reason: ${dangerReport.reason}`,
             dangerReport.recommendation ? `Recommendation: ${dangerReport.recommendation}` : null,
             `ALL tool calls are now blocked until this is resolved via /pin.`,
-            `STOP all operations and inform the user about this security finding immediately.]`,
+            `STOP all operations and inform the user about this security finding immediately.`,
+            `Do NOT take any other action until the user provides their next instruction.]`,
           ].filter(Boolean).join("\n");
           event.prompt = alert + "\n\n" + (event.prompt ?? "");
         }
