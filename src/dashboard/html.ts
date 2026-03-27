@@ -413,6 +413,149 @@ body::before {
 .harden-result-item:last-child { border-bottom: none; }
 .harden-result-item .rollback { font-size: 10px; color: var(--text-dim); display: block; margin-top: 2px; }
 
+/* ─── Domain Score Grid ─── */
+.domain-grid {
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 14px;
+  margin-bottom: 16px;
+}
+.dg-card {
+  background: var(--bg-card); border: 1px solid var(--b1); border-radius: 14px;
+  padding: 16px 18px; transition: border-color .2s, transform .2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+}
+.dg-card:hover { border-color: var(--b2); transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+.dg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.dg-name { font-family: var(--font-heading); font-size: 14px; font-weight: 700; color: var(--text); }
+.dg-pct { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--text-dim); }
+.dg-track { height: 8px; border-radius: 4px; background: rgba(255,255,255,.04); overflow: hidden; }
+.dg-fill { height: 100%; border-radius: 4px; transition: width 1s cubic-bezier(.22,1,.36,1); }
+.dg-fill.green { background: linear-gradient(90deg, rgba(63,217,161,.3), var(--green)); }
+.dg-fill.yellow { background: linear-gradient(90deg, rgba(215,177,74,.3), var(--yellow)); }
+.dg-fill.red { background: linear-gradient(90deg, rgba(255,93,108,.3), var(--red)); }
+.dg-fill.gray { background: linear-gradient(90deg, rgba(100,100,120,.15), var(--text-weak)); }
+
+/* ─── Action Card Grid ─── */
+.action-grid {
+  display: grid; grid-template-columns: repeat(4,1fr); gap: 16px;
+  margin-bottom: 16px;
+}
+.action-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 16px 18px;
+  min-height: 110px; background: var(--bg-card); border: 1px solid var(--b1);
+  border-radius: 14px; cursor: pointer; transition: all .15s;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15); position: relative; overflow: hidden;
+}
+.action-card::after {
+  content: ''; position: absolute; bottom: 16px; left: 18px; right: 18px;
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(54,214,255,.6) 80%, #fff 100%);
+  box-shadow: 0 0 12px rgba(54,214,255,.4); opacity: 0; transition: opacity .3s;
+  pointer-events: none;
+}
+.action-card:hover { border-color: var(--b2); background: var(--bg-input); transform: translateY(-2px); }
+.action-card:hover::after { opacity: 0.2; }
+.action-card.selected { border-color: rgba(54,214,255,.25); background: rgba(54,214,255,.03); }
+.action-card.selected::after { opacity: 0.8; }
+.action-card.high-risk { border-left: 3px solid var(--red); }
+.action-checkbox {
+  width: 20px; height: 20px; accent-color: var(--blue); cursor: pointer;
+  position: relative; z-index: 1; flex-shrink: 0;
+}
+.action-info { flex: 1; min-width: 0; position: relative; z-index: 1; }
+.action-name {
+  font-size: 13px; font-weight: 700; font-family: var(--font-heading);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.action-desc { font-size: 11px; color: var(--text-dim); margin-top: 4px; line-height: 1.5; }
+.action-domain {
+  display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px;
+  font-family: var(--font-mono); background: rgba(54,214,255,.08); color: var(--blue);
+  margin-top: 4px;
+}
+.risk-badge {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  padding: 2px 6px; border-radius: 3px;
+}
+.risk-badge.low { background: rgba(63,217,161,.1); color: var(--green); }
+.risk-badge.medium { background: rgba(215,177,74,.1); color: var(--yellow); }
+.risk-badge.high { background: rgba(255,93,108,.1); color: var(--red); }
+
+/* ─── Harden Header ─── */
+.harden-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.harden-header h3 { font-size: 16px; font-weight: 600; font-family: var(--font-heading); margin: 0; }
+.mode-toggle { display: flex; }
+
+/* ─── Before/After Split ─── */
+.harden-results-split {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  margin-bottom: 16px;
+}
+.harden-results-left, .harden-results-right {
+  background: var(--bg-card); border: 1px solid var(--b1); border-radius: 14px;
+  padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.12);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.harden-results-left h3, .harden-results-right h3 {
+  font-size: 13px; font-family: var(--font-heading); font-weight: 600;
+  margin-bottom: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px;
+}
+.harden-results-scroll {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  max-height: 300px;
+}
+.predicted-score-box {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 16px;
+}
+.predicted-score-row { display: flex; align-items: center; gap: 24px; }
+.predicted-before, .predicted-after {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.predicted-label { font-size: 11px; color: var(--text-weak); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.predicted-num {
+  font-family: var(--font-heading); font-size: 48px; font-weight: 700;
+  line-height: 1; color: var(--text-dim);
+}
+.predicted-num.predicted-highlight {
+  background: linear-gradient(180deg, #fff 20%, var(--green) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.predicted-arrow { font-size: 28px; color: var(--blue); font-weight: 300; }
+.predicted-grade-row { display: flex; align-items: center; gap: 16px; }
+.predicted-grade-badge {
+  font-family: var(--font-heading); font-size: 20px; font-weight: 700;
+  padding: 4px 14px; border-radius: 16px;
+  background: rgba(255,255,255,.04); color: var(--text-weak);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.predicted-grade-badge.predicted-grade-up {
+  background: rgba(63,217,161,.08); color: var(--green);
+  border-color: rgba(63,217,161,.12);
+}
+.predicted-arrow-small { font-size: 18px; color: var(--blue); }
+
+/* ─── Report Area ─── */
+.report-area {
+  font-size: 12px; line-height: 1.8; min-height: 100px; max-height: 500px; overflow-y: auto;
+}
+.report-area h1 { font-family: var(--font-heading); font-size: 16px; font-weight: 700; margin-bottom: 10px; color: var(--blue); }
+.report-area h2 { font-family: var(--font-heading); font-size: 13px; font-weight: 700; margin: 16px 0 6px; border-bottom: 1px solid var(--b1); padding-bottom: 4px; }
+.report-area h3 { font-size: 11px; font-weight: 700; margin: 12px 0 4px; color: var(--text-dim); }
+.report-area table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 11px; }
+.report-area th { text-align: left; padding: 5px 8px; background: var(--bg-input); border-bottom: 1px solid var(--b1); color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.report-area td { padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,.02); }
+.report-area code { background: rgba(54,214,255,.06); padding: 1px 4px; border-radius: 3px; font-size: 10px; color: var(--blue); font-family: var(--font-mono); }
+.report-area blockquote { border-left: 2px solid var(--blue); padding-left: 10px; margin: 6px 0; color: var(--text-dim); }
+.report-area ul, .report-area ol { padding-left: 20px; margin: 4px 0; }
+.report-area li { margin: 2px 0; }
+
+/* ─── Responsive ─── */
+@media(max-width:1200px) { .domain-grid, .action-grid { grid-template-columns: repeat(2,1fr); } .harden-results-split { grid-template-columns: 1fr; } }
+@media(max-width:600px) { .domain-grid, .action-grid { grid-template-columns: 1fr; } }
+
 /* ─── Rules Tab ─── */
 .rules-mode-toggle { margin-bottom: 12px; }
 .rules-mode-section { }
@@ -700,124 +843,63 @@ body::before {
       </div>
     </div>
 
-    <!-- Domain Cards -->
-    <div class="domain-cards" id="health-domains">
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">网络隔离</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">认证</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">Exec 安全</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">文件系统</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">供应链</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">Channel/PI</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">Agent</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-      <div class="domain-card skeleton">
-        <div class="domain-header">
-          <span class="domain-arrow">&#x25B8;</span>
-          <span class="domain-name">监控</span>
-          <span class="domain-score">—/—</span>
-          <div class="domain-bar"><div class="domain-bar-fill"></div></div>
-        </div>
-      </div>
-    </div>
+    <!-- Domain Score Grid -->
+    <div class="domain-grid" id="domain-grid"></div>
+
+    <!-- Detailed Domain Cards (collapsible) -->
+    <div class="domain-cards" id="health-domains"></div>
 
     <!-- Hardening Actions -->
     <div class="harden-panel">
-      <h3>Hardening Actions</h3>
-      <div class="harden-section">
-        <div class="harden-section-title">Configuration Safety</div>
-        <div class="harden-btns">
-          <button class="harden-btn" onclick="runHardenAction('backup')">Backup</button>
-          <button class="harden-btn high-risk" onclick="runHardenAction('deploy-config','balanced')">Deploy Balanced</button>
-          <button class="harden-btn high-risk" onclick="runHardenAction('deploy-config','paranoid')">Deploy Paranoid</button>
-          <button class="harden-btn" onclick="runHardenAction('validate')">Validate</button>
+      <div class="harden-header">
+        <h3>安全加固</h3>
+        <div class="pill-group mode-toggle" id="mode-toggle">
+          <button class="pill-btn active" data-mode="balanced">Balanced</button>
+          <button class="pill-btn" data-mode="paranoid">Paranoid</button>
         </div>
+        <span style="flex:1"></span>
+        <button class="health-btn" id="btn-select-all">全选</button>
+        <button class="health-btn primary" id="btn-run-selected" disabled>执行选中项 (0)</button>
       </div>
-      <div class="harden-section">
-        <div class="harden-section-title">File System</div>
-        <div class="harden-btns">
-          <button class="harden-btn high-risk" onclick="runHardenAction('permissions')">Permissions</button>
-          <button class="harden-btn" onclick="runHardenAction('baseline')">Baseline</button>
-          <button class="harden-btn high-risk" onclick="runHardenAction('immutable-protect')">Immutable</button>
-        </div>
+      <div class="action-grid" id="action-grid"></div>
+    </div>
+
+    <!-- Results + Before/After -->
+    <div class="harden-results-split" id="harden-results-split" style="display:none">
+      <div class="harden-results-left">
+        <h3>执行结果</h3>
+        <div class="harden-results-scroll" id="harden-results-list"></div>
       </div>
-      <div class="harden-section">
-        <div class="harden-section-title">Supply Chain</div>
-        <div class="harden-btns">
-          <button class="harden-btn" onclick="runHardenAction('npmrc')">npmrc</button>
-        </div>
-      </div>
-      <div class="harden-section">
-        <div class="harden-section-title">Agent &amp; Monitoring</div>
-        <div class="harden-btns">
-          <button class="harden-btn" onclick="runHardenAction('deploy-agents')">Deploy AGENTS.md</button>
-          <button class="harden-btn" onclick="runHardenAction('deploy-audit')">Deploy Audit Script</button>
-          <button class="harden-btn" onclick="runHardenAction('git-backup')">Git Backup</button>
-          <button class="harden-btn" onclick="runHardenAction('audit')">Run Audit</button>
-        </div>
-      </div>
-      <div class="harden-section">
-        <div class="harden-section-title">Network &amp; System</div>
-        <div class="harden-btns">
-          <button class="harden-btn high-risk" onclick="runHardenAction('firewall')">Firewall</button>
-          <button class="harden-btn" onclick="runHardenAction('disk-encryption')">Disk Encryption</button>
-          <button class="harden-btn" onclick="runHardenAction('channel-hint')">Channel Hints</button>
-          <button class="harden-btn" onclick="runHardenAction('verify-hint')">Verify Hints</button>
+      <div class="harden-results-right">
+        <h3>加固后评分</h3>
+        <div class="predicted-score-box">
+          <div class="predicted-score-row">
+            <div class="predicted-before">
+              <span class="predicted-label">加固前</span>
+              <span class="predicted-num" id="predicted-before-score">—</span>
+            </div>
+            <div class="predicted-arrow">&#x2192;</div>
+            <div class="predicted-after">
+              <span class="predicted-label">加固后</span>
+              <span class="predicted-num predicted-highlight" id="predicted-after-score">—</span>
+            </div>
+          </div>
+          <div class="predicted-grade-row">
+            <span class="predicted-grade-badge" id="predicted-before-grade">—</span>
+            <span class="predicted-arrow-small">&#x2192;</span>
+            <span class="predicted-grade-badge predicted-grade-up" id="predicted-after-grade">—</span>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Action Results -->
-    <div class="harden-results" id="harden-results" style="display:none">
-      <h3>Action Results</h3>
-      <div id="harden-results-list"></div>
+    <!-- Report Panel -->
+    <div class="harden-panel" id="report-panel" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-family:var(--font-heading);font-size:14px;font-weight:600;margin:0">安全报告</h3>
+        <button class="health-btn" id="btn-export-report">导出 Markdown</button>
+      </div>
+      <div class="report-area" id="report-content"></div>
     </div>
   </div>
 </div>
@@ -1529,42 +1611,81 @@ body::before {
   if (document.querySelector('[data-tab="config"]').classList.contains('active')) loadConfig();
 
   // ─── Health Tab ───
+  // ─── Health Tab ───
   var healthLoaded = false;
   var healthProgressTimer = null;
+  var lastScanData = null;
+  var selectedActions = new Set();
+  var hardenMode = 'balanced';
+  var reportMarkdown = '';
 
-  function stopHealthProgressTimer() {
-    if (!healthProgressTimer) return;
-    clearInterval(healthProgressTimer);
-    healthProgressTimer = null;
+  var SCAN_STAGES = [
+    { label: '\\u68C0\\u6D4B: \\u7F51\\u7EDC\\u9694\\u79BB\\u7B56\\u7565', pct: 8 },
+    { label: '\\u68C0\\u6D4B: \\u8BA4\\u8BC1\\u4E0E\\u5BC6\\u94A5\\u914D\\u7F6E', pct: 18 },
+    { label: '\\u68C0\\u6D4B: \\u6267\\u884C\\u5B89\\u5168\\u7B56\\u7565', pct: 28 },
+    { label: '\\u68C0\\u6D4B: \\u6587\\u4EF6\\u7CFB\\u7EDF\\u6743\\u9650', pct: 40 },
+    { label: '\\u68C0\\u6D4B: \\u4F9B\\u5E94\\u94FE\\u5B89\\u5168', pct: 50 },
+    { label: '\\u68C0\\u6D4B: Channel/PI \\u9632\\u5FA1', pct: 60 },
+    { label: '\\u68C0\\u6D4B: Agent \\u884C\\u4E3A\\u4E0E\\u6C99\\u7BB1', pct: 72 },
+    { label: '\\u68C0\\u6D4B: \\u76D1\\u63A7\\u5BA1\\u8BA1\\u914D\\u7F6E', pct: 82 },
+    { label: '\\u751F\\u6210\\u5B89\\u5168\\u8BC4\\u4F30\\u62A5\\u544A...', pct: 92 },
+  ];
+
+  var HARDEN_ACTIONS = [
+    { id: 'backup', name: '\\u5907\\u4EFD\\u914D\\u7F6E', desc: '\\u5907\\u4EFD\\u5F53\\u524D openclaw.json', risk: 'low', domain: '\\u914D\\u7F6E' },
+    { id: 'deploy-config', name: '\\u90E8\\u7F72\\u5B89\\u5168\\u914D\\u7F6E', desc: '\\u5408\\u5E76\\u6A21\\u677F\\u5230 openclaw.json', risk: 'high', domain: '\\u914D\\u7F6E' },
+    { id: 'validate', name: 'Schema \\u6821\\u9A8C', desc: '\\u8FD0\\u884C openclaw config validate', risk: 'low', domain: '\\u914D\\u7F6E' },
+    { id: 'permissions', name: '\\u6743\\u9650\\u52A0\\u56FA', desc: 'chmod 600/700 \\u6216 icacls', risk: 'high', domain: '\\u6587\\u4EF6\\u7CFB\\u7EDF' },
+    { id: 'baseline', name: '\\u54C8\\u5E0C\\u57FA\\u7EBF', desc: '\\u751F\\u6210 SHA-256 \\u914D\\u7F6E\\u57FA\\u7EBF', risk: 'low', domain: '\\u6587\\u4EF6\\u7CFB\\u7EDF' },
+    { id: 'immutable-protect', name: '\\u4E0D\\u53EF\\u53D8\\u4FDD\\u62A4', desc: 'chattr/chflags \\u5BA1\\u8BA1\\u811A\\u672C', risk: 'high', domain: '\\u6587\\u4EF6\\u7CFB\\u7EDF' },
+    { id: 'npmrc', name: '.npmrc \\u52A0\\u56FA', desc: 'ignore-scripts=true', risk: 'medium', domain: '\\u4F9B\\u5E94\\u94FE' },
+    { id: 'deploy-agents', name: '\\u90E8\\u7F72 AGENTS.md', desc: '\\u5B89\\u5168\\u884C\\u4E3A\\u89C4\\u5219\\u6A21\\u677F', risk: 'medium', domain: 'Agent' },
+    { id: 'deploy-audit', name: '\\u90E8\\u7F72\\u5BA1\\u8BA1\\u811A\\u672C', desc: '\\u590C\\u5236\\u591C\\u95F4\\u5BA1\\u8BA1\\u811A\\u672C', risk: 'medium', domain: '\\u76D1\\u63A7' },
+    { id: 'git-backup', name: 'Git \\u707E\\u5907', desc: '\\u521D\\u59CB\\u5316 Git \\u5907\\u4EFD\\u4ED3\\u5E93', risk: 'medium', domain: '\\u76D1\\u63A7' },
+    { id: 'audit', name: '\\u5B89\\u5168\\u5BA1\\u8BA1', desc: 'openclaw security audit --deep', risk: 'low', domain: '\\u76D1\\u63A7' },
+    { id: 'firewall', name: '\\u9632\\u706B\\u5899\\u89C4\\u5219', desc: '\\u5E73\\u53F0\\u9632\\u706B\\u5899\\u914D\\u7F6E', risk: 'high', domain: '\\u7F51\\u7EDC' },
+    { id: 'disk-encryption', name: '\\u78C1\\u76D8\\u52A0\\u5BC6', desc: '\\u68C0\\u6D4B\\u52A0\\u5BC6\\u72B6\\u6001 (\\u53EA\\u8BFB)', risk: 'low', domain: '\\u7F51\\u7EDC' },
+    { id: 'channel-hint', name: 'Channel UID', desc: 'UID \\u914D\\u7F6E\\u63D0\\u793A', risk: 'low', domain: 'Channel' },
+    { id: 'verify-hint', name: 'Cron \\u9A8C\\u8BC1', desc: '\\u90E8\\u7F72\\u540E\\u9A8C\\u8BC1\\u63D0\\u793A', risk: 'low', domain: '\\u76D1\\u63A7' },
+  ];
+
+  function scoreColor(score) {
+    if (score >= 80) return 'var(--green)';
+    if (score >= 50) return 'var(--yellow)';
+    return 'var(--red)';
+  }
+  function scoreColorCls(score) {
+    if (score >= 80) return 'green';
+    if (score >= 50) return 'yellow';
+    if (score > 0) return 'red';
+    return 'gray';
+  }
+
+  var gradeColors = { A: 'var(--blue)', B: 'var(--green)', C: 'var(--yellow)', D: 'var(--red)', F: 'var(--red)' };
+  var gradeLabels = { A: '\\u5B89\\u5168', B: '\\u9700\\u6539\\u8FDB', C: '\\u8106\\u5F31', D: '\\u5371\\u9669', F: '\\u4E0D\\u53EF\\u63A5\\u53D7' };
+
+  function calcDomainScore(items) {
+    var scored = items.filter(function(c) { return c.status !== 'n/a' && c.status !== 'skip'; });
+    if (scored.length === 0) return -1;
+    var p = scored.filter(function(c) { return c.status === 'pass'; }).length;
+    var w = scored.filter(function(c) { return c.status === 'warn'; }).length;
+    return Math.round(((p + w * 0.5) / scored.length) * 100);
   }
 
   function setHealthInitialState() {
-    document.getElementById('health-score').textContent = '—';
+    document.getElementById('health-score').textContent = '\\u2014';
     var bar = document.getElementById('health-score-bar');
-    bar.style.width = '0%';
-    bar.style.background = 'var(--border)';
+    bar.style.width = '0%'; bar.style.background = 'var(--border)';
     document.getElementById('health-grade').style.display = 'none';
     document.getElementById('health-meta').textContent = '';
     document.getElementById('health-stats').innerHTML =
-      '<span class="health-stat"><span class="stat-icon" style="color:var(--green)">\\u2705</span> — pass</span>' +
-      '<span class="health-stat"><span class="stat-icon" style="color:var(--yellow)">\\u26A0\\uFE0F</span> — warn</span>' +
-      '<span class="health-stat"><span class="stat-icon" style="color:var(--red)">\\u274C</span> — fail</span>' +
-      '<span class="health-stat"><span class="stat-icon" style="color:var(--blue)">\\uD83D\\uDD18</span> — n/a</span>' +
-      '<span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">\\u23ED\\uFE0F</span> — skip</span>';
-  }
-
-  function resetHealthScanUi() {
-    var progress = document.getElementById('scan-progress');
-    var progressText = document.getElementById('scan-progress-text');
-    var progressFill = document.getElementById('scan-progress-fill');
-    var header = document.querySelector('#tab-health .health-header');
-    var scanBtn = document.getElementById('btn-health-scan');
-    stopHealthProgressTimer();
-    header.classList.remove('scanning');
-    scanBtn.disabled = false;
-    progress.style.display = 'none';
-    progressText.textContent = 'Scanning...';
-    progressFill.style.width = '0%';
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--green)">\\u2705</span> \\u2014 pass</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--yellow)">\\u26A0\\uFE0F</span> \\u2014 warn</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--red)">\\u274C</span> \\u2014 fail</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--blue)">\\uD83D\\uDD18</span> \\u2014 n/a</span>' +
+      '<span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">\\u23ED\\uFE0F</span> \\u2014 skip</span>';
+    document.getElementById('domain-grid').innerHTML = '';
+    document.getElementById('health-domains').innerHTML = '';
   }
 
   function loadHealthScan() {
@@ -1573,61 +1694,60 @@ body::before {
     var progressText = document.getElementById('scan-progress-text');
     var progressFill = document.getElementById('scan-progress-fill');
     var scanBtn = document.getElementById('btn-health-scan');
-    var progressPercent = 0;
 
-    stopHealthProgressTimer();
+    if (healthProgressTimer) { clearInterval(healthProgressTimer); healthProgressTimer = null; }
     header.classList.add('scanning');
     scanBtn.disabled = true;
     progress.style.display = 'block';
-    progressText.textContent = 'Scanning...';
     progressFill.style.width = '0%';
 
-    healthProgressTimer = setInterval(function() {
-      progressPercent = Math.min(90, progressPercent + 2 + Math.random() * 3);
-      progressFill.style.width = Math.round(progressPercent) + '%';
-      if (progressPercent >= 90) stopHealthProgressTimer();
-    }, 100);
+    // Staged progress animation
+    var stageIdx = 0;
+    var dataReady = false;
+    function nextStage() {
+      if (stageIdx < SCAN_STAGES.length && !dataReady) {
+        var s = SCAN_STAGES[stageIdx];
+        progressText.textContent = s.label;
+        progressFill.style.width = s.pct + '%';
+        stageIdx++;
+        healthProgressTimer = setTimeout(nextStage, 300 + Math.random() * 300);
+      }
+    }
+    nextStage();
 
     fetch('/api/health/scan')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.error) throw new Error('Scan error: ' + data.error);
-        stopHealthProgressTimer();
+        dataReady = true;
+        if (healthProgressTimer) { clearTimeout(healthProgressTimer); healthProgressTimer = null; }
         progressFill.style.width = '100%';
-        progressText.textContent = 'Scan complete';
-        setTimeout(function() {
-          progress.style.display = 'none';
-          progressText.textContent = 'Scanning...';
-          progressFill.style.width = '0%';
-        }, 500);
+        progressText.textContent = '\\u626B\\u63CF\\u5B8C\\u6210';
+        setTimeout(function() { progress.style.display = 'none'; progressFill.style.width = '0%'; }, 500);
         header.classList.remove('scanning');
         scanBtn.disabled = false;
+        lastScanData = data;
         renderHealthScore(data.summary, data.platform || {});
+        renderDomainGrid(data.checks || []);
         renderDomainCards(data.checks || []);
+        autoGenerateReport(data);
         healthLoaded = true;
       })
       .catch(function(err) {
-        resetHealthScanUi();
-        showToast(err && err.message ? err.message : 'Failed to run security scan', 'error');
+        dataReady = true;
+        if (healthProgressTimer) { clearTimeout(healthProgressTimer); healthProgressTimer = null; }
+        header.classList.remove('scanning');
+        scanBtn.disabled = false;
+        progress.style.display = 'none';
+        showToast(err && err.message ? err.message : 'Failed to run scan', 'error');
       });
   }
-
-  function scoreColor(score) {
-    if (score >= 80) return 'var(--green)';
-    if (score >= 50) return 'var(--yellow)';
-    return 'var(--red)';
-  }
-
-  var gradeColors = { A: 'var(--blue)', B: 'var(--green)', C: 'var(--yellow)', D: 'var(--red)', F: 'var(--red)' };
-  var gradeLabels = { A: '\\u5B89\\u5168', B: '\\u9700\\u6539\\u8FDB', C: '\\u8106\\u5F31', D: '\\u5371\\u9669', F: '\\u4E0D\\u53EF\\u63A5\\u53D7' };
 
   function renderHealthScore(summary, platform) {
     document.getElementById('health-score').textContent = summary.score;
     var bar = document.getElementById('health-score-bar');
     bar.style.width = summary.score + '%';
     bar.style.background = scoreColor(summary.score);
-
-    // Grade display
     var grade = summary.grade;
     if (grade) {
       var gradeEl = document.getElementById('health-grade');
@@ -1637,17 +1757,15 @@ body::before {
       document.getElementById('health-grade-letter').textContent = grade;
       document.getElementById('health-grade-label').textContent = ' ' + (gradeLabels[grade] || '');
     }
-
     var meta = document.getElementById('health-meta');
     var parts = [];
-    if (platform.os) parts.push('Platform: ' + platform.os);
-    if (platform.arch) parts.push('Arch: ' + platform.arch);
-    if (platform.nodeVersion) parts.push('Node: ' + platform.nodeVersion);
-    if (platform.openclawVersion) parts.push('OpenClaw: ' + platform.openclawVersion);
+    if (platform.os) parts.push(platform.os);
+    if (platform.arch) parts.push(platform.arch);
+    if (platform.nodeVersion) parts.push('Node ' + platform.nodeVersion);
+    if (platform.openclawVersion) parts.push('OC ' + platform.openclawVersion);
     if (platform.isWSL2) parts.push('WSL2');
-    if (summary.hasCriticalFail) parts.push('\\u26A0 CRITICAL FAIL');
+    if (summary.hasCriticalFail) parts.push('\\u26A0 CRITICAL');
     meta.textContent = parts.join(' \\u00B7 ');
-
     var naCount = summary.na || 0;
     var stats = document.getElementById('health-stats');
     stats.innerHTML =
@@ -1658,104 +1776,240 @@ body::before {
       '<span class="health-stat"><span class="stat-icon" style="color:var(--text-dim)">\\u23ED\\uFE0F</span> ' + summary.skip + ' skip</span>';
   }
 
+  // ── Domain Score Grid (4-column) ──
+  function renderDomainGrid(checks) {
+    var domains = {};
+    checks.forEach(function(c) { if (!domains[c.domain]) domains[c.domain] = []; domains[c.domain].push(c); });
+    var grid = document.getElementById('domain-grid');
+    grid.innerHTML = Object.keys(domains).map(function(d) {
+      var pct = calcDomainScore(domains[d]);
+      var display = pct >= 0 ? pct : 0;
+      var label = pct >= 0 ? pct + '%' : 'N/A';
+      var cls = pct >= 0 ? scoreColorCls(pct) : 'gray';
+      return '<div class="dg-card"><div class="dg-head"><span class="dg-name">' + escapeHtml(d) + '</span><span class="dg-pct">' + label + '</span></div><div class="dg-track"><div class="dg-fill ' + cls + '" style="width:' + display + '%"></div></div></div>';
+    }).join('');
+  }
+
+  // ── Detailed Domain Cards (collapsible) ──
   function renderDomainCards(checks) {
     var domains = {};
-    checks.forEach(function(c) {
-      if (!domains[c.domain]) domains[c.domain] = [];
-      domains[c.domain].push(c);
-    });
-
+    checks.forEach(function(c) { if (!domains[c.domain]) domains[c.domain] = []; domains[c.domain].push(c); });
     var container = document.getElementById('health-domains');
     container.innerHTML = '';
-
     Object.keys(domains).forEach(function(domain) {
       var items = domains[domain];
       var pass = items.filter(function(c) { return c.status === 'pass'; }).length;
       var total = items.length;
       var pct = total > 0 ? Math.round((pass / total) * 100) : 0;
-
       var card = document.createElement('div');
       card.className = 'domain-card';
       card.innerHTML =
-        '<div class="domain-header">' +
-          '<span class="domain-arrow">\\u25B8</span>' +
-          '<span class="domain-name">' + escapeHtml(domain) + '</span>' +
-          '<span class="domain-score">' + pass + '/' + total + '</span>' +
-          '<div class="domain-bar"><div class="domain-bar-fill" style="width:' + pct + '%;background:' + scoreColor(pct) + '"></div></div>' +
-        '</div>' +
+        '<div class="domain-header"><span class="domain-arrow">\\u25B8</span><span class="domain-name">' + escapeHtml(domain) + '</span><span class="domain-score">' + pass + '/' + total + '</span><div class="domain-bar"><div class="domain-bar-fill" style="width:' + pct + '%;background:' + scoreColor(pct) + '"></div></div></div>' +
         '<div class="domain-checks">' + items.map(function(c) {
-          var icon = c.status === 'pass' ? '\\u2705' : c.status === 'fail' ? '\\u274C' : c.status === 'warn' ? '\\u26A0\\uFE0F' : '\\u23ED\\uFE0F';
-          return '<div class="check-item">' +
-            '<span class="check-icon">' + icon + '</span>' +
-            '<div class="check-body">' +
-              '<span class="check-name">' + escapeHtml(c.name) + '</span>' +
-              '<div class="check-msg">' + escapeHtml(c.message) + '</div>' +
-              (c.fix ? '<div class="check-fix">fix: ' + escapeHtml(c.fix) + '</div>' : '') +
-            '</div>' +
-          '</div>';
+          var icon = c.status === 'pass' ? '\\u2705' : c.status === 'fail' ? '\\u274C' : c.status === 'warn' ? '\\u26A0\\uFE0F' : c.status === 'n/a' ? '\\uD83D\\uDD18' : '\\u23ED\\uFE0F';
+          return '<div class="check-item"><span class="check-icon">' + icon + '</span><div class="check-body"><span class="check-name">' + escapeHtml(c.name) + '</span><div class="check-msg">' + escapeHtml(c.message) + '</div>' + (c.fix && c.status !== 'pass' && c.status !== 'n/a' ? '<div class="check-fix">' + escapeHtml(c.fix) + '</div>' : '') + '</div></div>';
         }).join('') + '</div>';
-
-      card.querySelector('.domain-header').addEventListener('click', function() {
-        card.classList.toggle('expanded');
-      });
-
+      card.querySelector('.domain-header').addEventListener('click', function() { card.classList.toggle('expanded'); });
       container.appendChild(card);
     });
   }
 
-  // Expose globally for inline onclick handlers
-  window.runHardenAction = function(action, mode) {
-    var body = { action: action };
-    if (mode) body.mode = mode;
+  // ── Action Card Grid ──
+  function renderActionGrid() {
+    var grid = document.getElementById('action-grid');
+    grid.innerHTML = '';
+    HARDEN_ACTIONS.forEach(function(a) {
+      var card = document.createElement('div');
+      card.className = 'action-card' + (a.risk === 'high' ? ' high-risk' : '');
+      card.innerHTML =
+        '<div style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" class="action-checkbox" value="' + a.id + '">' +
+        '<div class="action-info"><div class="action-name">' + a.name + ' <span class="risk-badge ' + a.risk + '">' + (a.risk === 'high' ? '\\u9AD8\\u5371' : a.risk === 'medium' ? '\\u4E2D\\u7B49' : '\\u5B89\\u5168') + '</span></div>' +
+        '<div class="action-desc">' + a.desc + '</div>' +
+        '<span class="action-domain">' + a.domain + '</span></div></div>';
+      card.addEventListener('click', function(e) {
+        if (e.target.type === 'checkbox') return;
+        var chk = card.querySelector('.action-checkbox');
+        chk.checked = !chk.checked;
+        chk.dispatchEvent(new Event('change'));
+      });
+      card.querySelector('.action-checkbox').addEventListener('change', function() {
+        if (this.checked) { selectedActions.add(a.id); card.classList.add('selected'); }
+        else { selectedActions.delete(a.id); card.classList.remove('selected'); }
+        updateRunBtn();
+      });
+      grid.appendChild(card);
+    });
+  }
 
-    fetch('/api/health/harden', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(result) {
-      if (result.error) { showToast('Error: ' + result.error, 'error'); return; }
-      appendHardenResult(result);
-      showToast((result.success ? '\\u2705 ' : '\\u274C ') + result.name + ': ' + (result.success ? 'Success' : 'Failed'), result.success ? 'success' : 'error');
-    })
-    .catch(function() { showToast('Harden action failed', 'error'); });
-  };
+  function updateRunBtn() {
+    var btn = document.getElementById('btn-run-selected');
+    btn.disabled = selectedActions.size === 0;
+    btn.textContent = '\\u6267\\u884C\\u9009\\u4E2D\\u9879 (' + selectedActions.size + ')';
+  }
 
-  function appendHardenResult(result) {
-    var panel = document.getElementById('harden-results');
+  // ── Batch Execution + Before/After ──
+  function runSelectedActions() {
+    if (selectedActions.size === 0) return;
+    var beforeScore = lastScanData ? lastScanData.summary.score : 0;
+    var beforeGrade = lastScanData ? (lastScanData.summary.grade || '\\u2014') : '\\u2014';
+    var split = document.getElementById('harden-results-split');
     var list = document.getElementById('harden-results-list');
+    split.style.display = 'grid';
+    list.innerHTML = '';
+    document.getElementById('predicted-before-score').textContent = beforeScore;
+    document.getElementById('predicted-before-grade').textContent = beforeGrade;
+    document.getElementById('predicted-after-score').textContent = '...';
+    document.getElementById('predicted-after-grade').textContent = '...';
+
+    var actions = Array.from(selectedActions);
+    var idx = 0;
+    function next() {
+      if (idx >= actions.length) {
+        // Re-scan to get after score
+        fetch('/api/health/scan').then(function(r) { return r.json(); }).then(function(data) {
+          if (!data.error) {
+            lastScanData = data;
+            renderHealthScore(data.summary, data.platform || {});
+            renderDomainGrid(data.checks || []);
+            renderDomainCards(data.checks || []);
+            autoGenerateReport(data);
+            document.getElementById('predicted-after-score').textContent = data.summary.score;
+            var ag = data.summary.grade || '\\u2014';
+            var agEl = document.getElementById('predicted-after-grade');
+            agEl.textContent = ag;
+            if (data.summary.score > beforeScore) {
+              agEl.className = 'predicted-grade-badge predicted-grade-up';
+            }
+          }
+        }).catch(function() {});
+        return;
+      }
+      var body = { action: actions[idx] };
+      if (actions[idx] === 'deploy-config') body.mode = hardenMode;
+      fetch('/api/health/harden', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+          if (!result.error) {
+            var icon = result.success ? '\\u2705' : '\\u274C';
+            var div = document.createElement('div');
+            div.className = 'harden-result-item';
+            div.innerHTML = icon + ' <strong>' + escapeHtml(result.name || result.id) + '</strong>: ' + escapeHtml(result.message) + (result.rollback ? '<span class="rollback">rollback: ' + escapeHtml(result.rollback) + '</span>' : '');
+            list.appendChild(div);
+          }
+          idx++; next();
+        })
+        .catch(function() { idx++; next(); });
+    }
+    next();
+  }
+
+  // ── Markdown Report ──
+  function autoGenerateReport(data) {
+    if (!data || !data.summary) return;
+    var s = data.summary;
+    var checks = data.checks || [];
+    var date = new Date().toLocaleDateString('zh-CN');
+    var lines = [
+      '# OpenClaw \\u5B89\\u5168\\u8BC4\\u4F30\\u62A5\\u544A', '',
+      '> \\u751F\\u6210\\u65F6\\u95F4: ' + date, '',
+      '## \\u7EFC\\u5408\\u8BC4\\u5206', '',
+      '| \\u6307\\u6807 | \\u503C |', '|------|------|',
+      '| **\\u603B\\u5206** | **' + (s.score || 0) + '/100** |',
+      '| **\\u7B49\\u7EA7** | ' + (s.grade || '\\u2014') + ' (' + (gradeLabels[s.grade] || '') + ') |',
+      '| \\u901A\\u8FC7 | ' + (s.pass || 0) + ' |',
+      '| \\u8B66\\u544A | ' + (s.warn || 0) + ' |',
+      '| \\u5931\\u8D25 | ' + (s.fail || 0) + ' |',
+      '| N/A | ' + ((s.na || 0) + (s.skip || 0)) + ' |', '',
+      '## \\u57DF\\u8BE6\\u60C5', ''
+    ];
+    var grouped = {};
+    checks.forEach(function(c) { var d = c.domain || 'Other'; if (!grouped[d]) grouped[d] = []; grouped[d].push(c); });
+    Object.keys(grouped).forEach(function(domain) {
+      var items = grouped[domain];
+      var passed = items.filter(function(i) { return i.status === 'pass'; }).length;
+      lines.push('### ' + domain + ' (' + passed + '/' + items.length + ' \\u901A\\u8FC7)', '');
+      lines.push('| \\u72B6\\u6001 | \\u68C0\\u6D4B\\u9879 | \\u8BF4\\u660E |');
+      lines.push('|------|--------|------|');
+      items.forEach(function(c) {
+        var icon = c.status === 'pass' ? '\\u2705' : c.status === 'fail' ? '\\u274C' : c.status === 'warn' ? '\\u26A0\\uFE0F' : '\\u2796';
+        lines.push('| ' + icon + ' | ' + c.name + ' | ' + (c.message || '').replace(/\\n/g, ' ').substring(0, 80) + ' |');
+      });
+      var fixes = items.filter(function(i) { return i.fix && i.status !== 'pass' && i.status !== 'n/a'; });
+      if (fixes.length > 0) {
+        lines.push('', '**\\u5EFA\\u8BAE\\u4FEE\\u590D:**');
+        fixes.forEach(function(f) { lines.push('- ' + f.name + ': \\x60' + f.fix + '\\x60'); });
+      }
+      lines.push('');
+    });
+    lines.push('---', '*\\u62A5\\u544A\\u7531 SecLaw \\u81EA\\u52A8\\u751F\\u6210*');
+    reportMarkdown = lines.join('\\n');
+
+    // Render to HTML
+    var panel = document.getElementById('report-panel');
     panel.style.display = 'block';
-
-    var icon = result.success ? '\\u2705' : '\\u274C';
-    var div = document.createElement('div');
-    div.className = 'harden-result-item';
-    div.innerHTML = icon + ' <strong>' + escapeHtml(result.name || result.id) + '</strong>: ' + escapeHtml(result.message) +
-      (result.rollback ? '<span class="rollback">rollback: ' + escapeHtml(result.rollback) + '</span>' : '');
-    list.insertBefore(div, list.firstChild);
+    document.getElementById('report-content').innerHTML = renderMarkdownToHtml(reportMarkdown);
   }
 
-  function downloadReport() {
-    fetch('/api/health/report')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.error) { showToast('Report error: ' + data.error, 'error'); return; }
-        var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'security-report-' + new Date().toISOString().slice(0,19).replace(/[:.]/g,'-') + '.json';
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Report downloaded', 'success');
+  function renderMarkdownToHtml(md) {
+    var BT = String.fromCharCode(96);
+    var D = String.fromCharCode(36);
+    return md
+      .replace(/^### (.+)$/gm, '<h3>' + D + '1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>' + D + '1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>' + D + '1</h1>')
+      .replace(/^> (.+)$/gm, '<blockquote>' + D + '1</blockquote>')
+      .replace(/^---$/gm, '<hr>')
+      .replace(/\\*\\*(.+?)\\*\\*/gm, '<strong>' + D + '1</strong>')
+      .replace(/\\*(.+?)\\*/gm, '<em>' + D + '1</em>')
+      .replace(new RegExp(BT + '([^' + BT + ']+)' + BT, 'g'), '<code>' + D + '1</code>')
+      .replace(/^- (.+)$/gm, '<li>' + D + '1</li>')
+      .replace(/^\\|(.+)\\|$/gm, function(match) {
+        if (/^\\|[-:| ]+\\|$/.test(match)) return '';
+        var cells = match.split('|').filter(function(c) { return c.trim(); });
+        return '<tr>' + cells.map(function(c) { return '<td>' + c.trim() + '</td>'; }).join('') + '</tr>';
       })
-      .catch(function() { showToast('Failed to generate report', 'error'); });
+      .replace(/\\n/g, '<br>');
   }
 
-  document.getElementById('btn-health-scan').addEventListener('click', loadHealthScan);
-  document.getElementById('btn-health-report').addEventListener('click', downloadReport);
+  function exportReport() {
+    if (!reportMarkdown) { showToast('\\u8BF7\\u5148\\u5B8C\\u6210\\u626B\\u63CF', 'error'); return; }
+    var blob = new Blob([reportMarkdown], { type: 'text/markdown' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'security-report-' + new Date().toISOString().slice(0, 10) + '.md';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('\\u62A5\\u544A\\u5DF2\\u4E0B\\u8F7D', 'success');
+  }
+
+  // ── Wire up events ──
+  renderActionGrid();
   setHealthInitialState();
-  resetHealthScanUi();
+  document.getElementById('btn-health-scan').addEventListener('click', loadHealthScan);
+  document.getElementById('btn-health-report').addEventListener('click', function() {
+    if (lastScanData) autoGenerateReport(lastScanData);
+    else showToast('\\u8BF7\\u5148\\u8FD0\\u884C\\u626B\\u63CF', 'error');
+  });
+  document.getElementById('btn-run-selected').addEventListener('click', runSelectedActions);
+  document.getElementById('btn-select-all').addEventListener('click', function() {
+    var allSelected = selectedActions.size === HARDEN_ACTIONS.length;
+    var checkboxes = document.querySelectorAll('.action-checkbox');
+    checkboxes.forEach(function(chk) {
+      chk.checked = !allSelected;
+      chk.dispatchEvent(new Event('change'));
+    });
+  });
+  document.getElementById('btn-export-report').addEventListener('click', exportReport);
+
+  // Mode toggle
+  document.querySelectorAll('#mode-toggle .pill-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('#mode-toggle .pill-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      hardenMode = btn.dataset.mode;
+    });
+  });
 
   // Load scan on first tab switch
   document.querySelector('[data-tab="health"]').addEventListener('click', function() {
