@@ -259,6 +259,8 @@ export interface LoggingConfig {
 export interface DashboardConfig {
   enabled: boolean;
   token?: string;
+  /** Optional password for browser login. When set, users must authenticate via the login overlay; password is persisted in an HttpOnly cookie. */
+  password?: string;
   /** @internal Standalone server port (testing only, not used in gateway mode). */
   port?: number;
   /** @internal Standalone server host (testing only, not used in gateway mode). */

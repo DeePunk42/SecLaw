@@ -357,10 +357,13 @@ function handleGetConfig(
   deps: DashboardDeps,
 ): void {
   const config = deps.getConfig();
-  // Mask apiKey before sending to dashboard
-  const safeConfig = config.llm.apiKey
+  // Mask secrets before sending to dashboard
+  let safeConfig: Record<string, unknown> = config.llm.apiKey
     ? { ...config, llm: { ...config.llm, apiKey: "***" } }
-    : config;
+    : { ...config };
+  if (config.dashboard?.password) {
+    safeConfig = { ...safeConfig, dashboard: { ...config.dashboard, password: "***" } };
+  }
   json(res, 200, safeConfig);
 }
 

@@ -832,6 +832,19 @@ function updateConfig(partial: Partial<SecLawConfig>): {
   if (partial.llm?.retry && config.llm.retry) {
     nextLlm.retry = { ...config.llm.retry, ...partial.llm.retry };
   }
+  // Handle dashboard.password: "" = clear, "***" = keep, other = set new
+  let nextDashboard = config.dashboard;
+  if (partial.dashboard) {
+    const pw = (partial.dashboard as unknown as Record<string, unknown>).password;
+    if (pw === "***" || pw === undefined) {
+      nextDashboard = { ...config.dashboard, ...partial.dashboard, password: config.dashboard?.password } as typeof config.dashboard;
+    } else if (pw === "") {
+      nextDashboard = { ...config.dashboard, ...partial.dashboard, password: undefined } as typeof config.dashboard;
+    } else {
+      nextDashboard = { ...config.dashboard, ...partial.dashboard } as typeof config.dashboard;
+    }
+  }
+
   const nextConfig: SecLawConfig = {
     ...config,
     llm: nextLlm,
@@ -841,6 +854,7 @@ function updateConfig(partial: Partial<SecLawConfig>): {
     logging: partial.logging
       ? { ...config.logging, ...partial.logging }
       : config.logging,
+    dashboard: nextDashboard,
   };
 
   const persistResult = persistConfigToOpenClaw(nextConfig);
@@ -1329,6 +1343,7 @@ function register(api: OpenClawPluginApi): void {
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
       getToken: () => config.dashboard?.token?.trim() || undefined,
+      getPassword: () => config.dashboard?.password?.trim() || undefined,
       reloadRules: () => reloadRuleEngineFromManagedRules(),
     };
     api.registerHttpRoute({
@@ -1337,12 +1352,17 @@ function register(api: OpenClawPluginApi): void {
       match: "prefix",
       handler: createDashboardRouteHandler(dashboardDeps, "/plugins/seclaw"),
     });
-    // Log full dashboard URL once
+    // Log full dashboard URL once (include token for easy first-visit auth)
     if (!dashboardLogged) {
       dashboardLogged = true;
-      const gw = api.config.gateway as { port?: number } | undefined;
+      const gw = api.config.gateway as Record<string, any> | undefined;
       const port = gw?.port ?? 18789;
-      api.logger.info(`[seclaw] Dashboard: http://localhost:${port}/plugins/seclaw`);
+      const dashToken = config.dashboard?.token?.trim()
+        || gw?.auth?.token?.trim()
+        || process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
+      // Use fragment (#token=) instead of query param — never sent to server, more secure
+      const tokenFragment = dashToken ? `#token=${encodeURIComponent(dashToken)}` : "";
+      api.logger.info(`[seclaw] Dashboard: http://localhost:${port}/plugins/seclaw${tokenFragment}`);
     }
   }
 

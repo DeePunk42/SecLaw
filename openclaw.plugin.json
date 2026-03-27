@@ -38,7 +38,8 @@
         "type": "object",
         "properties": {
           "enabled": { "type": "boolean" },
-          "token": { "type": "string", "description": "Optional Bearer token for plugin-level dashboard API auth. By default, no token is required (gateway network security is the boundary)." }
+          "token": { "type": "string", "description": "Optional Bearer token for plugin-level dashboard API auth. By default, no token is required (gateway network security is the boundary)." },
+          "password": { "type": "string", "description": "Optional password for browser login. When set, users must log in via the dashboard UI; the password is persisted in an HttpOnly cookie for subsequent visits." }
         }
       }
     }

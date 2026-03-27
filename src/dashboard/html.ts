@@ -468,6 +468,8 @@ body::before {
 .risk-badge.low { background: rgba(63,217,161,.1); color: var(--green); }
 .risk-badge.medium { background: rgba(215,177,74,.1); color: var(--yellow); }
 .risk-badge.high { background: rgba(255,93,108,.1); color: var(--red); }
+.risk-badge.disabled { background: rgba(128,128,128,.15); color: var(--text-dim); }
+.action-card.disabled { opacity: 0.5; pointer-events: none; }
 
 /* ─── Harden Header ─── */
 .harden-header {
@@ -719,10 +721,10 @@ body::before {
 <div id="login-overlay" class="login-overlay hidden">
   <div class="login-card">
     <h2>SecLaw Dashboard</h2>
-    <div class="login-sub">Enter your API token to continue</div>
-    <input id="login-token" type="password" placeholder="Bearer token" autocomplete="off" />
+    <div class="login-sub">Enter your password to continue</div>
+    <input id="login-token" type="password" placeholder="Password" autocomplete="off" />
     <div id="login-error" class="login-error"></div>
-    <button id="login-submit">Authenticate</button>
+    <button id="login-submit">Login</button>
   </div>
 </div>
 <div class="sidebar">
@@ -798,6 +800,7 @@ body::before {
   <div class="config-section">
     <h3>Dashboard</h3>
     <div class="config-field"><label>Enabled</label><input id="cfg-dashboard-enabled" type="checkbox" disabled title="Requires restart"><span class="config-hint">Requires restart</span></div>
+    <div class="config-field"><label>Password</label><input id="cfg-dashboard-password" type="password" placeholder="Not set" autocomplete="off"><span class="config-hint">Optional login password (cookie-based)</span></div>
   </div>
   <button class="btn-save" id="btn-save-config">Save Configuration</button>
 </div>
@@ -979,20 +982,36 @@ body::before {
 <script>
 (function() {
   // ─── Auth Layer ───
-  function findGatewayToken() {
+  // Extract token from URL fragment (#token=) or query param (?token=)
+  function extractUrlToken() {
     try {
-      for (var i = 0; i < sessionStorage.length; i++) {
-        var key = sessionStorage.key(i);
-        if (key && key.indexOf('openclaw.control.token.v1:') === 0) {
-          var val = sessionStorage.getItem(key);
-          if (val && val.trim()) return val.trim();
+      var hash = window.location.hash;
+      if (hash) {
+        var m = hash.match(/[#&]token=([^&]*)/);
+        if (m && m[1]) {
+          var t = decodeURIComponent(m[1]).trim();
+          if (t) {
+            localStorage.setItem('seclaw_token', t);
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+            return t;
+          }
         }
+      }
+      var params = new URLSearchParams(window.location.search);
+      var qt = params.get('token');
+      if (qt && qt.trim()) {
+        localStorage.setItem('seclaw_token', qt.trim());
+        params.delete('token');
+        var clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+        history.replaceState(null, '', clean);
+        return qt.trim();
       }
     } catch(e) {}
     return '';
   }
   var _origFetch = window.fetch;
-  var _dashToken = sessionStorage.getItem('seclaw_token') || findGatewayToken();
+  // Token for Bearer auth (programmatic/token-based access)
+  var _dashToken = extractUrlToken() || localStorage.getItem('seclaw_token') || '';
 
   window.fetch = function(url, opts) {
     opts = opts || {};
@@ -1017,14 +1036,17 @@ body::before {
   function attemptLogin() {
     var inp = document.getElementById('login-token');
     var errEl = document.getElementById('login-error');
-    var token = inp.value.trim();
-    if (!token) { errEl.textContent = 'Token is required'; return; }
+    var pw = inp.value.trim();
+    if (!pw) { errEl.textContent = 'Password is required'; return; }
     errEl.textContent = '';
-    _origFetch('/api/health', { headers: { 'Authorization': 'Bearer ' + token } })
-      .then(function(r) {
-        if (r.status === 401) { errEl.textContent = 'Invalid token'; return; }
-        _dashToken = token;
-        sessionStorage.setItem('seclaw_token', token);
+    // POST password to /api/auth — server sets HttpOnly cookie on success
+    _origFetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    }).then(function(r) {
+        if (r.status === 401) { errEl.textContent = 'Invalid password'; return; }
+        // Cookie is set by server — reload to activate cookie-based auth
         location.reload();
       })
       .catch(function() { errEl.textContent = 'Connection failed'; });
@@ -1035,12 +1057,10 @@ body::before {
     if (e.key === 'Enter') attemptLogin();
   });
 
-  // Startup probe: check if auth is required
-  if (!_dashToken) {
-    _origFetch('/api/health').then(function(r) {
-      if (r.status === 401) showLoginOverlay();
-    }).catch(function() {});
-  }
+  // Startup probe: check if auth is required (cookie is auto-sent by browser)
+  _origFetch('/api/health').then(function(r) {
+    if (r.status === 401 && !_dashToken) showLoginOverlay();
+  }).catch(function() {});
 
   // ─── Tab switching (sidebar) ───
   const navBtns = document.querySelectorAll('.sb-btn');
@@ -1524,8 +1544,16 @@ body::before {
         // Timeouts
         document.getElementById('cfg-timeouts-auditTimeoutMs').value = cfg.timeouts?.auditTimeoutMs || 60000;
         document.getElementById('cfg-timeouts-syncTimeoutPolicy').value = cfg.timeouts?.syncTimeoutPolicy || 'fail_closed';
-        // Dashboard (read-only)
+        // Dashboard
         document.getElementById('cfg-dashboard-enabled').checked = cfg.dashboard?.enabled ?? true;
+        var pwField = document.getElementById('cfg-dashboard-password');
+        if (cfg.dashboard?.password) {
+          pwField.value = '\u2022\u2022\u2022\u2022\u2022\u2022';
+          pwField.placeholder = 'Password set (clear to remove)';
+        } else {
+          pwField.value = '';
+          pwField.placeholder = 'Not set';
+        }
       })
       .catch(function() { showToast('Failed to load config', 'error'); });
   }
@@ -1586,6 +1614,13 @@ body::before {
         syncTimeoutPolicy: document.getElementById('cfg-timeouts-syncTimeoutPolicy').value,
       },
     };
+    var pwVal = document.getElementById('cfg-dashboard-password').value;
+    var masked = '\u2022\u2022\u2022\u2022\u2022\u2022';
+    if (pwVal && pwVal !== masked) {
+      body.dashboard = { password: pwVal };
+    } else if (!pwVal) {
+      body.dashboard = { password: '' };
+    }
     fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -1622,7 +1657,7 @@ body::before {
 
   var HARDEN_ACTIONS = [
     { id: 'backup', name: '\\u5907\\u4EFD\\u914D\\u7F6E', desc: '\\u5907\\u4EFD\\u5F53\\u524D openclaw.json', risk: 'low', domain: '\\u914D\\u7F6E' },
-    { id: 'deploy-config', name: '\\u90E8\\u7F72\\u5B89\\u5168\\u914D\\u7F6E', desc: '\\u5408\\u5E76\\u6A21\\u677F\\u5230 openclaw.json', risk: 'high', domain: '\\u914D\\u7F6E' },
+    { id: 'deploy-config', name: '\\u90E8\\u7F72\\u5B89\\u5168\\u914D\\u7F6E', desc: '\\u5408\\u5E76\\u6A21\\u677F\\u5230 openclaw.json', risk: 'high', domain: '\\u914D\\u7F6E', disabled: true },
     { id: 'validate', name: 'Schema \\u6821\\u9A8C', desc: '\\u8FD0\\u884C openclaw config validate', risk: 'low', domain: '\\u914D\\u7F6E' },
     { id: 'permissions', name: '\\u6743\\u9650\\u52A0\\u56FA', desc: 'chmod 600/700 \\u6216 icacls', risk: 'high', domain: '\\u6587\\u4EF6\\u7CFB\\u7EDF' },
     { id: 'baseline', name: '\\u54C8\\u5E0C\\u57FA\\u7EBF', desc: '\\u751F\\u6210 SHA-256 \\u914D\\u7F6E\\u57FA\\u7EBF', risk: 'low', domain: '\\u6587\\u4EF6\\u7CFB\\u7EDF' },
@@ -1809,23 +1844,27 @@ body::before {
     grid.innerHTML = '';
     HARDEN_ACTIONS.forEach(function(a) {
       var card = document.createElement('div');
-      card.className = 'action-card' + (a.risk === 'high' ? ' high-risk' : '');
+      card.className = 'action-card' + (a.risk === 'high' ? ' high-risk' : '') + (a.disabled ? ' disabled' : '');
+      var riskLabel = a.disabled ? '\\u6D4B\\u8BD5\\u4E2D' : (a.risk === 'high' ? '\\u9AD8\\u5371' : a.risk === 'medium' ? '\\u4E2D\\u7B49' : '\\u5B89\\u5168');
+      var riskClass = a.disabled ? 'disabled' : a.risk;
       card.innerHTML =
-        '<div style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" class="action-checkbox" value="' + a.id + '">' +
-        '<div class="action-info"><div class="action-name">' + a.name + ' <span class="risk-badge ' + a.risk + '">' + (a.risk === 'high' ? '\\u9AD8\\u5371' : a.risk === 'medium' ? '\\u4E2D\\u7B49' : '\\u5B89\\u5168') + '</span></div>' +
+        '<div style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" class="action-checkbox" value="' + a.id + '"' + (a.disabled ? ' disabled' : '') + '>' +
+        '<div class="action-info"><div class="action-name">' + a.name + ' <span class="risk-badge ' + riskClass + '">' + riskLabel + '</span></div>' +
         '<div class="action-desc">' + a.desc + '</div>' +
         '<span class="action-domain">' + a.domain + '</span></div></div>';
-      card.addEventListener('click', function(e) {
-        if (e.target.type === 'checkbox') return;
-        var chk = card.querySelector('.action-checkbox');
-        chk.checked = !chk.checked;
-        chk.dispatchEvent(new Event('change'));
-      });
-      card.querySelector('.action-checkbox').addEventListener('change', function() {
-        if (this.checked) { selectedActions.add(a.id); card.classList.add('selected'); }
-        else { selectedActions.delete(a.id); card.classList.remove('selected'); }
-        updateRunBtn();
-      });
+      if (!a.disabled) {
+        card.addEventListener('click', function(e) {
+          if (e.target.type === 'checkbox') return;
+          var chk = card.querySelector('.action-checkbox');
+          chk.checked = !chk.checked;
+          chk.dispatchEvent(new Event('change'));
+        });
+        card.querySelector('.action-checkbox').addEventListener('change', function() {
+          if (this.checked) { selectedActions.add(a.id); card.classList.add('selected'); }
+          else { selectedActions.delete(a.id); card.classList.remove('selected'); }
+          updateRunBtn();
+        });
+      }
       grid.appendChild(card);
     });
   }
@@ -2024,6 +2063,7 @@ body::before {
     selectedActions.clear();
     document.querySelectorAll('.action-card').forEach(function(c) { c.classList.remove('selected'); });
     HARDEN_ACTIONS.forEach(function(a) {
+      if (a.disabled) return;
       var chk = document.querySelector('.action-checkbox[value="' + a.id + '"]');
       if (!chk) return;
       var shouldCheck = mode === 'paranoid' ? true : (a.risk !== 'high');

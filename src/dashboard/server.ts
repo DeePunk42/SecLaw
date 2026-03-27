@@ -38,7 +38,8 @@ export interface DashboardDeps {
   getWorkspacePath: () => string | undefined;
   getVarDir: () => string;
   getOpenClawDir: () => string;
-  getToken?: () => string | undefined;
+  getToken?: () => string | string[] | undefined;
+  getPassword?: () => string | undefined;
   reloadRules?: () => void;
 }
 
@@ -47,6 +48,74 @@ function verifyToken(provided: string | undefined, expected: string): boolean {
   const hash = (s: string) => createHash("sha256").update(s).digest();
   return timingSafeEqual(hash(provided), hash(expected));
 }
+
+// ─── Cookie session store ───
+
+const COOKIE_NAME = "seclaw_pw";
+const COOKIE_MAX_AGE = 30 * 24 * 3600; // 30 days
+
+function parseCookie(req: http.IncomingMessage, name: string): string | undefined {
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+  const prefix = name + "=";
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(trimmed.slice(prefix.length));
+      } catch {
+        return trimmed.slice(prefix.length);
+      }
+    }
+  }
+  return undefined;
+}
+
+function setPasswordCookie(res: http.ServerResponse, password: string, cookiePath: string): void {
+  const encoded = encodeURIComponent(password);
+  const p = cookiePath || "/";
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encoded}; HttpOnly; SameSite=Strict; Path=${p}; Max-Age=${COOKIE_MAX_AGE}`);
+}
+
+// ─── Auth helpers ───
+
+function isAuthorized(
+  req: http.IncomingMessage,
+  deps: DashboardDeps,
+): boolean {
+  const rawTokens = deps.getToken?.();
+  const password = deps.getPassword?.();
+
+  // No auth configured — open access
+  if (!rawTokens && !password) return true;
+
+  // Extract Bearer / query token
+  const authHeader = req.headers.authorization;
+  const bearerToken = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7).trim()
+    : undefined;
+  // Parse URL for query token
+  const rawUrl = req.url || "/";
+  const url = new URL(rawUrl, "http://127.0.0.1");
+  const queryToken = url.searchParams.get("token") || undefined;
+  const provided = bearerToken || queryToken;
+
+  // Check Bearer/query token against configured tokens
+  if (rawTokens && provided) {
+    const validTokens = Array.isArray(rawTokens) ? rawTokens : [rawTokens];
+    if (validTokens.some((t) => verifyToken(provided, t))) return true;
+  }
+
+  // Check password cookie
+  if (password) {
+    const cookiePw = parseCookie(req, COOKIE_NAME);
+    if (cookiePw && verifyToken(cookiePw, password)) return true;
+  }
+
+  return false;
+}
+
+// ─── Route handler ───
 
 let server: http.Server | null = null;
 
@@ -82,23 +151,42 @@ export function createDashboardRouteHandler(
 
     const url = new URL(path, "http://127.0.0.1");
 
-    // API routes
-    if (url.pathname.startsWith("/api/")) {
-      const token = deps.getToken?.();
-      if (token) {
-        const authHeader = req.headers.authorization;
-        const bearerToken = authHeader?.startsWith("Bearer ")
-          ? authHeader.slice(7).trim()
-          : undefined;
-        const queryToken = url.searchParams.get("token") || undefined;
-        const provided = bearerToken || queryToken;
-        if (!verifyToken(provided, token)) {
-          res.writeHead(401, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: { message: "Unauthorized", type: "unauthorized" } }));
-          return true;
-        }
-        url.searchParams.delete("token");
+    // POST /api/auth — password login endpoint (sets cookie)
+    if (url.pathname === "/api/auth" && req.method === "POST") {
+      const password = deps.getPassword?.();
+      if (!password) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, message: "No password configured" }));
+        return true;
       }
+      const body = await new Promise<string>((resolve) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+      });
+      let provided: string | undefined;
+      try {
+        provided = JSON.parse(body)?.password?.trim();
+      } catch { /* invalid JSON */ }
+      if (!provided || !verifyToken(provided, password)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Invalid password", type: "unauthorized" } }));
+        return true;
+      }
+      setPasswordCookie(res, provided, basePath);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return true;
+    }
+
+    // API routes — require auth
+    if (url.pathname.startsWith("/api/")) {
+      if (!isAuthorized(req, deps)) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Unauthorized", type: "unauthorized" } }));
+        return true;
+      }
+      url.searchParams.delete("token");
       handleApiRequest(req, res, url, deps);
       return true;
     }
