@@ -39,6 +39,7 @@ export interface DashboardDeps {
   getVarDir: () => string;
   getOpenClawDir: () => string;
   getToken?: () => string | undefined;
+  reloadRules?: () => void;
 }
 
 function verifyToken(provided: string | undefined, expected: string): boolean {

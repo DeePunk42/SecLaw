@@ -117,7 +117,30 @@ function loadRulesFromYamlFile(filePath: string): SigmaRule[] {
 }
 
 function saveRulesToYamlFile(filePath: string, rules: SigmaRule[]): void {
-  const content = stringifyYaml(rules);
+  // Strip resolver-stamped fields before saving
+  const cleanRules = rules.map(({ sourceFile: _, ...rest }) => rest);
+
+  // Preserve existing lists/macros from the original file
+  let structure: Record<string, unknown> | null = null;
+  try {
+    if (fs.existsSync(filePath)) {
+      const existing = parseYaml(fs.readFileSync(filePath, "utf-8"));
+      if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+        structure = existing as Record<string, unknown>;
+      }
+    }
+  } catch { /* ignore parse errors on existing file */ }
+
+  let content: string;
+  if (structure && ("lists" in structure || "macros" in structure)) {
+    // Structured format: preserve lists/macros, replace rules
+    structure.rules = cleanRules;
+    content = stringifyYaml(structure);
+  } else {
+    // Plain array format or new file
+    content = stringifyYaml(cleanRules);
+  }
+
   const normalized = content.endsWith("\n") ? content : `${content}\n`;
   fs.writeFileSync(filePath, normalized, "utf-8");
 }
@@ -549,6 +572,7 @@ async function handleSaveRuleFile(
     fs.mkdirSync(rulesDir, { recursive: true });
     const filePath = path.join(rulesDir, fileName);
     saveRulesToYamlFile(filePath, parsed.rules as SigmaRule[]);
+    deps.reloadRules?.();
     json(res, 200, { ok: true });
   } catch (err: any) {
     json(res, 400, { error: `Failed to save rule file: ${err.message}` });

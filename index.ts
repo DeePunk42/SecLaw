@@ -573,6 +573,7 @@ export function init(ctx: PluginInitContext): void {
       getWorkspacePath: () => workspacePath,
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
+      reloadRules: () => reloadRuleEngineFromManagedRules(),
     }).catch(() => {
       // Best-effort — dashboard failure shouldn't block the plugin
     });
@@ -1383,6 +1384,7 @@ function register(api: OpenClawPluginApi): void {
       getVarDir: () => varDir,
       getOpenClawDir: () => getOpenClawDir(),
       getToken: () => config.dashboard?.token?.trim() || undefined,
+      reloadRules: () => reloadRuleEngineFromManagedRules(),
     };
     api.registerHttpRoute({
       path: "/plugins/seclaw",

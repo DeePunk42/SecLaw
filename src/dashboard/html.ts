@@ -424,6 +424,30 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
   font-family: var(--font-mono); font-size: 12px; color: var(--text);
   background: var(--bg-input); border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; word-break: break-all;
 }
+.rule-edit-field { margin-bottom: 10px; }
+.rule-edit-field label {
+  display: block; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 3px; font-family: var(--font-mono); letter-spacing: 0.5px;
+}
+.rule-edit-field input, .rule-edit-field select {
+  width: 100%; padding: 5px 8px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-mono); box-sizing: border-box;
+}
+.rule-edit-field textarea {
+  width: 100%; padding: 5px 8px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; font-size: 12px; font-family: var(--font-mono);
+  resize: vertical; min-height: 80px; box-sizing: border-box;
+}
+.rule-edit-actions {
+  display: flex; gap: 6px; margin-top: 12px;
+}
+.rule-edit-actions button {
+  padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; border: 1px solid var(--border);
+  background: var(--bg-input); color: var(--text); font-family: var(--font-ui);
+}
+.rule-edit-actions button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.rule-edit-actions button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+.rule-edit-actions button:hover { opacity: 0.9; }
 .test-panel {
   background: var(--bg-card); border-radius: 6px; margin-bottom: 12px; overflow: hidden;
 }
@@ -727,6 +751,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
       </div>
       <span class="count" id="rules-count-files">0 rules</span>
       <span style="margin-left:auto"></span>
+      <button id="btn-rules-add">+ Add</button>
       <button id="btn-rules-upload">Upload</button>
       <button id="btn-rules-download">Download</button>
       <button id="btn-rules-save" class="primary" disabled>Save</button>
@@ -1624,7 +1649,6 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     fileTierFilter: '',
     fileSelectedRuleId: null,
     dirty: false,
-    draftRules: [],
     // Effective Rules mode
     effectiveRules: [],
     effectiveTierFilter: '',
@@ -1916,6 +1940,11 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     renderFileRulesList();
   });
 
+  function markDirty() {
+    rs.dirty = true;
+    btnRulesSave.disabled = false;
+  }
+
   function renderFileRulesList() {
     filesListEl.innerHTML = '';
     var filtered = rs.fileRules.filter(function(r) {
@@ -1936,17 +1965,223 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         if (prev) prev.classList.remove('selected');
         card.classList.add('selected');
         rs.fileSelectedRuleId = rule.id;
-        renderRuleDetail(rule, filesDetailEl, {});
+        renderRuleEditForm(rule);
       });
       filesListEl.appendChild(card);
     });
 
     if (rs.fileSelectedRuleId) {
       var sel = rs.fileRules.find(function(r) { return r.id === rs.fileSelectedRuleId; });
-      if (sel) renderRuleDetail(sel, filesDetailEl, {});
+      if (sel) renderRuleEditForm(sel);
       else filesDetailEl.innerHTML = '<div class="detail-placeholder">Select a rule to view details</div>';
     }
   }
+
+  // ─── Rule Edit Form ───
+  function renderRuleEditForm(rule) {
+    var toolStr = (rule.tool || []).join(', ');
+    var platformStr = (rule.platform || []).join(', ');
+    var tagsStr = (rule.tags || []).join(', ');
+    var detectionStr = '';
+    if (rule.detection) {
+      try { detectionStr = detectionToYaml(rule.detection); } catch(e) { detectionStr = JSON.stringify(rule.detection, null, 2); }
+    }
+
+    var html =
+      '<div class="rule-edit-field">' +
+        '<label>ID</label>' +
+        '<input id="re-id" value="' + escapeHtml(rule.id || '') + '">' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Name</label>' +
+        '<input id="re-name" value="' + escapeHtml(rule.name || '') + '">' +
+      '</div>' +
+      '<div style="display:flex;gap:8px">' +
+        '<div class="rule-edit-field" style="flex:1">' +
+          '<label>Tier</label>' +
+          '<select id="re-tier">' +
+            '<option value="GREEN"' + (rule.tier === 'GREEN' ? ' selected' : '') + '>GREEN</option>' +
+            '<option value="YELLOW"' + (rule.tier === 'YELLOW' ? ' selected' : '') + '>YELLOW</option>' +
+            '<option value="RED"' + (rule.tier === 'RED' ? ' selected' : '') + '>RED</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="rule-edit-field" style="flex:1">' +
+          '<label>Priority</label>' +
+          '<input id="re-priority" type="number" value="' + (rule.priority || 0) + '">' +
+        '</div>' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Tools (comma-separated)</label>' +
+        '<input id="re-tool" value="' + escapeHtml(toolStr) + '">' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Platform (comma-separated, optional)</label>' +
+        '<input id="re-platform" value="' + escapeHtml(platformStr) + '" placeholder="e.g. linux, macos">' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Reason (optional)</label>' +
+        '<input id="re-reason" value="' + escapeHtml(rule.reason || '') + '">' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Tags (comma-separated, optional)</label>' +
+        '<input id="re-tags" value="' + escapeHtml(tagsStr) + '">' +
+      '</div>' +
+      '<div class="rule-edit-field">' +
+        '<label>Detection (YAML)</label>' +
+        '<textarea id="re-detection" rows="6">' + escapeHtml(detectionStr) + '</textarea>' +
+      '</div>' +
+      '<div class="rule-edit-actions">' +
+        '<button class="primary" id="re-apply">Apply</button>' +
+        '<button class="danger" id="re-delete">Delete</button>' +
+      '</div>';
+
+    filesDetailEl.innerHTML = html;
+
+    document.getElementById('re-apply').addEventListener('click', function() {
+      applyRuleEdit(rule);
+    });
+    document.getElementById('re-delete').addEventListener('click', function() {
+      deleteRule(rule);
+    });
+  }
+
+  function parseCommaSep(str) {
+    return str.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+  }
+
+  function parseDetectionYaml(str) {
+    if (!str.trim()) return { any: {}, condition: 'any' };
+    // detectionToYaml uses \\n as line separator in the template literal
+    var lines = str.split(/\\\\n|\\n/);
+    var result = {};
+    var currentKey = null;
+    var currentObj = null;
+    var currentList = null;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.replace(/^\\s+/, '');
+      if (!trimmed) continue;
+
+      // Top-level key (no leading space): "selection:" or "condition: ..."
+      if (line === trimmed) {
+        var colonIdx = trimmed.indexOf(':');
+        if (colonIdx === -1) continue;
+        var key = trimmed.substring(0, colonIdx);
+        var val = trimmed.substring(colonIdx + 1).trim();
+        if (val) {
+          try { result[key] = JSON.parse(val); } catch(e) { result[key] = val; }
+        } else {
+          currentKey = key;
+          currentObj = {};
+          currentList = null;
+          result[key] = currentObj;
+        }
+      } else if (currentKey) {
+        // Nested: "  field|modifier: value" or "  - item"
+        var nt = trimmed;
+        if (nt.indexOf('- ') === 0) {
+          // List item
+          var item = nt.substring(2).trim();
+          try { item = JSON.parse(item); } catch(e) {}
+          if (!currentList) {
+            // This list belongs to the last field in currentObj
+            var objKeys = Object.keys(currentObj);
+            if (objKeys.length > 0) {
+              var lastKey = objKeys[objKeys.length - 1];
+              if (!Array.isArray(currentObj[lastKey])) currentObj[lastKey] = [];
+              currentList = currentObj[lastKey];
+            } else {
+              currentList = [];
+            }
+          }
+          currentList.push(item);
+        } else {
+          currentList = null;
+          var ci = nt.indexOf(':');
+          if (ci === -1) continue;
+          var fk = nt.substring(0, ci);
+          var fv = nt.substring(ci + 1).trim();
+          try { fv = JSON.parse(fv); } catch(e) {}
+          currentObj[fk] = fv;
+        }
+      }
+    }
+    if (!result.condition) result.condition = 'any';
+    return result;
+  }
+
+  function applyRuleEdit(originalRule) {
+    var newId = (document.getElementById('re-id').value || '').trim();
+    if (!newId) { showToast('Rule ID is required', 'error'); return; }
+
+    var toolArr = parseCommaSep(document.getElementById('re-tool').value || '');
+    if (toolArr.length === 0) { showToast('At least one tool is required', 'error'); return; }
+
+    var platformArr = parseCommaSep(document.getElementById('re-platform').value || '');
+    var tagsArr = parseCommaSep(document.getElementById('re-tags').value || '');
+    var detectionText = document.getElementById('re-detection').value || '';
+    var detection;
+    try {
+      detection = parseDetectionYaml(detectionText);
+    } catch(e) {
+      showToast('Invalid detection YAML', 'error');
+      return;
+    }
+
+    var idx = rs.fileRules.indexOf(originalRule);
+    if (idx === -1) return;
+
+    rs.fileRules[idx] = {
+      id: newId,
+      name: (document.getElementById('re-name').value || '').trim() || newId,
+      tier: document.getElementById('re-tier').value,
+      priority: parseInt(document.getElementById('re-priority').value, 10) || 0,
+      tool: toolArr,
+      platform: platformArr.length > 0 ? platformArr : undefined,
+      reason: (document.getElementById('re-reason').value || '').trim() || undefined,
+      tags: tagsArr.length > 0 ? tagsArr : undefined,
+      detection: detection,
+    };
+
+    rs.fileSelectedRuleId = newId;
+    markDirty();
+    renderFileRulesList();
+    showToast('Rule updated (not saved yet)', 'success');
+  }
+
+  function deleteRule(rule) {
+    var idx = rs.fileRules.indexOf(rule);
+    if (idx === -1) return;
+    rs.fileRules.splice(idx, 1);
+    rs.fileSelectedRuleId = null;
+    filesDetailEl.innerHTML = '<div class="detail-placeholder">Select a rule to view details</div>';
+    markDirty();
+    renderFileRulesList();
+    showToast('Rule deleted (not saved yet)', 'success');
+  }
+
+  // ─── Add Rule ───
+  document.getElementById('btn-rules-add').addEventListener('click', function() {
+    if (!rs.currentFile) { showToast('No file selected', 'error'); return; }
+    var prefix = 'NEW-';
+    var num = 1;
+    while (rs.fileRules.some(function(r) { return r.id === prefix + num; })) num++;
+    var newRule = {
+      id: prefix + num,
+      name: 'New rule',
+      tool: ['*'],
+      tier: 'YELLOW',
+      priority: 5000,
+      detection: { any: {}, condition: 'any' },
+    };
+    rs.fileRules.push(newRule);
+    rs.fileSelectedRuleId = newRule.id;
+    markDirty();
+    renderFileRulesList();
+    // Scroll to bottom
+    filesListEl.scrollTop = filesListEl.scrollHeight;
+  });
 
   // ─── File Operations ───
   btnRulesDownload.addEventListener('click', function() {
@@ -1974,10 +2209,10 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         .then(function(r) { return r.json(); })
         .then(function(data) {
           if (data.error) { showToast(data.error, 'error'); return; }
-          rs.draftRules = data.rules || [];
-          rs.dirty = true;
-          btnRulesSave.disabled = false;
-          showToast('YAML loaded (' + rs.draftRules.length + ' rules, not saved yet)', 'success');
+          rs.fileRules = data.rules || [];
+          markDirty();
+          renderFileRulesList();
+          showToast('YAML loaded (' + rs.fileRules.length + ' rules, not saved yet)', 'success');
         })
         .catch(function() { showToast('Failed to parse uploaded YAML', 'error'); });
     };
@@ -1990,7 +2225,7 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
     fetch('/api/rules/file?name=' + encodeURIComponent(targetFile), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rules: rs.draftRules }),
+      body: JSON.stringify({ rules: rs.fileRules }),
     })
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -2001,7 +2236,10 @@ nav button.active { color: var(--blue); border-bottom-color: var(--blue); }
         rs.dirty = false;
         btnRulesSave.disabled = true;
         showToast('Rules saved to ' + targetFile, 'success');
+        // Reload to get clean state from disk
         loadFileRules(targetFile);
+        // Reset effective rules cache so it reloads on next view
+        rs.effectiveRules = [];
       })
       .catch(function() { showToast('Failed to save rules', 'error'); });
   });

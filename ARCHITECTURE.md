@@ -794,12 +794,15 @@ The dashboard Audit Log tab shows tool calls as **grouped cards** in a 60/40 spl
 
 The Rules tab has two modes, switchable via pill toggle:
 
-**Rule Files mode** (management):
+**Rule Files mode** (management/editing):
 - **File tabs** at the top, one per YAML file (default.yaml, unix.yaml, windows.yaml). Files not loaded on the current platform are shown dimmed with a "not active" note
 - Selecting a file tab loads its rules from `GET /api/rules/file?name=` (raw parsed rules, not compiled)
-- **Toolbar**: tier filter pills, rule count, Upload/Download/Save buttons
-- **60/40 split**: left = scrollable rule cards for the selected file; right = detail panel
-- Upload/Save operate on the currently selected file — file target is always unambiguous
+- **Toolbar**: tier filter pills, rule count, Add/Upload/Download/Save buttons
+- **60/40 split**: left = scrollable rule cards for the selected file; right = edit form
+- **Rule editing**: clicking a rule opens an inline edit form (id, name, tier, priority, tools, platform, reason, tags, detection YAML). Apply writes changes to the in-memory rule list; Save persists to disk via `PUT /api/rules/file`
+- **Add rule**: creates a template rule (YELLOW, priority 5000, wildcard tool)
+- **Delete rule**: removes selected rule from the in-memory list
+- All edits are staged locally until Save is clicked. Save preserves existing `lists`/`macros` in the YAML file and triggers a rule engine reload via `DashboardDeps.reloadRules`
 
 **Effective Rules mode** (read-only, debugging):
 - Shows all compiled rules from the rule engine, merged and sorted by priority
