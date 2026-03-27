@@ -1847,14 +1847,24 @@ body::before {
     list.innerHTML = '';
     document.getElementById('predicted-before-score').textContent = beforeScore;
     document.getElementById('predicted-before-grade').textContent = beforeGrade;
-    document.getElementById('predicted-after-score').textContent = '...';
-    document.getElementById('predicted-after-grade').textContent = '...';
-    document.getElementById('score-ring-fill').setAttribute('stroke-dashoffset', '339.3');
+    var afterScoreEl = document.getElementById('predicted-after-score');
+    var afterGradeEl = document.getElementById('predicted-after-grade');
+    afterScoreEl.textContent = '...';
+    afterScoreEl.classList.add('blink');
+    afterGradeEl.textContent = '...';
+    afterGradeEl.classList.add('blink');
+    var ring = document.getElementById('score-ring-fill');
+    ring.setAttribute('stroke-dashoffset', '339.3');
+    ring.setAttribute('stroke', 'var(--blue)');
 
     var actions = Array.from(selectedActions);
+    var total = actions.length;
     var idx = 0;
     function next() {
       if (idx >= actions.length) {
+        // Advance ring to 90% while re-scanning
+        ring.setAttribute('stroke-dashoffset', String(339.3 * 0.1));
+        afterScoreEl.textContent = '...';
         // Re-scan to get after score
         fetch('/api/health/scan').then(function(r) { return r.json(); }).then(function(data) {
           if (!data.error) {
@@ -1863,20 +1873,20 @@ body::before {
             renderDomainGrid(data.checks || []);
             renderDomainCards(data.checks || []);
             autoGenerateReport(data);
-            document.getElementById('predicted-after-score').textContent = data.summary.score;
-            // Animate circular ring
-            var ring = document.getElementById('score-ring-fill');
+            afterScoreEl.textContent = data.summary.score;
+            afterScoreEl.classList.remove('blink');
+            // Final ring position
             var pct = data.summary.score || 0;
             ring.setAttribute('stroke-dashoffset', String(339.3 * (1 - pct / 100)));
             ring.setAttribute('stroke', scoreColor(pct));
             var ag = data.summary.grade || '\\u2014';
-            var agEl = document.getElementById('predicted-after-grade');
-            agEl.textContent = ag;
+            afterGradeEl.textContent = ag;
+            afterGradeEl.classList.remove('blink');
             if (data.summary.score > beforeScore) {
-              agEl.className = 'predicted-grade-badge predicted-grade-up';
+              afterGradeEl.className = 'predicted-grade-badge predicted-grade-up';
             }
           }
-        }).catch(function() {});
+        }).catch(function() { afterScoreEl.classList.remove('blink'); afterGradeEl.classList.remove('blink'); });
         return;
       }
       var body = { action: actions[idx], mode: hardenMode };
@@ -1890,9 +1900,12 @@ body::before {
             div.innerHTML = icon + ' <strong>' + escapeHtml(result.name || result.id) + '</strong>: ' + escapeHtml(result.message) + (result.rollback ? '<span class="rollback">rollback: ' + escapeHtml(result.rollback) + '</span>' : '');
             list.appendChild(div);
           }
-          idx++; next();
+          idx++;
+          // Gradually fill ring as actions complete (0-80% range, 20% reserved for re-scan)
+          ring.setAttribute('stroke-dashoffset', String(339.3 * (1 - (idx / total) * 0.8)));
+          next();
         })
-        .catch(function() { idx++; next(); });
+        .catch(function() { idx++; ring.setAttribute('stroke-dashoffset', String(339.3 * (1 - (idx / total) * 0.8))); next(); });
     }
     next();
   }
