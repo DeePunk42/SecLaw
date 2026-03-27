@@ -1884,8 +1884,7 @@ body::before {
         }).catch(function() {});
         return;
       }
-      var body = { action: actions[idx] };
-      if (actions[idx] === 'deploy-config') body.mode = hardenMode;
+      var body = { action: actions[idx], mode: hardenMode };
       fetch('/api/health/harden', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         .then(function(r) { return r.json(); })
         .then(function(result) {
