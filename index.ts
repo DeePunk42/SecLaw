@@ -271,6 +271,8 @@ function registerPendingOverride(
   return pin;
 }
 
+const STOP_INSTRUCTION = `\nACTION REQUIRED: STOP all tool execution immediately. Do NOT continue with additional tool calls.\nExplain the risk to the user and wait for their decision.`;
+
 function formatOverrideHint(pin: string, showPin: boolean): string {
   if (!showPin) {
     return [
@@ -988,12 +990,12 @@ export async function beforeToolCall(
       if (trusted) {
         return {
           block: true,
-          blockReason: `[SecLaw] ${reason}` + formatOverrideHint(pin, true),
+          blockReason: `[SecLaw] ${reason}` + STOP_INSTRUCTION + formatOverrideHint(pin, true),
         };
       } else {
         return {
           block: true,
-          blockReason: `[SecLaw] ${reason}\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.`,
+          blockReason: `[SecLaw] ${reason}` + STOP_INSTRUCTION + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
         };
       }
     }
@@ -1106,12 +1108,12 @@ export async function beforeToolCall(
     if (trusted) {
       return {
         block: true,
-        blockReason: blockReason + formatOverrideHint(pin, true),
+        blockReason: blockReason + STOP_INSTRUCTION + formatOverrideHint(pin, true),
       };
     } else {
       return {
         block: true,
-        blockReason: blockReason + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
+        blockReason: blockReason + STOP_INSTRUCTION + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
       };
     }
   }
