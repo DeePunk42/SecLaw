@@ -622,9 +622,10 @@ function upsertSecLawPluginConfig(
   const { apiKey: _stripApiKey, ...llmSafe } = seclawConfig.llm;
   // Strip internal-only fields before persisting (port/host are standalone-only)
   const { port: _p, host: _h, ...dashboardSafe } = seclawConfig.dashboard ?? {};
+  // Only persist schema-visible fields (logging is hardcoded defaults, not user-configurable)
   seclawEntry.config = {
-    ...seclawConfig,
     llm: llmSafe,
+    timeouts: seclawConfig.timeouts,
     dashboard: Object.keys(dashboardSafe).length > 0 ? dashboardSafe : undefined,
   };
   entriesObj.seclaw = seclawEntry;

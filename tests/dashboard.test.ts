@@ -706,7 +706,8 @@ describe("Config persistence", () => {
     });
 
     const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
-    expect(saved.plugins.entries.seclaw.config.logging.level).toBe("debug");
+    // logging is no longer persisted (hardcoded defaults)
+    expect(saved.plugins.entries.seclaw.config.logging).toBeUndefined();
     expect(saved.plugins.entries.seclaw.config.timeouts.auditTimeoutMs).toBe(5000);
   });
 });
@@ -1028,14 +1029,16 @@ describe("persistConfigToOpenClaw with missing file", () => {
     });
 
     // Now call _updateConfig which internally calls persistConfigToOpenClaw
-    const result = _updateConfig({ logging: { level: "debug" } });
+    const result = _updateConfig({ timeouts: { auditTimeoutMs: 5000 } });
     expect(result.ok).toBe(true);
 
     // Verify the file was created
     const openClawPath = path.join(openClawDir, "openclaw.json");
     expect(fs.existsSync(openClawPath)).toBe(true);
     const saved = JSON.parse(fs.readFileSync(openClawPath, "utf-8"));
-    expect(saved.plugins.entries.seclaw.config.logging.level).toBe("debug");
+    expect(saved.plugins.entries.seclaw.config.timeouts.auditTimeoutMs).toBe(5000);
+    // logging is no longer persisted (hardcoded defaults)
+    expect(saved.plugins.entries.seclaw.config.logging).toBeUndefined();
   });
 
   it("creates openclaw.json even when directory does not exist", () => {
