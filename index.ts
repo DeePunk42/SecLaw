@@ -899,7 +899,6 @@ export async function beforeToolCall(
     }
     // Log for JSONL audit trail only (no toolCallId → no ToolCallRecord card)
     auditLog.logOverrideUsed(sessionKey, toolName);
-    consumeDangerFlag(sessionKey); // clear any lingering danger flag
     return undefined; // allow
   }
 
@@ -1384,8 +1383,8 @@ function register(api: OpenClawPluginApi): void {
             `Tool: ${dangerReport.toolName}`,
             `Reason: ${dangerReport.reason}`,
             dangerReport.recommendation ? `Recommendation: ${dangerReport.recommendation}` : null,
-            `Subsequent calls to ${dangerReport.toolName} will be blocked until confirmed.`,
-            `STOP using ${dangerReport.toolName} and inform the user about this security finding immediately.]`,
+            `ALL tool calls are now blocked until this is resolved via /pin.`,
+            `STOP all operations and inform the user about this security finding immediately.]`,
           ].filter(Boolean).join("\n");
           event.prompt = alert + "\n\n" + (event.prompt ?? "");
         }

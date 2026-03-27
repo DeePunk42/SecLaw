@@ -33,7 +33,12 @@ export function triggerInterrupt(
   sessionKey: string,
   report: DangerReport,
 ): void {
-  // 1. Generate override PIN and set per-session danger flag
+  // 1. Don't overwrite an existing danger flag (preserves the PIN already shown to user)
+  if (sessionState.hasDangerFlag(sessionKey)) {
+    return;
+  }
+
+  // 2. Generate override PIN and set per-session danger flag
   report.pin = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
   sessionState.setDangerFlag(sessionKey, report);
 
