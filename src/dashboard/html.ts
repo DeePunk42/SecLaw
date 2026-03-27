@@ -526,6 +526,15 @@ body::before {
 }
 .predicted-arrow-small { font-size: 18px; color: var(--blue); }
 
+/* Circular score ring */
+.score-ring-wrap {
+  position: relative; width: 120px; height: 120px;
+  display: flex; align-items: center; justify-content: center;
+}
+.score-ring-wrap .predicted-num { position: absolute; font-size: 36px; }
+.score-ring { width: 120px; height: 120px; }
+.score-ring-fill { transition: stroke-dashoffset 1s cubic-bezier(.22,1,.36,1), stroke 0.5s; }
+
 /* ─── Report Area ─── */
 .report-area {
   font-size: 12px; line-height: 1.8; min-height: 100px; max-height: 500px; overflow-y: auto;
@@ -866,7 +875,13 @@ body::before {
             <div class="predicted-arrow">&#x2192;</div>
             <div class="predicted-after">
               <span class="predicted-label">加固后</span>
-              <span class="predicted-num predicted-highlight" id="predicted-after-score">—</span>
+              <div class="score-ring-wrap">
+                <svg class="score-ring" viewBox="0 0 120 120">
+                  <circle cx="60" cy="60" r="54" fill="none" stroke="rgba(255,255,255,.04)" stroke-width="6"/>
+                  <circle id="score-ring-fill" cx="60" cy="60" r="54" fill="none" stroke="var(--green)" stroke-width="6" stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" transform="rotate(-90 60 60)"/>
+                </svg>
+                <span class="predicted-num predicted-highlight" id="predicted-after-score">—</span>
+              </div>
             </div>
           </div>
           <div class="predicted-grade-row">
@@ -1834,6 +1849,7 @@ body::before {
     document.getElementById('predicted-before-grade').textContent = beforeGrade;
     document.getElementById('predicted-after-score').textContent = '...';
     document.getElementById('predicted-after-grade').textContent = '...';
+    document.getElementById('score-ring-fill').setAttribute('stroke-dashoffset', '339.3');
 
     var actions = Array.from(selectedActions);
     var idx = 0;
@@ -1848,6 +1864,11 @@ body::before {
             renderDomainCards(data.checks || []);
             autoGenerateReport(data);
             document.getElementById('predicted-after-score').textContent = data.summary.score;
+            // Animate circular ring
+            var ring = document.getElementById('score-ring-fill');
+            var pct = data.summary.score || 0;
+            ring.setAttribute('stroke-dashoffset', String(339.3 * (1 - pct / 100)));
+            ring.setAttribute('stroke', scoreColor(pct));
             var ag = data.summary.grade || '\\u2014';
             var agEl = document.getElementById('predicted-after-grade');
             agEl.textContent = ag;

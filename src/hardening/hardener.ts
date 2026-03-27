@@ -22,7 +22,12 @@ import { getOpenClawDir, safeExec } from "./platform.js";
 function getPackageRoot(): string {
   try {
     // src/hardening/hardener.ts → ../../ = extensions/seclaw/
-    return join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const resolved = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    // When running from dist/src/hardening/, ../../ lands on dist/ — go up one more
+    if (resolved.endsWith("/dist") || resolved.endsWith("\\dist")) {
+      return dirname(resolved);
+    }
+    return resolved;
   } catch {
     return join(__dirname, "..", "..");
   }
