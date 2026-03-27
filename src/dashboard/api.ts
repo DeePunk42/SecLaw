@@ -10,6 +10,7 @@ import type { AuditLogEntry, ToolCallRecord } from "../audit-log.js";
 import type { DashboardDeps } from "./server.js";
 import type { SigmaRule, IntentContext, Platform } from "../config.js";
 import { readSenderLabels, refreshSenderLabels } from "./sender-labels.js";
+import { resolveRuleFile } from "../rule-resolver.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   detectPlatform,
@@ -111,15 +112,8 @@ function buildRuleTestParams(
 }
 
 function loadRulesFromYamlFile(filePath: string): SigmaRule[] {
-  const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf-8") : "";
-  if (!content.trim()) return [];
-  const parsed = parseYaml(content);
-  // Support both formats: plain array or { rules: [...] }
-  if (Array.isArray(parsed)) return parsed as SigmaRule[];
-  if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).rules)) {
-    return (parsed as Record<string, unknown>).rules as SigmaRule[];
-  }
-  throw new Error("Rule file must contain rules");
+  const { rules } = resolveRuleFile(filePath);
+  return rules;
 }
 
 function saveRulesToYamlFile(filePath: string, rules: SigmaRule[]): void {
