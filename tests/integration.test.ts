@@ -151,6 +151,7 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
         reason: "Async audit detected danger",
         timestamp: Date.now(),
         source: "async",
+        pin: "038291",
       });
 
       const event: PluginHookBeforeToolCallEvent = {
@@ -165,7 +166,7 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
       expect(result!.blockReason).toContain("Async audit detected danger");
       expect(result!.blockReason).toContain("ACTION REQUIRED: STOP this tool call immediately.");
       // No senderLabel → treated as trusted → PIN is shown
-      expect(result!.blockReason).toMatch(/\/pin\d{6}/);
+      expect(result!.blockReason).toContain("/pin038291");
 
       const rec = _getAuditLog().getToolCallRecords(1)[0];
       expect(rec).toBeDefined();
@@ -175,27 +176,30 @@ describe("Integration: Full Hook Flow (LLM disabled, fail_open)", () => {
       expect(rec.intentContext?.userGoal).toBe("Help me set up my project");
     });
 
-    it("allows tools after danger flag is consumed", async () => {
+    it("keeps blocking until /pin clears the flag", async () => {
       sessionState.setDangerFlag(sessionKey, {
         toolName: "exec",
         params: {},
         reason: "test",
         timestamp: Date.now(),
         source: "async",
+        pin: "123456",
       });
 
-      // First call consumes the flag
-      await beforeToolCall(
-        { toolName: "read", params: {} },
-        ctx,
-      );
+      // First call → blocked, flag persists
+      const r1 = await beforeToolCall({ toolName: "read", params: {} }, ctx);
+      expect(r1!.block).toBe(true);
 
-      // Second call should proceed normally
-      const result = await beforeToolCall(
-        { toolName: "read", params: {} },
-        ctx,
-      );
-      expect(result).toBeUndefined();
+      // Second call → still blocked (flag not consumed)
+      const r2 = await beforeToolCall({ toolName: "write", params: {} }, ctx);
+      expect(r2!.block).toBe(true);
+
+      // /pin clears the flag
+      onUserMessageEvent(sessionKey, "/pin123456");
+
+      // Third call → allowed
+      const r3 = await beforeToolCall({ toolName: "read", params: {} }, ctx);
+      expect(r3).toBeUndefined();
     });
   });
 });

@@ -58,8 +58,14 @@ export function onUserMessage(
     const match = userMessage.match(/\/pin(\d{6})/);
     if (match) {
       const pin = match[1].toLowerCase();
-      // Any sender can activate a PIN — the PIN itself is the authorization
-      // credential, obtainable only from an admin via the dashboard.
+
+      // Check danger flag PIN first (global block from async audit)
+      const dangerFlag = sessionState.peekDangerFlag(sessionKey);
+      if (dangerFlag?.pin === pin) {
+        sessionState.consumeDangerFlag(sessionKey);
+      }
+
+      // Check pending override PIN (per-tool-call block from sync audit)
       if (sessionState.getPendingOverride(sessionKey, pin)) {
         sessionState.activateOverride(sessionKey, pin);
       }

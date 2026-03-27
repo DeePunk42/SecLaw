@@ -382,13 +382,15 @@ After every tool call (`afterToolCall`), the operation is checked:
 4. **Re-classification**: runs `ruleEngine.classify()` again
 5. **GREEN → skip**: no further audit needed
 6. **YELLOW/RED → LLM audit**: runs with `auditTimeoutMs` timeout
-7. **DANGER → interrupt**: sets per-session danger flag, emits `security` event
+7. **DANGER → interrupt**: generates a 6-digit override PIN, sets per-session danger flag (with PIN), emits `security` event
 
-The danger flag blocks **all subsequent tool calls** for that session until overridden or the session is reset.
+The danger flag **persists** — it blocks **all subsequent tool calls** for that session until cleared by `/pin<PIN>` or session reset. The flag is not consumed on block; every tool call checks it and gets blocked until it is explicitly cleared. The PIN is generated once when the flag is set (in `triggerInterrupt`), stored on the `DangerReport`, and reused for all block messages.
 
-**Immediate agent notification**: When the danger flag is set, the next `before_prompt_build` hook injects a security alert into `event.prompt` (before the override injection point). The agent sees the alert at the start of its next turn and can inform the user immediately, rather than only discovering the block on the next tool call attempt.
+**Clearing the flag**: When any sender sends `/pin<PIN>` matching the danger flag's PIN, `onUserMessage()` clears the flag. All tool calls proceed normally afterwards.
 
-When this async danger-flag block triggers, the returned `blockReason` uses a dedicated agent-facing message that explicitly instructs the model to stop the current call immediately. A PIN is always generated (for both trusted and untrusted senders). Trusted senders see the PIN in the blockReason; untrusted senders are told to contact the administrator to obtain the PIN from the dashboard.
+**Immediate agent notification**: When the danger flag is set, the next `before_prompt_build` hook injects a security alert into `event.prompt`. The agent sees the alert at the start of its next turn and can inform the user immediately.
+
+**Block message**: Trusted senders see the PIN in blockReason. Untrusted senders are told to contact the administrator to obtain the PIN from the dashboard.
 
 ## Logging
 

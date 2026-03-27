@@ -903,21 +903,14 @@ export async function beforeToolCall(
     return undefined; // allow
   }
 
-  // 1. Check for danger flag from async audit
-  const dangerReport = consumeDangerFlag(sessionKey);
+  // 1. Check for danger flag from async audit (persists until cleared by /pin)
+  const dangerReport = sessionState.peekDangerFlag(sessionKey);
   auditLog.logDangerFlagCheck(sessionKey, !!dangerReport);
   if (dangerReport) {
     const dangerIntentCtx = getIntentContext(sessionKey);
     const blockReason = formatAsyncDangerBlockForAgent(dangerReport);
+    const pin = dangerReport.pin || "------";
     const trusted = isSenderTrusted(sessionKey);
-    // Always generate PIN — trusted senders see it in blockReason,
-    // untrusted senders must obtain it from an admin via the dashboard.
-    const pin = registerPendingOverride(
-      sessionKey,
-      toolName,
-      params,
-      toolCallId,
-    );
     auditLog.logBlock(
       sessionKey,
       toolName,
@@ -937,7 +930,7 @@ export async function beforeToolCall(
     } else {
       return {
         block: true,
-        blockReason: blockReason + "\n\nThis operation has been blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
+        blockReason: blockReason + "\n\nAll operations are blocked. To unblock, ask your administrator to provide the override PIN from the SecLaw dashboard, then send /pin<PIN>.",
       };
     }
   }

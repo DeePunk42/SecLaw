@@ -4,6 +4,7 @@
  * that blocks all subsequent tool calls until cleared.
  */
 
+import * as crypto from "crypto";
 import type { DangerReport } from "./config.js";
 import { sessionState } from "./session-state.js";
 
@@ -32,7 +33,8 @@ export function triggerInterrupt(
   sessionKey: string,
   report: DangerReport,
 ): void {
-  // 1. Set per-session danger flag
+  // 1. Generate override PIN and set per-session danger flag
+  report.pin = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
   sessionState.setDangerFlag(sessionKey, report);
 
   // 2. Emit agent event for real-time UI notification

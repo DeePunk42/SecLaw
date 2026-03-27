@@ -380,13 +380,14 @@ describe("Integration: Override flow", () => {
   it("async danger flag → block with override → override → allow", async () => {
     onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "Run a command"));
 
-    // Set up async danger flag
+    // Set up async danger flag with PIN
     sessionState.setDangerFlag(sessionKey, {
       toolName: "exec",
       params: { command: "suspicious" },
       reason: "Async audit detected exfiltration",
       timestamp: Date.now(),
       source: "async",
+      pin: "038291",
     });
 
     const event: PluginHookBeforeToolCallEvent = {
@@ -394,21 +395,17 @@ describe("Integration: Override flow", () => {
       params: { command: "suspicious" },
     };
 
-    // First call → blocked (danger flag consumed, override registered)
+    // First call → blocked (danger flag persists)
     const result = await beforeToolCall(event, ctx);
     expect(result).toBeDefined();
     expect(result!.block).toBe(true);
     expect(result!.blockReason).toContain("ACTION REQUIRED: STOP this tool call immediately.");
-    expect(result!.blockReason).toContain("/pin");
+    expect(result!.blockReason).toContain("/pin038291");
 
-    // Extract PIN
-    const pinMatch = result!.blockReason!.match(/\/pin(\d{6})/);
-    const pin = pinMatch![1];
+    // User sends /pin to clear danger flag
+    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", "/pin038291"));
 
-    // User sends override
-    onUserMessageEvent(sessionKey, senderMessage("Alice (admin)", `/pin${pin}`));
-
-    // Retry → allowed
+    // Retry → allowed (danger flag cleared)
     const retryResult = await beforeToolCall(event, ctx);
     expect(retryResult).toBeUndefined();
   });

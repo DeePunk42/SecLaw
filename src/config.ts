@@ -192,6 +192,8 @@ export interface DangerReport {
   timestamp: number;
   source: "sync" | "async";
   ruleId?: string;
+  /** Override PIN for clearing the danger flag. Generated once when flag is set. */
+  pin?: string;
 }
 
 export interface PendingOverride {
