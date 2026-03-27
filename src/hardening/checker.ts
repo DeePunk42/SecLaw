@@ -5,8 +5,17 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import type { CheckResult, Platform } from "./types.js";
+import type { CheckResult, Grade, Platform } from "./types.js";
 import { getOpenClawDir, safeExec } from "./platform.js";
+
+// Balanced mode baseline safeBins
+const BALANCED_SAFEBINS = [
+  "ls", "cat", "head", "tail", "grep", "find",
+  "wc", "echo", "pwd", "whoami", "date",
+  "git", "node", "python3",
+  "jq", "sha256sum", "diff",
+  "mkdir", "cp", "mv",
+];
 
 // Dangerous commands that should not be in safeBins
 const DANGEROUS_BINS = [
@@ -65,11 +74,26 @@ export function generateSummary(checks: CheckResult[]) {
   const fail = checks.filter((c) => c.status === "fail").length;
   const warn = checks.filter((c) => c.status === "warn").length;
   const skip = checks.filter((c) => c.status === "skip").length;
-  // Score: pass=100%, warn=50%, fail=0%, skip=not counted
-  const scored = total - skip;
-  const score =
-    scored > 0 ? Math.round(((pass + warn * 0.5) / scored) * 100) : 0;
-  return { total, pass, fail, warn, skip, score };
+  const na = checks.filter((c) => c.status === "n/a").length;
+
+  // Score: pass=100%, warn=50%, fail=0%, skip/n/a=not counted
+  const scored = total - skip - na;
+  let score =
+    scored > 0 ? Math.round(((pass + warn * 0.5) / scored) * 100) : 100;
+
+  // Critical FAIL penalty: cap at 59
+  const hasCriticalFail = checks.some(
+    (c) => c.status === "fail" && c.severity === "critical",
+  );
+  if (hasCriticalFail && score > 59) {
+    score = 59;
+  }
+
+  // Grade calculation
+  const grade: Grade =
+    score >= 90 ? "A" : score >= 75 ? "B" : score >= 60 ? "C" : score >= 40 ? "D" : "F";
+
+  return { total, pass, fail, warn, skip, na, score, grade, hasCriticalFail };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -79,18 +103,24 @@ function checkNetworkIsolation(config: any, pf: Platform): CheckResult[] {
   const results: CheckResult[] = [];
 
   const bind = config?.gateway?.bind;
+  const bindOk = bind === "loopback";
+  const bindTailnet = bind === "tailnet";
+  const bindDangerous = bind === "lan" || bind === "custom";
   results.push({
     id: "net-bind",
     domain: "网络隔离",
     name: "Gateway 绑定地址",
-    severity: bind === "loopback" ? "pass" : "critical",
-    status: bind === "loopback" ? "pass" : "fail",
+    severity: bindDangerous ? "critical" : (bindOk || bindTailnet) ? "pass" : "warning",
+    status: bindDangerous ? "fail" : (bindOk || bindTailnet) ? "pass" : "warn",
     current: bind || "(未设置)",
     expected: "loopback",
-    message:
-      bind === "loopback"
-        ? "仅监听本地回环 ✓"
-        : `当前绑定 "${bind}" — 可能暴露到网络!`,
+    message: bindOk
+      ? "仅监听本地回环 ✓"
+      : bindTailnet
+        ? "Tailnet 绑定 (VPN 隔离网络) ✓"
+        : bindDangerous
+          ? `当前绑定 "${bind}" — 可能暴露到网络!`
+          : `当前绑定 "${bind}" — 建议设为 loopback`,
     fix: '设置 gateway.bind = "loopback"',
   });
 
@@ -239,7 +269,7 @@ function checkExecSecurity(config: any): CheckResult[] {
   const security = exec?.security;
   results.push({
     id: "exec-security",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "命令执行策略",
     severity: security === "allowlist" ? "pass" : "critical",
     status: security === "allowlist" ? "pass" : "fail",
@@ -256,7 +286,7 @@ function checkExecSecurity(config: any): CheckResult[] {
   const askOk = ask === "always" || ask === "on-miss";
   results.push({
     id: "exec-ask",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "人工审批",
     severity: askOk ? "pass" : "warning",
     status: askOk ? "pass" : "warn",
@@ -272,7 +302,7 @@ function checkExecSecurity(config: any): CheckResult[] {
   );
   results.push({
     id: "exec-dangerous-bins",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "safeBins 危险命令检查",
     severity: dangerousFound.length === 0 ? "pass" : "warning",
     status: dangerousFound.length === 0 ? "pass" : "warn",
@@ -291,7 +321,7 @@ function checkExecSecurity(config: any): CheckResult[] {
   const wsOnly = config?.tools?.fs?.workspaceOnly;
   results.push({
     id: "exec-workspace",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "文件操作工作区限制",
     severity: wsOnly === true ? "pass" : "critical",
     status: wsOnly === true ? "pass" : "fail",
@@ -306,7 +336,7 @@ function checkExecSecurity(config: any): CheckResult[] {
   const patchWs = exec?.applyPatch?.workspaceOnly;
   results.push({
     id: "exec-patch",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "Patch 工作区限制",
     severity: patchWs === true ? "pass" : "warning",
     status: patchWs === true ? "pass" : "warn",
@@ -323,7 +353,7 @@ function checkExecSecurity(config: any): CheckResult[] {
       ?.dangerouslyAllowHostHeaderOriginFallback;
   results.push({
     id: "exec-csrf",
-    domain: "Exec 安全",
+    domain: "执行安全",
     name: "CSRF/WS 劫持防护",
     severity: csrfFlag === false ? "pass" : "critical",
     status: csrfFlag === false ? "pass" : "fail",
@@ -402,6 +432,7 @@ function checkFileSystem(ocDir: string, pf: Platform): CheckResult[] {
     status: hasBaseline ? "pass" : "warn",
     message: hasBaseline ? "哈希基线存在 ✓" : "未找到哈希基线文件",
     fix: "运行部署脚本生成基线",
+    category: "recommended",
   });
 
   if (hasBaseline) {
@@ -451,19 +482,31 @@ function checkSupplyChain(config: any): CheckResult[] {
   const results: CheckResult[] = [];
 
   const allow = config?.plugins?.allow;
-  const pluginOk = Array.isArray(allow);
-  results.push({
-    id: "supply-plugins",
-    domain: "供应链",
-    name: "插件白名单",
-    severity: pluginOk ? "pass" : "warning",
-    status: pluginOk ? "pass" : "warn",
-    current: pluginOk ? `${allow.length} 个` : "(未设置)",
-    message: pluginOk
-      ? `插件白名单已启用 (${allow.length} 个) ✓`
-      : "未设置插件白名单",
-    fix: "设置 plugins.allow = []",
-  });
+  if (allow === undefined || allow === null) {
+    results.push({
+      id: "supply-plugins",
+      domain: "供应链",
+      name: "插件白名单",
+      severity: "info",
+      status: "n/a",
+      message: "插件白名单未配置 (功能未启用)",
+      fix: "如需安装插件, 建议先设置 plugins.allow = []",
+    });
+  } else {
+    const pluginOk = Array.isArray(allow);
+    results.push({
+      id: "supply-plugins",
+      domain: "供应链",
+      name: "插件白名单",
+      severity: pluginOk ? "pass" : "warning",
+      status: pluginOk ? "pass" : "warn",
+      current: pluginOk ? `${allow.length} 个` : String(allow),
+      message: pluginOk
+        ? `插件白名单已启用 (${allow.length} 个) ✓`
+        : "插件白名单格式错误",
+      fix: "设置 plugins.allow = []",
+    });
+  }
 
   const npmrcPath = join(
     process.env.HOME || process.env.USERPROFILE || "",
@@ -495,28 +538,44 @@ function checkSupplyChain(config: any): CheckResult[] {
 function checkChannelSecurity(config: any): CheckResult[] {
   const results: CheckResult[] = [];
 
+  // Pre-check: are channels configured?
+  const channels = config?.channels;
+  const hasChannels =
+    channels && typeof channels === "object" && Object.keys(channels).length > 0;
+
+  if (!hasChannels) {
+    results.push({
+      id: "channel-owner",
+      domain: "代理行为",
+      name: "Owner 身份限制",
+      severity: "info",
+      status: "n/a",
+      message: "Channel 功能未配置, 无需设置 ownerAllowFrom (N/A)",
+    });
+    return results;
+  }
+
   const owner = config?.commands?.ownerAllowFrom;
   const ownerSet = Array.isArray(owner) && owner.length > 0;
   results.push({
     id: "channel-owner",
-    domain: "Channel/PI",
+    domain: "代理行为",
     name: "Owner 身份限制",
     severity: ownerSet ? "pass" : "critical",
     status: ownerSet ? "pass" : "fail",
     current: ownerSet ? `${owner.length} 个 UID` : "[] (空!)",
     message: ownerSet
       ? `ownerAllowFrom 已配置 (${owner.length} UID) ✓`
-      : "⚠ ownerAllowFrom 为空 — PI→RCE 核心防线失效!",
+      : "⚠ 已配置 Channel 但 ownerAllowFrom 为空 — PI→RCE 核心防线失效!",
     fix: '设置 commands.ownerAllowFrom = ["你的UID"]',
   });
 
-  const channels = config?.channels || {};
   for (const [name, ch] of Object.entries<any>(channels)) {
     const af = ch?.allowFrom;
     const afSet = Array.isArray(af) && af.length > 0;
     results.push({
       id: `channel-${name}-allow`,
-      domain: "Channel/PI",
+      domain: "代理行为",
       name: `${name} allowFrom`,
       severity: afSet ? "pass" : "warning",
       status: afSet ? "pass" : "warn",
@@ -531,7 +590,7 @@ function checkChannelSecurity(config: any): CheckResult[] {
     const dmOk = dm === "disabled" || dm === "pairing";
     results.push({
       id: `channel-${name}-dm`,
-      domain: "Channel/PI",
+      domain: "代理行为",
       name: `${name} DM 策略`,
       severity: dmOk ? "pass" : "warning",
       status: dmOk ? "pass" : "warn",
@@ -555,45 +614,66 @@ function checkAgentBehavior(
 ): CheckResult[] {
   const results: CheckResult[] = [];
 
-  const sandbox = config?.agents?.defaults?.sandbox?.mode;
-  const sandboxOk = sandbox === "all" || sandbox === "non-main";
-  results.push({
-    id: "agent-sandbox",
-    domain: "Agent",
-    name: "容器沙箱",
-    severity: sandboxOk ? "pass" : "warning",
-    status: sandboxOk ? "pass" : "warn",
-    current: sandbox || "(未设置)",
-    expected: '"all" 或 "non-main"',
-    message: sandboxOk
-      ? `沙箱模式: ${sandbox} ✓`
-      : "未启用容器沙箱",
-    fix: '设置 agents.defaults.sandbox.mode = "non-main"',
-  });
+  // Pre-check: is agents section configured?
+  const agentsSection = config?.agents;
+  const sandbox = agentsSection?.defaults?.sandbox?.mode;
+  if (!agentsSection) {
+    results.push({
+      id: "agent-sandbox",
+      domain: "代理行为",
+      name: "容器沙箱",
+      severity: "info",
+      status: "n/a",
+      message: "Agent 功能未配置 (N/A)",
+    });
+  } else {
+    const sandboxOk = sandbox === "all" || sandbox === "non-main";
+    results.push({
+      id: "agent-sandbox",
+      domain: "代理行为",
+      name: "容器沙箱",
+      severity: sandboxOk ? "pass" : "warning",
+      status: sandboxOk ? "pass" : "warn",
+      current: sandbox || "(未设置)",
+      expected: '"all" 或 "non-main"',
+      message: sandboxOk
+        ? `沙箱模式: ${sandbox} ✓`
+        : "未启用容器沙箱",
+      fix: '设置 agents.defaults.sandbox.mode = "non-main"',
+    });
+  }
 
   const agentsPath = join(ocDir, "workspace", "AGENTS.md");
   const hasAgents = existsSync(agentsPath);
-  let hasSecurityRules = false;
-  if (hasAgents) {
+  if (!hasAgents) {
+    results.push({
+      id: "agent-rules",
+      domain: "代理行为",
+      name: "AGENTS.md 安全规则",
+      severity: "info",
+      status: "n/a",
+      message: "AGENTS.md 不存在 (建议创建并添加安全规则)",
+      fix: "部署 AGENTS.md 模板",
+      category: "recommended",
+    });
+  } else {
     const content = readFileSync(agentsPath, "utf-8");
-    hasSecurityRules =
+    const hasSecurityRules =
       content.includes("安全行为规则") ||
       content.includes("Red Line") ||
       content.includes("红线");
+    results.push({
+      id: "agent-rules",
+      domain: "代理行为",
+      name: "AGENTS.md 安全规则",
+      severity: hasSecurityRules ? "pass" : "warning",
+      status: hasSecurityRules ? "pass" : "warn",
+      message: hasSecurityRules
+        ? "AGENTS.md 包含安全规则 ✓"
+        : "AGENTS.md 存在但无安全规则",
+      fix: "部署 AGENTS.md 模板",
+    });
   }
-  results.push({
-    id: "agent-rules",
-    domain: "Agent",
-    name: "AGENTS.md 安全规则",
-    severity: hasSecurityRules ? "pass" : "warning",
-    status: hasSecurityRules ? "pass" : hasAgents ? "warn" : "fail",
-    message: hasSecurityRules
-      ? "AGENTS.md 包含安全规则 ✓"
-      : hasAgents
-        ? "AGENTS.md 存在但无安全规则"
-        : "AGENTS.md 不存在",
-    fix: "部署 AGENTS.md 模板",
-  });
 
   return results;
 }
@@ -625,6 +705,7 @@ function checkMonitoring(ocDir: string, pf: Platform): CheckResult[] {
     status: hasAudit ? "pass" : "warn",
     message: hasAudit ? "审计脚本已部署 ✓" : "未找到审计脚本",
     fix: "运行部署脚本部署审计脚本",
+    category: "recommended",
   });
 
   const hasGit = existsSync(join(ocDir, ".git"));
@@ -636,6 +717,7 @@ function checkMonitoring(ocDir: string, pf: Platform): CheckResult[] {
     status: hasGit ? "pass" : "warn",
     message: hasGit ? "Git 灾备仓库存在 ✓" : "未初始化 Git 灾备",
     fix: `cd ${ocDir} && git init`,
+    category: "recommended",
   });
 
   if (pf.openclawVersion) {

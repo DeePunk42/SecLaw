@@ -76,6 +76,12 @@ src/
     command-patterns.ts     splitCommandChain() + extractPrimaryCommand() + decomposeCommand()
     path-patterns.ts        decomposePath() + isPathInWorkspace()
     url-patterns.ts         decomposeURL() + isPrivateIP()
+  hardening/
+    index.ts                Barrel export for hardening modules
+    types.ts                CheckResult, HardenResult, HardeningReport, Grade, Platform
+    checker.ts              8-domain 29-item security checker (read-only), A-F scoring
+    hardener.ts             14 hardening operations (backup, deploy, permissions, etc.)
+    platform.ts             OS/WSL2/Node/OpenClaw detection, safeExec()
   dashboard/
     server.ts               Gateway route handler + standalone server lifecycle
     api.ts                  REST API + SSE endpoint handlers
@@ -872,3 +878,60 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 - `getRecentEntries(limit?)` — returns buffered entries for initial page load
 - `getToolCallRecords(limit?)` — returns aggregated records
 - Buffer always active (even when `auditJsonl: false`)
+
+## Hardening Subsystem
+
+SecLaw includes an embedded security checker and hardening executor for auditing the OpenClaw installation itself (not tool calls — that's the rule engine's job).
+
+### Security Scoring
+
+`generateSummary()` in `checker.ts` produces an A-F grade from check results:
+
+- **Score**: `pass` = 100%, `warn` = 50%, `fail` = 0%, `skip`/`n/a` = excluded
+- **Critical fail penalty**: any `critical` severity `fail` caps the total score at 59
+- **Grade thresholds**: A (≥90), B (≥75), C (≥60), D (≥40), F (<40)
+- **Default**: 100 when no scored items (all checks are `skip` or `n/a`)
+
+### 8 Security Domains (29 checks)
+
+| Domain | Checks | Key items |
+|--------|--------|-----------|
+| 网络隔离 | 3-4 | Gateway bind (loopback/tailnet), trusted proxies, mDNS, WSL2 portproxy |
+| 认证 | 5 | Auth mode, token SecretRef, rate limit, insecure auth, device auth |
+| 执行安全 | 7 | Exec security mode, ask mode, dangerous bins, workspace limits, CSRF |
+| 文件系统 | 3-4 | Config/dir permissions, hash baseline (recommended), integrity |
+| 供应链 | 2 | Plugin whitelist (n/a if unconfigured), .npmrc ignore-scripts |
+| 代理行为 | 1-6 | Owner UID, channel allowFrom/dmPolicy (n/a if no channels) |
+| 代理行为 | 1-2 | Sandbox mode (n/a if unconfigured), AGENTS.md rules (recommended) |
+| 监控 | 2-3 | Audit script (recommended), Git backup (recommended), OC audit |
+
+Checks have an optional `category` field: `'core'` (default, affects score) or `'recommended'` (shown separately, does not affect score). Optional features (channels, agents, plugins) return `status: 'n/a'` when not configured to avoid false negatives.
+
+### 14 Hardening Actions
+
+Executed via `security_harden` tool with an `action` parameter:
+
+| Action | Risk | Description |
+|--------|------|-------------|
+| `backup` | ⚠️ | Backup config to `~/.openclaw/.backups/TIMESTAMP/` |
+| `deploy-config` | ⚠️ | Merge balanced/paranoid mode template into openclaw.json |
+| `schema-validate` | ✅ | Run `openclaw config validate` |
+| `deploy-channel` | ✅ | Channel UID guidance (skips if channels unconfigured) |
+| `deploy-agents` | ⚠️ | Deploy AGENTS.md security rules template |
+| `permissions` | ⚠️ | chmod 600/700 (Unix) or icacls (Windows) |
+| `baseline` | ✅ | Generate SHA-256 hash baseline of config files |
+| `immutable-protect` | 🔴 | chattr/chflags/NTFS deny-write on audit script |
+| `npmrc` | ⚠️ | Set .npmrc ignore-scripts=true |
+| `firewall` | 🔴 | Platform-specific firewall rules (ufw/iptables/netsh/pf) |
+| `disk-encryption` | ✅ | Detect BitLocker/FileVault/LUKS (read-only) |
+| `deploy-audit` | ⚠️ | Copy nightly audit script to workspace |
+| `git-backup` | ⚠️ | Init Git repo in .openclaw for disaster recovery |
+| `security-audit` | ✅ | Run `openclaw security audit --deep` |
+
+### Agent-Callable Tools
+
+Three tools are registered via `api.registerTool` / `api.tools.register` (gracefully skipped if the OpenClaw runtime does not support tool registration):
+
+- **`security_scan`** — Read-only scan with A-F grade, progress bar, core/recommended separation. Optional `domain` parameter for filtering.
+- **`security_harden`** — Execute one of 14 actions (or `all`). Accepts `mode` parameter (`balanced`/`paranoid`).
+- **`security_report`** — Full Markdown report with domain-level scoring table, failures/warnings summary.

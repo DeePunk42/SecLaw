@@ -427,6 +427,33 @@ export function runSecurityAudit(): HardenResult {
 
 /** Channel UID configuration hint (output only, no modifications) */
 export function deployChannelHint(): HardenResult {
+  // Pre-check: are channels configured?
+  const ocDir = getOpenClawDir();
+  const configPath = join(ocDir, "openclaw.json");
+  let hasChannels = false;
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, "utf-8"));
+      hasChannels =
+        config?.channels &&
+        typeof config.channels === "object" &&
+        Object.keys(config.channels).length > 0;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!hasChannels) {
+    return {
+      id: "deploy-channel",
+      name: "Channel UID 配置提示",
+      success: true,
+      changed: false,
+      message:
+        "Channel 功能未配置, 无需设置 UID (如需使用 Telegram/Discord Channel, 请先在 openclaw.json 中配置 channels 块)",
+    };
+  }
+
   const lines = [
     "以下配置需手动完成 (涉及个人 UID, 脚本无法自动填入):",
     "",

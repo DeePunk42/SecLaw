@@ -40,6 +40,15 @@ import {
 } from "./src/dashboard/server.js";
 import { seedSenderLabels } from "./src/dashboard/sender-labels.js";
 import { getOpenClawDir } from "./src/hardening/platform.js";
+import {
+  detectPlatform,
+  runAllChecks,
+  generateSummary,
+  type Grade,
+  type CheckResult,
+  type HardeningReport,
+} from "./src/hardening/index.js";
+import * as hardener from "./src/hardening/hardener.js";
 
 // ─── Types matching OpenClaw's real plugin system ───
 
@@ -1430,6 +1439,350 @@ function register(api: OpenClawPluginApi): void {
     const sk = ctx?.sessionKey;
     if (sk) resetSession(sk);
   });
+
+  // ─── Hardening tools registration ───
+  registerHardeningTools(api);
+}
+
+// ─── Hardening tool registration ───
+
+function registerHardeningTools(api: OpenClawPluginApi): void {
+  const registerTool =
+    (api as any).registerTool ?? (api as any).tools?.register;
+  if (typeof registerTool !== "function") return;
+
+  const pf = detectPlatform();
+
+  const gradeIcons: Record<string, string> = {
+    A: "🟢", B: "🟡", C: "🟠", D: "🔴", F: "⛔",
+  };
+  const gradeLabels: Record<string, string> = {
+    A: "安全", B: "需改进", C: "脆弱", D: "危险", F: "不可接受",
+  };
+
+  function formatCheckIcon(status: string): string {
+    return status === "pass" ? "✅"
+      : status === "fail" ? "❌"
+      : status === "warn" ? "⚠️"
+      : status === "n/a" ? "🔘" : "⏭️";
+  }
+
+  function formatProgressBar(score: number): string {
+    const barLen = 20;
+    const filled = Math.round((score / 100) * barLen);
+    return "█".repeat(filled) + "░".repeat(barLen - filled);
+  }
+
+  // Tool 1: security_scan — read-only scan
+  registerTool.call((api as any).tools ?? api, {
+    name: "security_scan",
+    description:
+      "运行 OpenClaw 安全检查 (只读, 不修改任何文件). 扫描 8 个安全域共 29 项检查, 返回每项的通过/警告/失败状态和修复建议.",
+    parameters: {
+      domain: {
+        type: "string",
+        description:
+          "可选: 仅扫描指定域 (网络隔离/认证/执行安全/文件系统/供应链/代理行为/监控). 留空扫描全部.",
+        required: false,
+      },
+    },
+    handler: async (params: Record<string, any>) => {
+      try {
+        const checks = runAllChecks(pf);
+        const filtered = params.domain
+          ? checks.filter((c: CheckResult) => c.domain.includes(params.domain))
+          : checks;
+        const summary = generateSummary(filtered);
+
+        const bar = formatProgressBar(summary.score);
+        const coreChecks = filtered.filter(
+          (c: CheckResult) => (c.category || "core") === "core",
+        );
+        const recChecks = filtered.filter(
+          (c: CheckResult) => c.category === "recommended",
+        );
+
+        const lines: string[] = [];
+        lines.push("# 🛡️ OpenClaw 安全扫描报告");
+        lines.push(
+          `> 平台: ${pf.os}${pf.isWSL2 ? " (WSL2)" : ""} | Node: ${pf.nodeVersion} | OpenClaw: ${pf.openclawVersion || "N/A"}`,
+        );
+        lines.push(
+          `> 🛡️ 安全评分: **${summary.score}/100** ${gradeIcons[summary.grade]} ${summary.grade} (${gradeLabels[summary.grade]})`,
+        );
+        lines.push(`> ${bar} ${summary.score}%`);
+        lines.push(
+          `> ✅ ${summary.pass} 通过 | ⚠️ ${summary.warn} 警告 | ❌ ${summary.fail} 失败 | 🔘 ${summary.na} N/A | ⏭️ ${summary.skip} 跳过`,
+        );
+        if (summary.hasCriticalFail) {
+          lines.push(">");
+          lines.push(
+            `> ⚠️ **${filtered.filter((c: CheckResult) => c.status === "fail" && c.severity === "critical").length} 项 CRITICAL 级别问题需立即修复**`,
+          );
+        }
+        lines.push("");
+
+        let currentDomain = "";
+        for (const check of coreChecks) {
+          if (check.domain !== currentDomain) {
+            currentDomain = check.domain;
+            lines.push(`## ${currentDomain}`);
+          }
+          lines.push(
+            `${formatCheckIcon(check.status)} **${check.name}**: ${check.message}`,
+          );
+          if (check.current) lines.push(`   当前: \`${check.current}\``);
+          if (check.expected) lines.push(`   期望: \`${check.expected}\``);
+          if (check.fix && check.status !== "pass" && check.status !== "n/a")
+            lines.push(`   修复: ${check.fix}`);
+        }
+
+        if (recChecks.length > 0) {
+          lines.push("");
+          lines.push("## 📋 推荐增强 (不影响安全评分)");
+          for (const check of recChecks) {
+            const icon =
+              check.status === "pass" ? "✅" : check.status === "n/a" ? "🔘" : "⚠️";
+            lines.push(`${icon} **${check.name}**: ${check.message}`);
+            if (check.fix && check.status !== "pass")
+              lines.push(`   建议: ${check.fix}`);
+          }
+        }
+
+        return { success: true, output: lines.join("\n"), data: { summary, checks: filtered } };
+      } catch (err: any) {
+        return { success: false, output: `扫描失败: ${err.message}` };
+      }
+    },
+  });
+
+  // Tool 2: security_harden — execute hardening action
+  registerTool.call((api as any).tools ?? api, {
+    name: "security_harden",
+    description:
+      "执行安全加固操作. 每次调用执行一个具体操作. ⚠️ 会修改文件和配置, 建议先运行 security_scan 了解当前状态.",
+    parameters: {
+      action: {
+        type: "string",
+        description: [
+          "要执行的加固操作 (必选). 可选值:",
+          "",
+          "  📋 配置安全:",
+          "  backup           — ⚠️  备份当前配置 (建议首先执行)",
+          "  deploy-config    — ⚠️  部署安全配置模板 (需指定 mode)",
+          "  schema-validate  — ✅ 运行 Schema 校验",
+          "",
+          "  💬 Channel/PI:",
+          "  deploy-channel   — ✅ Channel UID 配置提示 (仅输出)",
+          "",
+          "  🤖 Agent:",
+          "  deploy-agents    — ⚠️  部署 AGENTS.md 安全规则",
+          "",
+          "  🔒 文件系统:",
+          "  permissions      — ⚠️  文件权限加固 (chmod/icacls)",
+          "  baseline         — ✅ 生成配置哈希基线",
+          "  immutable-protect — 🔴 审计脚本不可变保护 (chattr/chflags)",
+          "",
+          "  📦 供应链:",
+          "  npmrc            — ⚠️  设置 .npmrc ignore-scripts",
+          "",
+          "  ⚙️  网络:",
+          "  firewall         — 🔴 防火墙规则配置",
+          "  disk-encryption  — ✅ 磁盘加密检测 (仅检测)",
+          "",
+          "  📊 监控:",
+          "  deploy-audit     — ⚠️  部署夜间审计脚本",
+          "  git-backup       — ⚠️  初始化 Git 灾备",
+          "",
+          "  🔑 验证:",
+          "  security-audit   — ✅ OpenClaw 安全审计",
+          "  deploy-verify-hint — ✅ Cron 部署后验证提示 (仅输出)",
+          "",
+          "  all              — 依次执行以上全部 14 项操作",
+        ].join("\n"),
+        required: true,
+      },
+      mode: {
+        type: "string",
+        description:
+          '加固模式: "balanced" (安全开发) 或 "paranoid" (审计/只读). 默认 balanced.',
+        required: false,
+      },
+    },
+    handler: async (params: Record<string, any>) => {
+      const action = params.action as string;
+      const mode = (params.mode || "balanced") as "paranoid" | "balanced";
+      const results: string[] = [];
+
+      const actions: Record<string, () => ReturnType<typeof hardener.backupConfig>> = {
+        "backup": () => hardener.backupConfig(),
+        "deploy-config": () => hardener.deployConfig(mode),
+        "schema-validate": () => hardener.runSchemaValidation(),
+        "deploy-channel": () => hardener.deployChannelHint(),
+        "deploy-agents": () => hardener.deployAgents(),
+        "permissions": () => hardener.hardenPermissions(pf),
+        "baseline": () => hardener.generateBaseline(),
+        "immutable-protect": () => hardener.immutableProtect(pf),
+        "npmrc": () => hardener.hardenNpmrc(),
+        "firewall": () => hardener.configureFirewall(pf),
+        "disk-encryption": () => hardener.checkDiskEncryption(pf),
+        "deploy-audit": () => hardener.deployAuditScript(),
+        "git-backup": () => hardener.initGitBackup(),
+        "security-audit": () => hardener.runSecurityAudit(),
+        "deploy-verify-hint": () => hardener.deployVerifyHint(),
+      };
+
+      const runAction = (name: string) => {
+        const fn = actions[name];
+        if (!fn) return `❌ 未知操作: ${name}`;
+        const result = fn();
+        const icon = result.success ? "✅" : "❌";
+        let line = `${icon} **${result.name}**: ${result.message}`;
+        if (result.rollback) line += `\n   回滚: \`${result.rollback}\``;
+        return line;
+      };
+
+      if (action === "all") {
+        results.push("# 🛡️ 执行全套加固");
+        results.push(`> 模式: ${mode}`);
+        results.push("");
+        for (const key of Object.keys(actions)) {
+          results.push(runAction(key));
+          results.push("");
+        }
+      } else {
+        results.push(runAction(action));
+      }
+
+      return { success: true, output: results.join("\n") };
+    },
+  });
+
+  // Tool 3: security_report — full Markdown report
+  registerTool.call((api as any).tools ?? api, {
+    name: "security_report",
+    description:
+      "生成完整的安全态势报告, 包含所有检查项的状态和评分. 可直接发送给用户或保存为文件.",
+    handler: async () => {
+      try {
+        const checks = runAllChecks(pf);
+        const summary = generateSummary(checks);
+
+        const report: HardeningReport = {
+          timestamp: new Date().toISOString(),
+          platform: pf,
+          mode: "balanced",
+          checks,
+          summary,
+        };
+
+        const bar = formatProgressBar(summary.score);
+        const coreChecks = checks.filter(
+          (c: CheckResult) => (c.category || "core") === "core",
+        );
+        const recChecks = checks.filter(
+          (c: CheckResult) => c.category === "recommended",
+        );
+
+        const lines: string[] = [];
+        lines.push("# 🛡️ OpenClaw 安全态势报告");
+        lines.push("");
+        lines.push("| 项目 | 值 |");
+        lines.push("|------|-----|");
+        lines.push(`| 生成时间 | ${report.timestamp} |`);
+        lines.push(
+          `| 平台 | ${pf.os}${pf.isWSL2 ? " (WSL2)" : ""} |`,
+        );
+        lines.push(`| Node.js | ${pf.nodeVersion} |`);
+        lines.push(`| OpenClaw | ${pf.openclawVersion || "N/A"} |`);
+        lines.push(
+          `| **安全评分** | **${summary.score}/100** ${gradeIcons[summary.grade]} ${summary.grade} (${gradeLabels[summary.grade]}) |`,
+        );
+        lines.push(`| 进度 | ${bar} ${summary.score}% |`);
+        if (summary.hasCriticalFail) {
+          lines.push(
+            '| **⚠️ Critical** | **存在 CRITICAL 级别问题, 评分已封顶 59** |',
+          );
+        }
+        lines.push("");
+        lines.push("## 检查概览");
+        lines.push("");
+
+        // Domain-level scoring table
+        const domains = new Map<string, CheckResult[]>();
+        for (const check of coreChecks) {
+          if (!domains.has(check.domain)) domains.set(check.domain, []);
+          domains.get(check.domain)!.push(check);
+        }
+
+        lines.push("| 安全域 | 通过 | 警告 | 失败 | N/A | 评分 |");
+        lines.push("|--------|------|------|------|-----|------|");
+        for (const [domain, domainChecks] of domains) {
+          const ds = generateSummary(domainChecks);
+          lines.push(
+            `| ${domain} | ${ds.pass} | ${ds.warn} | ${ds.fail} | ${ds.na} | ${ds.score}% |`,
+          );
+        }
+
+        lines.push("");
+        lines.push("## 详细检查结果");
+        lines.push("");
+
+        for (const [domain, domainChecks] of domains) {
+          lines.push(`### ${domain}`);
+          lines.push("");
+          for (const c of domainChecks) {
+            lines.push(
+              `- ${formatCheckIcon(c.status)} **${c.name}**: ${c.message}`,
+            );
+            if (c.fix && c.status !== "pass" && c.status !== "n/a")
+              lines.push(`  - 修复: ${c.fix}`);
+          }
+          lines.push("");
+        }
+
+        if (recChecks.length > 0) {
+          lines.push("## 📋 推荐增强 (不影响安全评分)");
+          lines.push("");
+          for (const c of recChecks) {
+            const icon =
+              c.status === "pass" ? "✅" : c.status === "n/a" ? "🔘" : "⚠️";
+            lines.push(`- ${icon} **${c.name}** (${c.domain}): ${c.message}`);
+            if (c.fix && c.status !== "pass")
+              lines.push(`  - 建议: ${c.fix}`);
+          }
+          lines.push("");
+        }
+
+        // Failures & warnings summary
+        const failures = coreChecks.filter((c: CheckResult) => c.status === "fail");
+        const warnings = coreChecks.filter((c: CheckResult) => c.status === "warn");
+        if (failures.length > 0) {
+          lines.push("## ❌ 必须修复");
+          lines.push("");
+          for (const f of failures) {
+            lines.push(`1. **${f.name}** (${f.domain}): ${f.fix || f.message}`);
+          }
+          lines.push("");
+        }
+        if (warnings.length > 0) {
+          lines.push("## ⚠️ 建议修复");
+          lines.push("");
+          for (const w of warnings) {
+            lines.push(`1. **${w.name}** (${w.domain}): ${w.fix || w.message}`);
+          }
+        }
+
+        return { success: true, output: lines.join("\n"), data: report };
+      } catch (err: any) {
+        return { success: false, output: `报告生成失败: ${err.message}` };
+      }
+    },
+  });
+
+  api.logger.info(
+    `[seclaw] Registered hardening tools: security_scan, security_harden, security_report`,
+  );
 }
 
 type ProviderApiSurface =

@@ -1,6 +1,7 @@
 // Barrel export for hardening modules
 export type {
   Severity,
+  Grade,
   CheckResult,
   HardenResult,
   HardeningReport,
