@@ -87,17 +87,6 @@ body::before {
   box-shadow: 0 0 8px rgba(54,214,255,.4);
 }
 .sb-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.sb-foot {
-  padding: 12px 0; border-top: 1px solid var(--border);
-  display: flex; justify-content: center; gap: 4px;
-}
-.sb-foot button {
-  width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 4px;
-  background: var(--bg-input); color: var(--text-dim); cursor: pointer; font-size: 13px;
-  font-family: var(--font-mono); display: flex; align-items: center; justify-content: center;
-}
-.sb-foot button:hover { color: var(--text); border-color: var(--blue); }
-
 /* ─── Main Area ─── */
 .main { margin-left: var(--sw); flex: 1; min-height: 100vh; }
 .tab-content { display: none; padding: 20px 24px; }
@@ -747,10 +736,6 @@ body::before {
       <span>Rules</span>
     </button>
   </div>
-  <div class="sb-foot">
-    <button id="btn-font-minus" title="Smaller text">−</button>
-    <button id="btn-font-plus" title="Larger text">+</button>
-  </div>
 </div>
 <div class="main">
 
@@ -1053,17 +1038,6 @@ body::before {
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     });
   });
-
-  // ─── Font scaling ───
-  var fontScale = parseFloat(localStorage.getItem('seclaw-font-scale') || '1');
-  function applyFontScale(s) {
-    fontScale = Math.max(0.8, Math.min(1.6, s));
-    document.documentElement.style.setProperty('--user-scale', fontScale);
-    localStorage.setItem('seclaw-font-scale', fontScale);
-  }
-  applyFontScale(fontScale);
-  document.getElementById('btn-font-minus').addEventListener('click', function() { applyFontScale(fontScale - 0.1); });
-  document.getElementById('btn-font-plus').addEventListener('click', function() { applyFontScale(fontScale + 0.1); });
 
   // ─── Toast ───
   function showToast(msg, type) {
@@ -1987,8 +1961,18 @@ body::before {
   setHealthInitialState();
   document.getElementById('btn-health-scan').addEventListener('click', loadHealthScan);
   document.getElementById('btn-health-report').addEventListener('click', function() {
-    if (lastScanData) autoGenerateReport(lastScanData);
-    else showToast('\\u8BF7\\u5148\\u8FD0\\u884C\\u626B\\u63CF', 'error');
+    var btn = document.getElementById('btn-health-report');
+    btn.disabled = true;
+    btn.textContent = '\\u751F\\u6210\\u4E2D...';
+    fetch('/api/health/report')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error) throw new Error(data.error);
+        autoGenerateReport(data);
+        showToast('\\u62A5\\u544A\\u5DF2\\u751F\\u6210', 'success');
+      })
+      .catch(function(err) { showToast(err.message || '\\u62A5\\u544A\\u751F\\u6210\\u5931\\u8D25', 'error'); })
+      .finally(function() { btn.disabled = false; btn.textContent = 'Report'; });
   });
   document.getElementById('btn-run-selected').addEventListener('click', runSelectedActions);
   document.getElementById('btn-select-all').addEventListener('click', function() {
@@ -2001,14 +1985,34 @@ body::before {
   });
   document.getElementById('btn-export-report').addEventListener('click', exportReport);
 
-  // Mode toggle
+  // Mode toggle — pre-select actions based on mode
+  function applyModeDefaults(mode) {
+    selectedActions.clear();
+    document.querySelectorAll('.action-card').forEach(function(c) { c.classList.remove('selected'); });
+    HARDEN_ACTIONS.forEach(function(a) {
+      var chk = document.querySelector('.action-checkbox[value="' + a.id + '"]');
+      if (!chk) return;
+      var shouldCheck = mode === 'paranoid' ? true : (a.risk !== 'high');
+      chk.checked = shouldCheck;
+      if (shouldCheck) {
+        selectedActions.add(a.id);
+        chk.closest('.action-card').classList.add('selected');
+      }
+    });
+    updateRunBtn();
+  }
+
   document.querySelectorAll('#mode-toggle .pill-btn').forEach(function(btn) {
     btn.addEventListener('click', function() {
       document.querySelectorAll('#mode-toggle .pill-btn').forEach(function(b) { b.classList.remove('active'); });
       btn.classList.add('active');
       hardenMode = btn.dataset.mode;
+      applyModeDefaults(hardenMode);
     });
   });
+
+  // Apply balanced defaults on init
+  applyModeDefaults('balanced');
 
   // Load scan on first tab switch
   document.querySelector('[data-tab="health"]').addEventListener('click', function() {
