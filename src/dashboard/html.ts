@@ -1685,8 +1685,8 @@ body::before {
     return 'gray';
   }
 
-  var gradeColors = { A: 'var(--blue)', B: 'var(--green)', C: 'var(--yellow)', D: 'var(--red)', F: 'var(--red)' };
-  var gradeLabels = { A: '\\u5B89\\u5168', B: '\\u9700\\u6539\\u8FDB', C: '\\u8106\\u5F31', D: '\\u5371\\u9669', F: '\\u4E0D\\u53EF\\u63A5\\u53D7' };
+  var gradeColors = { S: 'var(--blue)', A: 'var(--green)', B: 'var(--yellow)', C: 'var(--red)', D: 'var(--red)' };
+  var gradeLabels = { S: '\\u5353\\u8D8A', A: '\\u5B89\\u5168', B: '\\u9700\\u6539\\u8FDB', C: '\\u8106\\u5F31', D: '\\u5371\\u9669' };
 
   function calcDomainScore(items) {
     var scored = items.filter(function(c) { return c.status !== 'n/a' && c.status !== 'skip'; });

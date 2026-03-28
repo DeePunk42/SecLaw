@@ -678,13 +678,13 @@ async function handleRefreshSenderLabels(
 
 // ─── GET /api/health/scan ───
 
-function handleHealthScan(
+async function handleHealthScan(
   res: http.ServerResponse,
   _deps: DashboardDeps,
-): void {
+): Promise<void> {
   try {
     const platform = detectPlatform();
-    const checks = runAllChecks(platform);
+    const checks = await runAllChecks(platform);
     const summary = generateSummary(checks);
     json(res, 200, { summary, checks, platform });
   } catch (err: any) {
@@ -753,13 +753,13 @@ async function handleHealthHarden(
 
 // ─── GET /api/health/report ───
 
-function handleHealthReport(
+async function handleHealthReport(
   res: http.ServerResponse,
   _deps: DashboardDeps,
-): void {
+): Promise<void> {
   try {
     const platform = detectPlatform();
-    const checks = runAllChecks(platform);
+    const checks = await runAllChecks(platform);
     const summary = generateSummary(checks);
     const report: HardeningReport = {
       timestamp: new Date().toISOString(),
