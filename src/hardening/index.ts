@@ -26,4 +26,6 @@ export {
   checkDiskEncryption,
   deployAuditScript,
   deployVerifyHint,
+  listBackups,
+  restoreBackup,
 } from "./hardener.js";
