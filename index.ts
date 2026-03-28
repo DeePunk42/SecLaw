@@ -1499,11 +1499,13 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
     description:
       "运行 OpenClaw 安全检查 (只读, 不修改任何文件). 扫描 8 个安全域共 29 项检查, 返回每项的通过/警告/失败状态和修复建议.",
     parameters: {
-      domain: {
-        type: "string",
-        description:
-          "可选: 仅扫描指定域 (网络隔离/认证/执行安全/文件系统/供应链/代理行为/监控). 留空扫描全部.",
-        required: false,
+      type: "object",
+      properties: {
+        domain: {
+          type: "string",
+          description:
+            "可选: 仅扫描指定域 (网络隔离/认证/执行安全/文件系统/供应链/代理行为/监控). 留空扫描全部.",
+        },
       },
     },
     handler: async (params: Record<string, any>) => {
@@ -1582,52 +1584,54 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
     description:
       "执行安全加固操作. 每次调用执行一个具体操作. ⚠️ 会修改文件和配置, 建议先运行 security_scan 了解当前状态.",
     parameters: {
-      action: {
-        type: "string",
-        description: [
-          "要执行的加固操作 (必选). 可选值:",
-          "",
-          "  📋 配置安全:",
-          "  backup           — ⚠️  备份当前配置 (建议首先执行)",
-          "  deploy-config    — ⚠️  部署安全配置模板 (需指定 mode)",
-          "  schema-validate  — ✅ 运行 Schema 校验",
-          "",
-          "  💬 Channel/PI:",
-          "  deploy-channel   — ✅ Channel UID 配置提示 (仅输出)",
-          "",
-          "  🤖 Agent:",
-          "  deploy-agents    — ⚠️  部署 AGENTS.md 安全规则",
-          "",
-          "  🔒 文件系统:",
-          "  permissions      — ⚠️  文件权限加固 (chmod/icacls)",
-          "  baseline         — ✅ 生成配置哈希基线",
-          "  immutable-protect — 🔴 审计脚本不可变保护 (chattr/chflags)",
-          "",
-          "  📦 供应链:",
-          "  npmrc            — ⚠️  设置 .npmrc ignore-scripts",
-          "",
-          "  ⚙️  网络:",
-          "  firewall         — 🔴 防火墙规则配置",
-          "  disk-encryption  — ✅ 磁盘加密检测 (仅检测)",
-          "",
-          "  📊 监控:",
-          "  deploy-audit     — ⚠️  部署夜间审计脚本",
-          "  git-backup       — ⚠️  初始化 Git 灾备",
-          "",
-          "  🔑 验证:",
-          "  security-audit   — ✅ OpenClaw 安全审计",
-          "  deploy-verify-hint — ✅ Cron 部署后验证提示 (仅输出)",
-          "",
-          "  all              — 依次执行以上全部 14 项操作",
-        ].join("\n"),
-        required: true,
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          description: [
+            "要执行的加固操作 (必选). 可选值:",
+            "",
+            "  📋 配置安全:",
+            "  backup           — ⚠️  备份当前配置 (建议首先执行)",
+            "  deploy-config    — ⚠️  部署安全配置模板 (需指定 mode)",
+            "  schema-validate  — ✅ 运行 Schema 校验",
+            "",
+            "  💬 Channel/PI:",
+            "  deploy-channel   — ✅ Channel UID 配置提示 (仅输出)",
+            "",
+            "  🤖 Agent:",
+            "  deploy-agents    — ⚠️  部署 AGENTS.md 安全规则",
+            "",
+            "  🔒 文件系统:",
+            "  permissions      — ⚠️  文件权限加固 (chmod/icacls)",
+            "  baseline         — ✅ 生成配置哈希基线",
+            "  immutable-protect — 🔴 审计脚本不可变保护 (chattr/chflags)",
+            "",
+            "  📦 供应链:",
+            "  npmrc            — ⚠️  设置 .npmrc ignore-scripts",
+            "",
+            "  ⚙️  网络:",
+            "  firewall         — 🔴 防火墙规则配置",
+            "  disk-encryption  — ✅ 磁盘加密检测 (仅检测)",
+            "",
+            "  📊 监控:",
+            "  deploy-audit     — ⚠️  部署夜间审计脚本",
+            "  git-backup       — ⚠️  初始化 Git 灾备",
+            "",
+            "  🔑 验证:",
+            "  security-audit   — ✅ OpenClaw 安全审计",
+            "  deploy-verify-hint — ✅ Cron 部署后验证提示 (仅输出)",
+            "",
+            "  all              — 依次执行以上全部 14 项操作",
+          ].join("\n"),
+        },
+        mode: {
+          type: "string",
+          description:
+            '加固模式: "balanced" (安全开发) 或 "paranoid" (审计/只读). 默认 balanced.',
+        },
       },
-      mode: {
-        type: "string",
-        description:
-          '加固模式: "balanced" (安全开发) 或 "paranoid" (审计/只读). 默认 balanced.',
-        required: false,
-      },
+      required: ["action"],
     },
     handler: async (params: Record<string, any>) => {
       const action = params.action as string;
@@ -1683,6 +1687,7 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
     name: "security_report",
     description:
       "生成完整的安全态势报告, 包含所有检查项的状态和评分. 可直接发送给用户或保存为文件.",
+    parameters: { type: "object", properties: {} },
     handler: async () => {
       try {
         const checks = runAllChecks(pf);
