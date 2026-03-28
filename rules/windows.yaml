@@ -205,8 +205,25 @@ rules:
         command|startswith: "git"
       condition: selection
 
+  - id: RED-WIN-PKG-INSTALL
+    name: Package install (Windows, supply chain risk)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 7300
+    reason: "Package install downloads and may execute external code"
+    tags: [supply_chain, package_manager]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds_win
+      install_action:
+        command|re: "(?i)\\s+(install|add|ci|restore)\\b"
+      go_get:
+        command|re: "(?i)^go\\s+get\\b"
+      condition: (pkg and install_action) or go_get
+
   - id: SAFE-WIN-PKG
-    name: Package manager (Windows)
+    name: Package manager (Windows, local operations)
     tool: [exec]
     platform: [windows]
     tier: GREEN
@@ -216,7 +233,7 @@ rules:
       pkg:
         cmd.primary: $list:safe_cmds_win
       action:
-        command|re: "(?i)\\s+(install|add|remove|build|test|run|start|dev|lint|restore)\\b"
+        command|re: "(?i)\\s+(remove|build|test|run|start|dev|lint)\\b"
       condition: pkg and action
 
   # ═══════════════════════════════════════════════════════

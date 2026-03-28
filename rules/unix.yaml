@@ -296,8 +296,25 @@ rules:
         command|startswith: "git"
       condition: selection
 
+  - id: RED-PKG-INSTALL
+    name: Package install (supply chain risk)
+    tool: [exec, bash]
+    platform: [linux, macos]
+    tier: RED
+    priority: 7300
+    reason: "Package install downloads and may execute external code (postinstall scripts, setup.py, build.rs)"
+    tags: [supply_chain, package_manager]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds
+      install_action:
+        command|re: "\\s+(install|add|ci)\\b"
+      go_get:
+        command|re: "^go\\s+get\\b"
+      condition: (pkg and install_action) or go_get
+
   - id: SAFE-PKG
-    name: Package manager
+    name: Package manager (local operations)
     tool: [exec, bash]
     platform: [linux, macos]
     tier: GREEN
@@ -307,7 +324,7 @@ rules:
       pkg:
         cmd.primary: $list:safe_cmds
       action:
-        command|re: "\\s+(install|add|remove|uninstall|build|test|run|start|init|create|dev|serve|watch|lint|format|check|publish|pack|link|ci)\\b"
+        command|re: "\\s+(remove|uninstall|build|test|run|start|init|create|dev|serve|watch|lint|format|check|publish|pack|link)\\b"
       condition: pkg and action
 
   - id: SAFE-DOCKER

@@ -138,15 +138,28 @@ const testRules: SigmaRule[] = [
     },
   },
   {
+    id: "RED-SC-PKG",
+    name: "Package install (supply chain risk)",
+    tool: ["exec", "bash"],
+    tier: "RED",
+    priority: 7300,
+    reason: "Package install downloads and may execute external code",
+    detection: {
+      pkg: { "cmd.primary": ["npm", "yarn", "pnpm", "bun"] },
+      install_action: { "command|re": "\\s+(install|add|ci)\\b" },
+      condition: "pkg and install_action",
+    },
+  },
+  {
     id: "SAFE-003",
-    name: "Package manager",
+    name: "Package manager (local operations)",
     tool: ["exec", "bash"],
     tier: "GREEN",
     priority: 7200,
     reason: "Standard package manager operation",
     detection: {
       pkg: { "cmd.primary": ["npm", "yarn", "pnpm", "bun"] },
-      action: { "command|re": "\\s+(install|add|remove|build|test|run|start)\\b" },
+      action: { "command|re": "\\s+(remove|build|test|run|start)\\b" },
       condition: "pkg and action",
     },
   },
@@ -371,10 +384,10 @@ describe("RuleEngine", () => {
       expect(result.ruleId).toBe("SAFE-002");
     });
 
-    it("GREEN for npm install", () => {
+    it("RED for npm install (supply chain)", () => {
       const result = engine.classify("exec", { command: "npm install express" }, defaultIntent);
-      expect(result.tier).toBe("GREEN");
-      expect(result.ruleId).toBe("SAFE-003");
+      expect(result.tier).toBe("RED");
+      expect(result.ruleId).toBe("RED-SC-PKG");
     });
 
     it("GREEN for npm test", () => {
@@ -556,10 +569,10 @@ describe("RuleEngine", () => {
       expect(result.ruleId).toBe("SAFE-002");
     });
 
-    it("npm install is GREEN despite being a command", () => {
+    it("npm install is RED (supply chain risk)", () => {
       const result = engine.classify("exec", { command: "npm install express" }, defaultIntent);
-      expect(result.tier).toBe("GREEN");
-      expect(result.ruleId).toBe("SAFE-003");
+      expect(result.tier).toBe("RED");
+      expect(result.ruleId).toBe("RED-SC-PKG");
     });
 
     it("sorts rules by priority descending", () => {
@@ -647,8 +660,50 @@ describe("RuleEngine", () => {
       expect(r.ruleId).toBe("SAFE-GIT");
     });
 
-    it("npm install → GREEN (SAFE-PKG)", () => {
+    it("npm install → RED (RED-PKG-INSTALL)", () => {
       const r = realEngine.classify("exec", { command: "npm install express" }, defaultIntent);
+      expect(r.tier).toBe("RED");
+      expect(r.ruleId).toBe("RED-PKG-INSTALL");
+    });
+
+    it("npm ci → RED (RED-PKG-INSTALL)", () => {
+      const r = realEngine.classify("exec", { command: "npm ci" }, defaultIntent);
+      expect(r.tier).toBe("RED");
+      expect(r.ruleId).toBe("RED-PKG-INSTALL");
+    });
+
+    it("yarn add → RED (RED-PKG-INSTALL)", () => {
+      const r = realEngine.classify("exec", { command: "yarn add react" }, defaultIntent);
+      expect(r.tier).toBe("RED");
+      expect(r.ruleId).toBe("RED-PKG-INSTALL");
+    });
+
+    it("pip install → RED (RED-PKG-INSTALL)", () => {
+      const r = realEngine.classify("exec", { command: "pip install requests" }, defaultIntent);
+      expect(r.tier).toBe("RED");
+      expect(r.ruleId).toBe("RED-PKG-INSTALL");
+    });
+
+    it("go get → RED (RED-PKG-INSTALL)", () => {
+      const r = realEngine.classify("exec", { command: "go get golang.org/x/tools" }, defaultIntent);
+      expect(r.tier).toBe("RED");
+      expect(r.ruleId).toBe("RED-PKG-INSTALL");
+    });
+
+    it("npm run build → GREEN (SAFE-PKG)", () => {
+      const r = realEngine.classify("exec", { command: "npm run build" }, defaultIntent);
+      expect(r.tier).toBe("GREEN");
+      expect(r.ruleId).toBe("SAFE-PKG");
+    });
+
+    it("npm test → GREEN (SAFE-PKG)", () => {
+      const r = realEngine.classify("exec", { command: "npm test" }, defaultIntent);
+      expect(r.tier).toBe("GREEN");
+      expect(r.ruleId).toBe("SAFE-PKG");
+    });
+
+    it("cargo build → GREEN (SAFE-PKG)", () => {
+      const r = realEngine.classify("exec", { command: "cargo build" }, defaultIntent);
       expect(r.tier).toBe("GREEN");
       expect(r.ruleId).toBe("SAFE-PKG");
     });

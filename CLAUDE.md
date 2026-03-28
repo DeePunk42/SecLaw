@@ -23,7 +23,7 @@ npx tsx scripts/test-dangerous.ts   # 40+ comprehensive scenarios
 
 ## Architecture
 
-The detailed architecture and design of SecLaw is documented in `ARCHITECTURE.md`. Below is a high-level overview.
+The detailed architecture and design of SecLaw is documented in `docs/ARCHITECTURE.md`. Below is a high-level overview.
 
 SecLaw is an OpenClaw plugin that audits every AI agent tool call in real time. It classifies calls into three tiers:
 
@@ -51,7 +51,11 @@ When a call is blocked, a 6-digit decimal PIN is generated and included in the `
 |------|------|
 | `index.ts` | Plugin entry point. Exports `register(api)` for OpenClaw + `init()`/`beforeToolCall()`/`afterToolCall()` for standalone use. |
 | `src/config.ts` | All type definitions (`SecLawConfig`, `Rule`, `IntentContext`, `PendingOverride`, etc.) and defaults. |
-| `src/rule-engine.ts` | Loads YAML rules, matches tool calls using 12 condition types, returns tier + rule ID. |
+| `src/rule-engine.ts` | Sigma-style rule engine: classify() entry point, delegates to detection-compiler + rule-index. |
+| `src/detection-compiler.ts` | Compiles detection blocks: selections, field modifiers, condition expressions (AND/OR/NOT). |
+| `src/rule-resolver.ts` | YAML parsing, list/macro expansion → SigmaRule[]. |
+| `src/rule-index.ts` | Tool + platform indexing for fast rule candidate selection. |
+| `src/field-registry.ts` | Resolves dotted field paths (cmd.*, url.*, file.*). |
 | `src/llm-auditor.ts` | Builds audit prompts with intent context, calls LLM, parses SAFE/DANGER response. Fingerprint-based caching. |
 | `src/async-audit-queue.ts` | Background queue with deduplication. Re-classifies via rule engine, then LLM audits YELLOW/RED items. |
 | `src/session-state.ts` | Singleton `sessionState`. Per-session danger flags, intent context, audit cache, override state. |
@@ -62,11 +66,12 @@ When a call is blocked, a 6-digit decimal PIN is generated and included in the `
 | `src/dashboard/server.ts` | HTTP server lifecycle for the web dashboard (port 19198). |
 | `src/dashboard/api.ts` | REST API + SSE endpoints (`/api/logs`, `/api/config`, `/api/health`, `/api/rules`). |
 | `src/dashboard/html.ts` | Embedded SPA frontend (dark theme, 4 tabs: Audit Log, Config, Health, Rules). |
+| `src/dashboard/sender-labels.ts` | Sender label registry (scan JSONL logs, persist to JSON). |
 | `src/hardening/` | Security checker (8 domains, 29 checks, A-F scoring) + 14 hardening actions + 3 agent-callable tools (`security_scan`, `security_harden`, `security_report`). |
 
 ### Rules
 
-Default rules live in `rules/default.yaml` (28+ rules, priority-ordered). Workspace-specific rules go in `.openclaw/seclaw-rules.yaml`. Extra rules can also be passed via `config.rules.extra`.
+Default rules live in 3 files: `rules/default.yaml` (cross-platform), `rules/unix.yaml` (Linux/macOS), `rules/windows.yaml` (Windows). Platform-specific files are loaded automatically based on `os.platform()`. Workspace-specific rules go in `.openclaw/seclaw-rules.yaml`. Extra rules can also be passed via `config.rules.extra`.
 
 Rule IDs follow prefixes: `CAT-` (catastrophic, priority 9000-10000), `TOOL-Y-` (always-RED tools), `SAFE-` (known-safe patterns), `PARAM-Y-` / `PARAM-G-` (parameter-level classification), `TOOL-G-` (always-GREEN tools).
 
@@ -78,12 +83,12 @@ The `OpenClawPluginApi` provides: `on()` for hook registration, `logger` (with `
 
 ### Dashboard
 
-SecLaw starts a local web dashboard on `http://127.0.0.1:19198` by default (configurable via `dashboard` config). The dashboard provides real-time audit log viewing with SSE push, runtime config editing, and placeholder tabs for health check and rule editing. Controlled by `dashboard.enabled` (default `true`). Uses `node:http` with zero external dependencies. `server.unref()` ensures it doesn't block process exit.
+SecLaw starts a local web dashboard on `http://127.0.0.1:19198` by default (configurable via `dashboard` config). The dashboard provides real-time audit log viewing with SSE push, runtime config editing, security scanning/hardening (Health tab), and rule file management with inline editing (Rules tab, dual-mode: Rule Files + Effective Rules). Supports optional `dashboard.token` (Bearer auth) and `dashboard.password` (cookie-based browser login); default is open access. Controlled by `dashboard.enabled` (default `true`). Uses `node:http` with zero external dependencies. `server.unref()` ensures it doesn't block process exit.
 
 ## Workflow rules
 
 - **Git backup**: After each code update, create a git commit to checkpoint progress.
-- **Sync ARCHITECTURE.md**: When architecture-relevant changes are made (new modules, flow changes, hook changes, config changes, override mechanism updates, etc.), update `ARCHITECTURE.md` to reflect the current state.
+- **Sync ARCHITECTURE.md**: When architecture-relevant changes are made (new modules, flow changes, hook changes, config changes, override mechanism updates, etc.), update `docs/ARCHITECTURE.md` to reflect the current state.
 
 ## Key patterns
 

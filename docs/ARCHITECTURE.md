@@ -599,6 +599,11 @@ The bootstrap calls (`seedSenderLabels`, `persistConfigToOpenClaw`) are in `regi
   },
   "rules": {
     "extra": []
+  },
+  "dashboard": {
+    "enabled": true,
+    "token": "optional-bearer-token",
+    "password": "optional-browser-password"
   }
 }
 ```
@@ -637,24 +642,26 @@ Add rules to `.openclaw/seclaw-rules.yaml` in your workspace:
 # Block terraform destroy
 - id: CUSTOM-001
   name: Block terraform destroy
-  toolMatch: [exec, bash]
-  conditions:
-    - type: command_matches
-      pattern: "terraform\\s+destroy"
+  tool: [exec, bash]
   tier: RED
-  reason: "Terraform destroy requires manual review"
   priority: 9000
+  reason: "Terraform destroy requires manual review"
+  detection:
+    selection:
+      command|re: "terraform\\s+destroy"
+    condition: selection
 
 # Allow specific internal API
 - id: CUSTOM-002
   name: Allow internal API
-  toolMatch: [web_fetch]
-  conditions:
-    - type: command_matches
-      pattern: "http://internal-api\\.company\\.com"
+  tool: [web_fetch]
   tier: GREEN
-  reason: "Trusted internal API"
   priority: 7000
+  reason: "Trusted internal API"
+  detection:
+    selection:
+      url|contains: "internal-api.company.com"
+    condition: selection
 ```
 
 Or via plugin config `rules.extra` array.
@@ -735,17 +742,27 @@ When `api.registerHttpRoute` is not available (standalone/testing), the built-in
 
 | Method | Path | Description |
 |--------|------|-------------|
+| POST | `/api/auth` | Password login (validates password, sets HttpOnly cookie) |
 | GET | `/api/logs` | Recent audit log entries (query: `limit`, `tier`, `eventType`, `toolName`) |
 | GET | `/api/logs/stream` | SSE real-time log stream (same filter params) |
 | GET | `/api/tool-calls` | Aggregated ToolCallRecords (query: `limit`, `tier`, `toolName`) |
 | GET | `/api/tool-calls/stream` | SSE real-time ToolCallRecord updates |
-| GET | `/api/config` | Current config (apiKey masked as `"***"`) |
+| GET | `/api/config` | Current config (apiKey and password masked as `"***"`) |
 | PUT | `/api/config` | Update runtime config (endpoint blocked; apiKey accepted) |
 | GET | `/api/health` | Health check (`{ status: "running" }`) |
+| GET | `/api/health/scan` | Security scan (8 domains, 29 checks, A-F grade) |
+| POST | `/api/health/harden` | Execute hardening action (query: `action`, `mode`) |
+| GET | `/api/health/report` | Full Markdown security report |
 | GET | `/api/rules` | `{ rules, platform }` — compiled rules with `sourceFile` annotation |
 | GET | `/api/rules/files/meta` | `{ files: [{name, active}], platform }` — file metadata with platform activity |
+| GET | `/api/rules/files` | List available rule YAML files |
+| GET | `/api/rules/file` | Get rules from a single file (query: `name`) |
+| PUT | `/api/rules/file` | Save rules to a file (query: `name`) |
+| POST | `/api/rules/file/parse` | Parse YAML content into rules |
+| GET | `/api/rules/file/download` | Download rule file as YAML |
 | POST | `/api/rules/test` | Test tool call against rules: `{ toolName, params }` → `RuleResult` |
 | GET | `/api/models` | Available models from gateway providers |
+| POST | `/api/models/test` | Test model availability (latency probe) |
 | GET | `/api/sender-labels` | Known sender labels (from persisted registry) |
 | POST | `/api/sender-labels/refresh` | Scan JSONL audit logs for new sender labels |
 
@@ -832,24 +849,37 @@ The Config tab provides a form-based editor for runtime config. Notable controls
 - **Model selector**: dropdown populated from `/api/models` (gateway providers)
 - **trustedSenderLabels**: custom multi-select checkbox dropdown with "Select all" / "Clear" actions and a refresh button that scans audit logs for new sender labels via `/api/sender-labels/refresh`
 - **Dashboard settings** (enabled): read-only, requires restart
+- **Token / Password**: `dashboard.token` for API Bearer auth; `dashboard.password` for browser cookie-based login (masked as `"***"` in GET response; empty string clears, `"***"` keeps existing)
 
 ### Dashboard Authentication
 
-**Gateway mode** (production): The route is registered with `auth: "plugin"`. By default no plugin-level token is required — the gateway's network-level access controls are the security boundary (same pattern as the Control UI, which serves HTML without auth). If explicit plugin-level auth is needed, set `dashboard.token` in the SecLaw plugin config; the frontend will auto-discover the OpenClaw gateway token from `sessionStorage` or show a login overlay.
+Dashboard supports two opt-in auth mechanisms. **By default, no authentication is required** — the gateway's network-level access controls are the security boundary.
 
-**Standalone mode** (testing via `init()`): `DashboardDeps.getToken` is not set, so no authentication is required. This is appropriate since standalone mode is for local development/testing only.
+**Auth mechanisms** (configured in `dashboard` config):
+- **`dashboard.token`** — Bearer token auth. Checked via `Authorization: Bearer <token>` header or `?token=` query param (for SSE EventSource which cannot set custom headers).
+- **`dashboard.password`** — Cookie-based browser login. Users enter the password in a login overlay; `POST /api/auth` validates it and sets an HttpOnly cookie (`seclaw_pw`, SameSite=Strict, 30-day max-age). The browser auto-sends the cookie on subsequent requests.
 
-**Server-side** (`server.ts`):
-- `DashboardDeps.getToken` is an optional field — when absent or returning `undefined`, plugin-level auth is skipped
-- When set, Bearer header (`Authorization: Bearer <token>`) is checked first; query param (`?token=xxx`) is a fallback for SSE `EventSource` (which does not support custom headers)
-- Token comparison uses SHA-256 + `crypto.timingSafeEqual` to prevent timing attacks
-- Failed auth returns `401 { error: { message: "Unauthorized", type: "unauthorized" } }`
+**`isAuthorized()` check** (`server.ts`):
+1. No token and no password configured → open access (return `true`)
+2. Bearer/query token provided → check against configured token(s) via SHA-256 + `crypto.timingSafeEqual`
+3. Password cookie present → check against configured password via same SHA-256 comparison
+4. None matched → `401 Unauthorized`
+
+**POST `/api/auth`** (password login, handled in `server.ts` before API routing):
+- Accepts `{ password }` JSON body
+- On success: sets `Set-Cookie: seclaw_pw=<encoded>; HttpOnly; SameSite=Strict; Path=<basePath>; Max-Age=2592000` and returns `{ ok: true }`
+- On failure: returns `401 { error: { message: "Invalid password", type: "unauthorized" } }`
 
 **Client-side** (`html.ts`):
 - Global `fetch` interceptor adds `Authorization` header to all `/api/` requests when a token is available; on 401 response, triggers login overlay
 - SSE `EventSource` passes token via `?token=` query parameter when available
-- Token initialization: checks `sessionStorage['seclaw_token']` then auto-discovers OpenClaw gateway token from `sessionStorage` keys matching `openclaw.control.token.v1:*` prefix
-- Startup probe: on load, if no stored token, fetches `/api/health` — 401 triggers login overlay (only relevant if plugin-level auth is active)
+- Token discovery: `#token=` URL fragment → `localStorage['seclaw_token']`
+- Startup probe: fetches `/api/health` — 401 triggers login overlay; cookie-authenticated users pass automatically
+- Login overlay: POSTs password to `/api/auth`, cookie is set by the server
+
+**Gateway mode**: Route registered with `auth: "plugin"`. Gateway handles its own network-level security; plugin-level auth (token/password) is layered on top.
+
+**Standalone mode** (testing): `DashboardDeps.getToken` and `getPassword` resolve from config; when both absent, no auth required.
 
 ### SSE Push Mechanism
 
