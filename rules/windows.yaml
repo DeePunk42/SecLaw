@@ -1,0 +1,251 @@
+# ─── SecLaw Windows Rules ───
+
+lists:
+  dangerous_cmds_cmd: [format, diskpart, cipher, reg]
+  dangerous_cmds_ps: [format-volume, invoke-expression, iex, set-executionpolicy, new-service]
+  safe_cmds_win: [git, npm, yarn, pnpm, bun, pip, pip3, poetry, cargo, go, dotnet, nuget]
+
+rules:
+  # ═══════════════════════════════════════════════════════
+  # RED — Catastrophic (9000-10000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CAT-WIN-RD
+    name: Recursive delete (cmd)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete of drive root"
+    tags: [destructive]
+    detection:
+      selection:
+        command|re: "(?i)rd\\s+/s\\s+/q\\s+[a-z]:\\\\"
+      condition: selection
+
+  - id: CAT-WIN-PS-RM
+    name: Recursive delete (PowerShell)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 10000
+    reason: "Recursive delete of drive root"
+    tags: [destructive]
+    detection:
+      selection:
+        command|re: "(?i)remove-item\\s+.*-recurse.*-force.*[a-z]:\\\\"
+      condition: selection
+
+  - id: CAT-WIN-IEX
+    name: PowerShell Invoke-Expression
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9500
+    reason: "PowerShell Invoke-Expression execution"
+    tags: [execution, defense_evasion]
+    detection:
+      iex:
+        command|re: "(?i)(invoke-expression|\\biex\\b)\\s+"
+      pipe_iex:
+        command|re: "(?i)\\|\\s*(invoke-expression|iex)"
+      condition: iex or pipe_iex
+
+  - id: CAT-WIN-LOLBIN-DOWNLOAD-EXEC
+    name: LOLBin download and execute chain
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9400
+    reason: "Windows LOLBin chain downloads and executes remote payload"
+    tags: [execution, defense_evasion]
+    detection:
+      download:
+        command|re: "(?i)\\b(certutil|bitsadmin)\\b.*(https?://|ftp://)"
+      execute:
+        command|re: "(?i)(?:&&|;|\\|)\\s*(?:powershell(?:\\.exe)?\\s+-?(?:c|command)\\s+|cmd(?:\\.exe)?\\s+/c\\s+)?(?:[a-z]:\\\\|\\.\\\\|\\\\\\\\)[^\\s]+\\.(exe|dll|js|vbs|hta|ps1|bat|cmd)"
+      direct_remote:
+        command|re: "(?i)\\b(mshta|rundll32|regsvr32)\\b.*(https?://|scrobj\\.dll)"
+      condition: (download and execute) or direct_remote
+
+  - id: CAT-WIN-EXFIL-SENSITIVE
+    name: Sensitive file exfiltration (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9300
+    reason: "Sensitive file/source combined with outbound transfer command"
+    tags: [exfiltration, credential_access]
+    detection:
+      source:
+        command|re: "(?i)(\\.env\\b|id_rsa\\b|id_ed25519\\b|\\.pem\\b|\\.kube\\\\config\\b|\\.docker\\\\config\\.json\\b|\\.aws\\\\credentials\\b|\\.openclaw\\\\openclaw\\.json\\b)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|scp|ssh|nc|ncat|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\\b"
+      condition: source and sink
+
+  - id: CAT-WIN-ENV-EXFIL
+    name: Environment variable exfiltration (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9280
+    reason: "Environment dump combined with outbound transfer command"
+    tags: [exfiltration, credential_access]
+    detection:
+      env_dump:
+        command|re: "(?i)(\\bset\\s+\\w+=|Get-ChildItem\\s+Env:|Get-Item\\s+Env:|\\$env:)"
+      sink:
+        command|re: "(?i)\\b(curl|wget|scp|ssh|nc|ncat|Invoke-WebRequest|iwr|Invoke-RestMethod|irm)\\b"
+      condition: env_dump and sink
+
+  - id: CAT-WIN-REGISTRY
+    name: Registry manipulation
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9000
+    reason: "Registry modification"
+    tags: [persistence, privilege_escalation]
+    detection:
+      reg:
+        command|re: "(?i)reg\\s+(add|delete|import)\\b"
+      ps_reg:
+        command|re: "(?i)(set-itemproperty|new-itemproperty|remove-itemproperty)\\s+"
+      condition: reg or ps_reg
+
+  - id: CAT-WIN-SAM
+    name: SAM/NTDS credential access
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9500
+    reason: "SAM/NTDS credential dumping"
+    tags: [credential_access]
+    detection:
+      selection:
+        command|re: "(?i)(sam|ntds\\.dit|security|system).*(save|copy|esentutl)"
+      condition: selection
+
+  - id: CAT-WIN-OPENCLAW-TAMPER
+    name: OpenClaw core state tampering (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9050
+    reason: "Command modifies openclaw.json or .openclaw\\seclaw state"
+    tags: [config_tampering, credential_access]
+    detection:
+      target:
+        command|re: "(?i)(\\.openclaw[\\\\/](openclaw\\.json|devices[\\\\/]paired\\.json|seclaw([\\\\/]|\\b))|\\bopenclaw\\.json\\b)"
+      mutate:
+        command|re: "(?i)(>|>>|\\|\\s*(tee|out-file|set-content|add-content)\\b|\\b(copy|move|ren|del|erase|attrib|icacls|takeown|cacls|xcopy|robocopy|set-content|add-content|out-file)\\b)"
+      condition: target and mutate
+
+  - id: CAT-WIN-SENSITIVE-CONFIG-TAMPER
+    name: Sensitive system config tampering (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9030
+    reason: "Command mutates sensitive Windows host/SSH/task configuration"
+    tags: [config_tampering, persistence]
+    detection:
+      target:
+        command|re: "(?i)(\\\\Windows\\\\System32\\\\drivers\\\\etc\\\\hosts\\b|\\\\ProgramData\\\\ssh\\\\sshd_config\\b|\\\\Users\\\\[^\\\\]+\\\\.ssh\\\\authorized_keys\\b|\\\\Windows\\\\System32\\\\Tasks\\\\)"
+      mutate:
+        command|re: "(?i)(\\|\\s*(tee|out-file|set-content|add-content)\\b|>|>>|\\b(icacls|takeown|attrib|set-content|add-content|out-file)\\b)"
+      condition: target and mutate
+
+  - id: CAT-WIN-SERVICE
+    name: Service persistence
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 9000
+    reason: "Windows service creation/modification"
+    tags: [persistence]
+    detection:
+      sc:
+        command|re: "(?i)sc\\s+(create|config|start)\\b"
+      ps_svc:
+        command|re: "(?i)new-service\\s+"
+      condition: sc or ps_svc
+
+  # ═══════════════════════════════════════════════════════
+  # RED — Dangerous commands (6500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-WIN-DANGEROUS
+    name: Dangerous Windows command
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 6500
+    tags: [execution]
+    detection:
+      cmd_danger:
+        cmd.all: $list:dangerous_cmds_cmd
+      ps_danger:
+        cmd.all|re: "(?i)^(format-volume|invoke-expression|iex|set-executionpolicy|new-service)$"
+      condition: cmd_danger or ps_danger
+
+  # ═══════════════════════════════════════════════════════
+  # GREEN — Safe patterns (7200)
+  # ═══════════════════════════════════════════════════════
+
+  - id: SAFE-WIN-GIT
+    name: Git operations (Windows)
+    tool: [exec]
+    platform: [windows]
+    tier: GREEN
+    priority: 7200
+    tags: [safe, vcs]
+    detection:
+      selection:
+        command|startswith: "git"
+      condition: selection
+
+  - id: RED-WIN-PKG-INSTALL
+    name: Package install (Windows, supply chain risk)
+    tool: [exec]
+    platform: [windows]
+    tier: RED
+    priority: 7300
+    reason: "Package install downloads and may execute external code"
+    tags: [supply_chain, package_manager]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds_win
+      install_action:
+        command|re: "(?i)\\s+(install|add|ci|restore)\\b"
+      go_get:
+        command|re: "(?i)^go\\s+get\\b"
+      condition: (pkg and install_action) or go_get
+
+  - id: SAFE-WIN-PKG
+    name: Package manager (Windows, local operations)
+    tool: [exec]
+    platform: [windows]
+    tier: GREEN
+    priority: 7200
+    tags: [safe]
+    detection:
+      pkg:
+        cmd.primary: $list:safe_cmds_win
+      action:
+        command|re: "(?i)\\s+(remove|build|test|run|start|dev|lint)\\b"
+      condition: pkg and action
+
+  # ═══════════════════════════════════════════════════════
+  # YELLOW — Catch-all (4500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: CMD-WIN-NORMAL
+    name: Non-dangerous Windows command
+    tool: [exec]
+    platform: [windows]
+    tier: YELLOW
+    priority: 4500
+    detection:
+      any: {}
+      condition: any

@@ -1,0 +1,41 @@
+{
+  "name": "@deepunk/seclaw",
+  "version": "1.0.3",
+  "description": "OpenClaw SecLaw - Real-time security audit layer for AI Agent tool calls",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "files": [
+    "dist/**",
+    "openclaw.plugin.json",
+    "rules/**",
+    "configs/**",
+    "scripts/**",
+    "templates/**"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "@types/node": "^20.0.0"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.20.0"
+  }
+}

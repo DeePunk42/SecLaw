@@ -1,0 +1,265 @@
+# ─── SecLaw Default Rules (Sigma-Style, Cross-Platform) ───
+#
+# Three-tier classification: GREEN, YELLOW, RED.
+#   GREEN  → allow execution, no audit at all
+#   YELLOW → allow execution, async LLM audit in background
+#   RED    → synchronous LLM audit before execution
+#
+# Priority ranges:
+#   9000-10000 : RED    — catastrophic patterns
+#   8000-8500  : RED    — always-RED tools, elevated exec
+#   7000-7500  : GREEN  — known-safe patterns
+#   6000-6500  : RED    — parameter-level RED (SSRF, credential endpoints)
+#   5000-5500  : GREEN  — always-GREEN tools (read, web_search, memory)
+#   4000-4500  : YELLOW — parameter-level YELLOW (catch-all)
+
+lists:
+  safe_read_tools: [read, fs_read, web_search, image]
+  safe_memory_tools: [memory_read, memory_write, memory_list, memory_delete]
+  cloud_metadata_hosts:
+    - "169.254.169.254"
+    - "metadata.google.internal"
+    - "100.100.100.200"
+    - "169.254.170.2"
+
+rules:
+  # ═══════════════════════════════════════════════════════
+  # RED — Always-RED tools (8000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: TOOL-RED-DELETE
+    name: File deletion
+    tool: [fs_delete]
+    tier: RED
+    priority: 8000
+    reason: "File deletion requires audit"
+    tags: [destructive]
+    detection:
+      any: {}
+      condition: any
+
+  - id: TOOL-RED-MOVE
+    name: File move
+    tool: [fs_move]
+    tier: RED
+    priority: 8000
+    reason: "File move requires audit"
+    tags: [destructive]
+    detection:
+      any: {}
+      condition: any
+
+  - id: TOOL-RED-SESSION-SPAWN
+    name: Session spawn
+    tool: [sessions_spawn]
+    tier: RED
+    priority: 8000
+    reason: "Spawning new session requires audit"
+    tags: [execution]
+    detection:
+      any: {}
+      condition: any
+
+  - id: TOOL-RED-SESSION-SEND
+    name: Session send
+    tool: [sessions_send]
+    tier: RED
+    priority: 8000
+    reason: "Sending to session requires audit"
+    tags: [execution]
+    detection:
+      any: {}
+      condition: any
+
+  - id: TOOL-RED-GATEWAY
+    name: Gateway operation
+    tool: [gateway]
+    tier: RED
+    priority: 8000
+    reason: "Gateway operation requires audit"
+    tags: [admin]
+    detection:
+      any: {}
+      condition: any
+
+  # ═══════════════════════════════════════════════════════
+  # RED — Elevated exec (8500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: EXEC-ELEVATED
+    name: Elevated execution
+    tool: [exec]
+    tier: RED
+    priority: 8500
+    reason: "Privileged/elevated execution requested"
+    tags: [privilege_escalation]
+    detection:
+      selection:
+        elevated: true
+      condition: selection
+
+  # ═══════════════════════════════════════════════════════
+  # RED — URL Security (cross-platform, 6100-6200)
+  # ═══════════════════════════════════════════════════════
+
+  - id: URL-SSRF-PRIVATE
+    name: SSRF - private IP
+    tool: [web_fetch]
+    tier: RED
+    priority: 6200
+    reason: "Request targets internal/private network address"
+    tags: [ssrf, network]
+    detection:
+      selection:
+        url.isPrivateIP: true
+      condition: selection
+
+  - id: URL-METADATA
+    name: Cloud metadata endpoint
+    tool: [web_fetch]
+    tier: RED
+    priority: 6200
+    reason: "Request targets cloud metadata endpoint"
+    tags: [ssrf, credential_access]
+    detection:
+      selection:
+        url.host: $list:cloud_metadata_hosts
+      condition: selection
+
+  - id: URL-CREDENTIAL
+    name: Credential endpoint
+    tool: [web_fetch]
+    tier: RED
+    priority: 6100
+    reason: "Request targets credential/token endpoint"
+    tags: [credential_access]
+    detection:
+      selection:
+        url.path|re: "(?i)/(credentials?(?:/|$)|oauth/token(?:/|$)|api-?keys?(?:/|$)|meta-data/iam|token(?:$|[/?]))"
+      condition: selection
+
+  # ═══════════════════════════════════════════════════════
+  # RED — File Write Security (cross-platform, 6300-9200)
+  # ═══════════════════════════════════════════════════════
+
+  - id: WRITE-OPENCLAW-CONFIG
+    name: OpenClaw core config modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9400
+    reason: "Modifying openclaw.json/paired.json is a high-risk operation"
+    tags: [config_tampering, credential_access]
+    detection:
+      selection:
+        path|re: "(?i)((^|[/\\\\])\\.openclaw[/\\\\]openclaw\\.json$|(^|[/\\\\])\\.openclaw[/\\\\]devices[/\\\\]paired\\.json$|(^|[/\\\\])openclaw\\.json$)"
+      condition: selection
+
+  - id: WRITE-OPENCLAW-SECLAW
+    name: OpenClaw seclaw state modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9350
+    reason: "Modifying ~/.openclaw/seclaw content is a high-risk operation"
+    tags: [config_tampering]
+    detection:
+      selection:
+        path|re: "(?i)(^|[/\\\\])\\.openclaw[/\\\\]seclaw([/\\\\]|$)"
+      condition: selection
+
+  - id: WRITE-SENSITIVE-SSH
+    name: SSH config modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9200
+    reason: "Modifying SSH configuration files"
+    tags: [persistence, credential_access]
+    detection:
+      selection:
+        path|re: "(?i)(\\.ssh[/\\\\]|authorized_keys|known_hosts|id_rsa|id_ed25519|sshd_config)"
+      condition: selection
+
+  - id: WRITE-SHELL-PROFILE
+    name: Shell profile modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 9100
+    reason: "Modifying shell profile (potential persistence)"
+    tags: [persistence]
+    detection:
+      selection:
+        path|re: "(\\.bashrc|\\.zshrc|\\.profile|\\.bash_profile|\\.zprofile)$"
+      condition: selection
+
+  - id: WRITE-ENV-FILE
+    name: Environment file modification
+    tool: [write, edit, apply_patch, fs_write]
+    tier: RED
+    priority: 6300
+    reason: "Writing to environment/credential file"
+    tags: [credential_access]
+    detection:
+      selection:
+        path|re: "(?i)(\\.(env|npmrc|netrc)$|\\.aws[/\\\\])"
+      condition: selection
+
+  - id: WRITE-WORKSPACE
+    name: Workspace file write
+    tool: [write, edit, apply_patch, fs_write]
+    tier: YELLOW
+    priority: 4000
+    detection:
+      selection:
+        file.inWorkspace: true
+      condition: selection
+
+  # ═══════════════════════════════════════════════════════
+  # GREEN — Always-GREEN tools (5500)
+  # ═══════════════════════════════════════════════════════
+
+  - id: TOOL-GREEN-READ
+    name: Read-only tools
+    tool: $list:safe_read_tools
+    tier: GREEN
+    priority: 5500
+    tags: [safe]
+    detection:
+      any: {}
+      condition: any
+
+  - id: TOOL-GREEN-MEMORY
+    name: Memory tools
+    tool: $list:safe_memory_tools
+    tier: GREEN
+    priority: 5500
+    tags: [safe]
+    detection:
+      any: {}
+      condition: any
+
+  # ═══════════════════════════════════════════════════════
+  # YELLOW — External URL (not SSRF, 4000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: URL-EXTERNAL-SAFE
+    name: External URL fetch
+    tool: [web_fetch]
+    tier: YELLOW
+    priority: 4000
+    detection:
+      any: {}
+      private:
+        url.isPrivateIP: true
+      condition: any and not private
+
+  # ═══════════════════════════════════════════════════════
+  # YELLOW — Non-sensitive file write (4000)
+  # ═══════════════════════════════════════════════════════
+
+  - id: WRITE-NORMAL
+    name: Non-sensitive file write
+    tool: [write, edit, apply_patch, fs_write]
+    tier: YELLOW
+    priority: 4000
+    detection:
+      any: {}
+      condition: any
