@@ -1474,10 +1474,10 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
   const pf = detectPlatform();
 
   const gradeIcons: Record<string, string> = {
-    A: "🟢", B: "🟡", C: "🟠", D: "🔴", F: "⛔",
+    S: "🟢", A: "🟢", B: "🟡", C: "🟠", D: "🔴",
   };
   const gradeLabels: Record<string, string> = {
-    A: "安全", B: "需改进", C: "脆弱", D: "危险", F: "不可接受",
+    S: "卓越", A: "安全", B: "需改进", C: "脆弱", D: "危险",
   };
 
   function formatCheckIcon(status: string): string {
@@ -1510,7 +1510,7 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
     },
     handler: async (params: Record<string, any>) => {
       try {
-        const checks = runAllChecks(pf);
+        const checks = await runAllChecks(pf);
         const filtered = params.domain
           ? checks.filter((c: CheckResult) => c.domain.includes(params.domain))
           : checks;
@@ -1690,7 +1690,7 @@ function registerHardeningTools(api: OpenClawPluginApi): void {
     parameters: { type: "object", properties: {} },
     handler: async () => {
       try {
-        const checks = runAllChecks(pf);
+        const checks = await runAllChecks(pf);
         const summary = generateSummary(checks);
 
         const report: HardeningReport = {

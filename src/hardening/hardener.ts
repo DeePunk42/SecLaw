@@ -16,7 +16,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { HardenResult, Platform } from "./types.js";
-import { getOpenClawDir, safeExec } from "./platform.js";
+import { getOpenClawDir, safeExec, safeExecAsync } from "./platform.js";
 
 // ──────────────── Template directory resolution ────────────────
 
@@ -491,7 +491,7 @@ export function initGitBackup(): HardenResult {
   }
 }
 
-/** Run schema validation */
+/** Run schema validation (sync, short timeout) */
 export function runSchemaValidation(): HardenResult {
   const result = safeExec("openclaw config validate", 15000);
   return {
@@ -505,9 +505,37 @@ export function runSchemaValidation(): HardenResult {
   };
 }
 
-/** Run security audit */
+/** Run schema validation (async, longer timeout for complex configs) */
+export async function runSchemaValidationAsync(): Promise<HardenResult> {
+  const result = await safeExecAsync("openclaw config validate", 180000);
+  return {
+    id: "schema-validate",
+    name: "Schema 校验",
+    success: result.ok,
+    changed: false,
+    message: result.ok
+      ? "Schema 校验通过 ✓"
+      : `校验失败: ${result.stderr || result.stdout}`,
+  };
+}
+
+/** Run security audit (sync, short timeout) */
 export function runSecurityAudit(): HardenResult {
   const result = safeExec("openclaw security audit --deep", 30000);
+  return {
+    id: "security-audit",
+    name: "安全审计",
+    success: result.ok,
+    changed: false,
+    message: result.ok
+      ? `审计完成:\n${result.stdout.slice(0, 500)}`
+      : `审计失败: ${result.stderr || "openclaw CLI 不可用"}`,
+  };
+}
+
+/** Run security audit (async, longer timeout for deep scans) */
+export async function runSecurityAuditAsync(): Promise<HardenResult> {
+  const result = await safeExecAsync("openclaw security audit --deep", 300000);
   return {
     id: "security-audit",
     name: "安全审计",
@@ -632,11 +660,12 @@ export function deployAgents(): HardenResult {
 /** Immutable protection for audit script — HIGH RISK */
 export function immutableProtect(pf: Platform): HardenResult {
   const ocDir = getOpenClawDir();
+  const isWin = pf.os === "win32";
   const target = join(
     ocDir,
     "workspace",
     "scripts",
-    "nightly-security-audit.sh",
+    isWin ? "nightly-security-audit.ps1" : "nightly-security-audit.sh",
   );
 
   if (!existsSync(target)) {
@@ -887,12 +916,18 @@ else
   echo "ERROR: openclaw not found in PATH" >> "$REPORT"
 fi
 
-# 3. Hash check
+# 3. Hash check (cross-platform: sha256sum on Linux, shasum on macOS)
 OC_DIR="$HOME/.openclaw"
 if [ -f "$OC_DIR/.config-baseline.json" ]; then
   echo "" >> "$REPORT"
   echo "[Hash Integrity]" >> "$REPORT"
-  CURRENT_HASH=$(sha256sum "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
+  if command -v sha256sum &>/dev/null; then
+    CURRENT_HASH=$(sha256sum "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
+  elif command -v shasum &>/dev/null; then
+    CURRENT_HASH=$(shasum -a 256 "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
+  else
+    CURRENT_HASH="(no sha256 tool available)"
+  fi
   echo "Current config hash: $CURRENT_HASH" >> "$REPORT"
 fi
 

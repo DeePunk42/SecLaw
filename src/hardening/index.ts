@@ -3,13 +3,15 @@ export type {
   Severity,
   Grade,
   CheckResult,
+  HardenAction,
   HardenResult,
+  ScanSummary,
   HardeningReport,
   Platform,
 } from "./types.js";
 
-export { detectPlatform, getOpenClawDir, safeExec } from "./platform.js";
-export { runAllChecks, generateSummary } from "./checker.js";
+export { detectPlatform, getOpenClawDir, safeExec, safeExecAsync } from "./platform.js";
+export { detectOpenClaw, runAllChecks, generateSummary } from "./checker.js";
 export {
   backupConfig,
   deployConfig,
@@ -18,7 +20,9 @@ export {
   hardenNpmrc,
   initGitBackup,
   runSchemaValidation,
+  runSchemaValidationAsync,
   runSecurityAudit,
+  runSecurityAuditAsync,
   deployChannelHint,
   deployAgents,
   immutableProtect,
