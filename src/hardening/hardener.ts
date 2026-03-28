@@ -214,12 +214,13 @@ export function hardenPermissions(pf: Platform): HardenResult {
       safeExec(`icacls "${ocDir}" /inheritance:r`);
       safeExec(`icacls "${ocDir}" /grant:r "${user}:(OI)(CI)F"`);
       safeExec(`icacls "${ocDir}" /grant:r "SYSTEM:(OI)(CI)F"`);
+      safeExec(`icacls "${ocDir}" /grant:r "BUILTIN\\Administrators:(OI)(CI)F"`);
       return {
         id: "file-permissions",
         name: "文件权限加固",
         success: true,
         changed: true,
-        message: `NTFS ACL 已加固: 仅 ${user} 和 SYSTEM 有权访问`,
+        message: `NTFS ACL 已加固: 仅 ${user}, Administrators 和 SYSTEM 有权访问`,
       };
     } catch (err: any) {
       return {
