@@ -67,7 +67,7 @@ When a call is blocked, a 6-digit decimal PIN is generated and included in the `
 | `src/dashboard/api.ts` | REST API + SSE endpoints (`/api/logs`, `/api/config`, `/api/health`, `/api/rules`). |
 | `src/dashboard/html.ts` | Embedded SPA frontend (dark theme, 4 tabs: Audit Log, Config, Health, Rules). |
 | `src/dashboard/sender-labels.ts` | Sender label registry (scan JSONL logs, persist to JSON). |
-| `src/hardening/` | Security checker (8 domains, 29 checks, A-F scoring) + 14 hardening actions + 3 agent-callable tools (`security_scan`, `security_harden`, `security_report`). |
+| `src/hardening/` | Security checker (8 domains, 33+ checks, A-F scoring with structural ceiling) + 17 hardening actions (including backup restore) + 3 agent-callable tools (`security_scan`, `security_harden`, `security_report`). |
 
 ### Rules
 

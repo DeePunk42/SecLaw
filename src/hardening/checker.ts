@@ -67,7 +67,7 @@ export function runAllChecks(pf: Platform): CheckResult[] {
   return results;
 }
 
-/** Generate check report summary */
+/** Generate check report summary (v3.1 scoring) */
 export function generateSummary(checks: CheckResult[]) {
   const total = checks.length;
   const pass = checks.filter((c) => c.status === "pass").length;
@@ -76,17 +76,37 @@ export function generateSummary(checks: CheckResult[]) {
   const skip = checks.filter((c) => c.status === "skip").length;
   const na = checks.filter((c) => c.status === "n/a").length;
 
-  // Score: pass=100%, warn=50%, fail=0%, skip/n/a=not counted
-  const scored = total - skip - na;
-  let score =
-    scored > 0 ? Math.round(((pass + warn * 0.5) / scored) * 100) : 100;
+  // Core items only (exclude limit- structural checks from denominator)
+  const coreChecks = checks.filter(
+    (c) => c.status !== "skip" && c.status !== "n/a" && !c.id.startsWith("limit-"),
+  );
+  const corePass = coreChecks.filter((c) => c.status === "pass").length;
+  const coreWarn = coreChecks.filter((c) => c.status === "warn").length;
+  const coreScored = coreChecks.length;
 
-  // Critical FAIL penalty: cap at 59
+  // Score: pass=100%, warn=30%, fail=0%
+  let score =
+    coreScored > 0 ? Math.round(((corePass + coreWarn * 0.3) / coreScored) * 100) : 100;
+
+  // Structural ceiling: each unmitigated limit- item deducts 5 points
+  const limitChecks = checks.filter((c) => c.id.startsWith("limit-"));
+  const unmitigatedLimits = limitChecks.filter((c) => c.status !== "pass").length;
+  const structuralCeiling = 100 - unmitigatedLimits * 5;
+  score = Math.min(score, structuralCeiling);
+
+  // Two-level critical fail penalties:
+  // - explicitDanger (intentionally dangerous config): hard cap at 59 (D)
+  // - regular critical fail (unconfigured): soft cap at 74 (C)
+  const hasExplicitDanger = checks.some(
+    (c) => c.status === "fail" && c.severity === "critical" && (c as any).explicitDanger,
+  );
   const hasCriticalFail = checks.some(
     (c) => c.status === "fail" && c.severity === "critical",
   );
-  if (hasCriticalFail && score > 59) {
+  if (hasExplicitDanger && score > 59) {
     score = 59;
+  } else if (hasCriticalFail && score > 74) {
+    score = 74;
   }
 
   // Grade calculation
@@ -165,6 +185,29 @@ function checkNetworkIsolation(config: any, pf: Platform): CheckResult[] {
       fix: "在 Windows 执行: netsh interface portproxy show all",
     });
   }
+
+  // Firewall rules check
+  let fwDetected = false;
+  if (pf.os === "win32") {
+    const fw = safeExec(`netsh advfirewall firewall show rule name="Block OpenClaw External"`);
+    fwDetected = fw.ok && fw.stdout.includes("Block OpenClaw External");
+  } else if (pf.os === "darwin") {
+    const fw = safeExec("/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate");
+    fwDetected = fw.ok && fw.stdout.toLowerCase().includes("enabled");
+  } else {
+    const fw = safeExec("iptables -L INPUT -n 2>/dev/null | grep 18789 || ufw status 2>/dev/null | grep 18789");
+    fwDetected = fw.ok && fw.stdout.trim().length > 0;
+  }
+  results.push({
+    id: "net-firewall",
+    domain: "网络隔离",
+    name: "防火墙规则",
+    severity: fwDetected ? "pass" : "warning",
+    status: fwDetected ? "pass" : "warn",
+    current: fwDetected ? "已配置" : "未检测到",
+    message: fwDetected ? "防火墙规则已配置 ✓" : "未检测到针对 OpenClaw 端口的防火墙规则",
+    fix: "运行加固工具的防火墙配置操作",
+  });
 
   return results;
 }
@@ -410,13 +453,24 @@ function checkFileSystem(ocDir: string, pf: Platform): CheckResult[] {
       });
     }
   } else {
+    // Windows: check NTFS ACL
+    const aclResult = safeExec(`icacls "${join(ocDir, "openclaw.json")}"`);
+    let aclOk = true;
+    if (aclResult.ok) {
+      const out = aclResult.stdout.toLowerCase();
+      if (out.includes("everyone") || out.includes("builtin\\users")) {
+        aclOk = false;
+      }
+    }
     results.push({
-      id: "fs-perm-win",
+      id: "fs-win-acl",
       domain: "文件系统",
-      name: "文件权限 (Windows)",
-      severity: "info",
-      status: "skip",
-      message: "Windows 使用 NTFS ACL, 请通过 icacls 检查",
+      name: "Windows NTFS ACL",
+      severity: aclOk ? "pass" : "warning",
+      status: aclOk ? "pass" : "warn",
+      current: aclOk ? "仅授权用户" : "ACL 过宽",
+      message: aclOk ? "NTFS ACL 已限制访问 ✓" : "Everyone 或 BUILTIN\\Users 有权访问配置文件",
+      fix: "运行加固工具的文件权限加固操作",
     });
   }
 
@@ -471,6 +525,31 @@ function checkFileSystem(ocDir: string, pf: Platform): CheckResult[] {
       }
     }
   }
+
+  // Disk encryption detection
+  let encrypted = false;
+  if (pf.os === "win32") {
+    const r = safeExec("manage-bde -status C:");
+    encrypted = r.ok && r.stdout.includes("Protection On");
+  } else if (pf.os === "darwin") {
+    const r = safeExec("fdesetup status");
+    encrypted = r.ok && r.stdout.toLowerCase().includes("on");
+  } else if (!pf.isWSL2) {
+    const r = safeExec("lsblk -f 2>/dev/null");
+    encrypted = r.ok && /crypt|luks/i.test(r.stdout);
+  } else {
+    encrypted = true; // WSL2: depends on Windows BitLocker, skip
+  }
+  results.push({
+    id: "fs-disk-encryption",
+    domain: "文件系统",
+    name: "磁盘加密",
+    severity: encrypted ? "pass" : "warning",
+    status: encrypted ? "pass" : "warn",
+    current: encrypted ? "已启用" : "未检测到",
+    message: encrypted ? "磁盘加密已启用 ✓" : "未检测到磁盘加密, 物理攻击风险",
+    fix: "启用 BitLocker (Windows), FileVault (macOS), 或 LUKS (Linux)",
+  });
 
   return results;
 }
@@ -674,6 +753,51 @@ function checkAgentBehavior(
       fix: "部署 AGENTS.md 模板",
     });
   }
+
+  // Structural limitation checks (limit-* prefix, contributes to ceiling)
+  // These represent architectural constraints that cannot be fully mitigated by config alone
+
+  // PI defense: check if any PI defense tools are available
+  const hasGitTracking = existsSync(join(ocDir, ".git"));
+  const pluginAllow = config?.plugins?.allow;
+  const hasPluginWhitelist = Array.isArray(pluginAllow);
+
+  results.push({
+    id: "limit-prompt-injection",
+    domain: "代理行为",
+    name: "Prompt Injection 防御",
+    severity: "warning",
+    status: "warn",
+    message: "无专用 PI 防御工具 (Agent Smith, llm-guard 等); 依赖 AGENTS.md 规则和人工审查",
+    fix: "考虑集成 PI 检测工具或 guardrails 框架",
+  });
+
+  const skillsPoisonOk = hasGitTracking && hasPluginWhitelist;
+  results.push({
+    id: "limit-skills-poison",
+    domain: "代理行为",
+    name: "Skills/插件投毒防御",
+    severity: skillsPoisonOk ? "pass" : "warning",
+    status: skillsPoisonOk ? "pass" : "warn",
+    current: `Git: ${hasGitTracking ? "✓" : "✗"}, 白名单: ${hasPluginWhitelist ? "✓" : "✗"}`,
+    message: skillsPoisonOk
+      ? "Git 追踪 + 插件白名单已启用 ✓"
+      : "建议同时启用 Git 灾备追踪和插件白名单",
+    fix: "启用 Git 灾备 + 设置 plugins.allow 白名单",
+  });
+
+  const sandboxForLimit = sandbox === "all" || sandbox === "non-main";
+  results.push({
+    id: "limit-model-behavior",
+    domain: "代理行为",
+    name: "模型行为控制",
+    severity: sandboxForLimit ? "pass" : "warning",
+    status: sandboxForLimit ? "pass" : "warn",
+    message: sandboxForLimit
+      ? "沙箱模式已启用, 模型行为受限 ✓"
+      : "无沙箱隔离, 模型可直接操作宿主环境",
+    fix: '设置 agents.defaults.sandbox.mode = "non-main" 或 "all"',
+  });
 
   return results;
 }

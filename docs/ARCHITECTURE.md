@@ -79,8 +79,8 @@ src/
   hardening/
     index.ts                Barrel export for hardening modules
     types.ts                CheckResult, HardenResult, HardeningReport, Grade, Platform
-    checker.ts              8-domain 29-item security checker (read-only), A-F scoring
-    hardener.ts             14 hardening operations (backup, deploy, permissions, etc.)
+    checker.ts              8-domain 33+-item security checker (read-only), A-F scoring with structural ceiling
+    hardener.ts             17 hardening operations (backup, deploy, permissions, restore, etc.)
     platform.ts             OS/WSL2/Node/OpenClaw detection, safeExec()
   dashboard/
     server.ts               Gateway route handler + standalone server lifecycle
@@ -913,55 +913,61 @@ Dashboard supports two opt-in auth mechanisms. **By default, no authentication i
 
 SecLaw includes an embedded security checker and hardening executor for auditing the OpenClaw installation itself (not tool calls — that's the rule engine's job).
 
-### Security Scoring
+### Security Scoring (v3.1)
 
 `generateSummary()` in `checker.ts` produces an A-F grade from check results:
 
-- **Score**: `pass` = 100%, `warn` = 50%, `fail` = 0%, `skip`/`n/a` = excluded
-- **Critical fail penalty**: any `critical` severity `fail` caps the total score at 59
+- **Score**: `pass` = 100%, `warn` = 30%, `fail` = 0%, `skip`/`n/a` = excluded from denominator
+- **Structural ceiling**: each unmitigated `limit-*` check deducts 5 points from the maximum achievable score
+- **Two-level critical fail penalty**:
+  - `explicitDanger` flag (intentionally dangerous config) → hard cap at 59 (D grade)
+  - Regular critical fail (unconfigured) → soft cap at 74 (C grade)
 - **Grade thresholds**: A (≥90), B (≥75), C (≥60), D (≥40), F (<40)
 - **Default**: 100 when no scored items (all checks are `skip` or `n/a`)
 
-### 8 Security Domains (29 checks)
+### 8 Security Domains (33+ checks)
 
 | Domain | Checks | Key items |
 |--------|--------|-----------|
-| 网络隔离 | 3-4 | Gateway bind (loopback/tailnet), trusted proxies, mDNS, WSL2 portproxy |
+| 网络隔离 | 4-5 | Gateway bind, trusted proxies, mDNS, WSL2 portproxy, **firewall rules** |
 | 认证 | 5 | Auth mode, token SecretRef, rate limit, insecure auth, device auth |
 | 执行安全 | 7 | Exec security mode, ask mode, dangerous bins, workspace limits, CSRF |
-| 文件系统 | 3-4 | Config/dir permissions, hash baseline (recommended), integrity |
+| 文件系统 | 5-6 | Config/dir permissions, **Windows ACL**, hash baseline, integrity, **disk encryption** |
 | 供应链 | 2 | Plugin whitelist (n/a if unconfigured), .npmrc ignore-scripts |
-| 代理行为 | 1-6 | Owner UID, channel allowFrom/dmPolicy (n/a if no channels) |
-| 代理行为 | 1-2 | Sandbox mode (n/a if unconfigured), AGENTS.md rules (recommended) |
+| Channel | 1-6 | Owner UID, channel allowFrom/dmPolicy (n/a if no channels) |
+| 代理行为 | 4-5 | Sandbox mode, AGENTS.md rules, **limit-prompt-injection**, **limit-skills-poison**, **limit-model-behavior** |
 | 监控 | 2-3 | Audit script (recommended), Git backup (recommended), OC audit |
 
-Checks have an optional `category` field: `'core'` (default, affects score) or `'recommended'` (shown separately, does not affect score). Optional features (channels, agents, plugins) return `status: 'n/a'` when not configured to avoid false negatives.
+`limit-*` checks are structural limitation items that contribute to the scoring ceiling rather than the base score. Checks have an optional `category` field: `'core'` (default, affects score) or `'recommended'` (shown separately).
 
-### 14 Hardening Actions
+### 17 Hardening Actions
 
 Executed via `security_harden` tool with an `action` parameter:
 
 | Action | Risk | Description |
 |--------|------|-------------|
 | `backup` | ⚠️ | Backup config to `~/.openclaw/.backups/TIMESTAMP/` |
-| `deploy-config` | ⚠️ | Merge balanced/paranoid mode template into openclaw.json |
+| `deploy-config` | ⚠️ | Safe-merge balanced/paranoid template (preserves plugins whitelist, user tools) |
 | `schema-validate` | ✅ | Run `openclaw config validate` |
 | `deploy-channel` | ✅ | Channel UID guidance (skips if channels unconfigured) |
 | `deploy-agents` | ⚠️ | Deploy AGENTS.md security rules template |
-| `permissions` | ⚠️ | chmod 600/700 (Unix) or icacls (Windows) |
+| `permissions` | ⚠️ | chmod 600/700 (Unix) or icacls (Windows, user+SYSTEM only) |
 | `baseline` | ✅ | Generate SHA-256 hash baseline of config files |
 | `immutable-protect` | 🔴 | chattr/chflags/NTFS deny-write on audit script |
 | `npmrc` | ⚠️ | Set .npmrc ignore-scripts=true |
-| `firewall` | 🔴 | Platform-specific firewall rules (ufw/iptables/netsh/pf) |
+| `firewall` | 🔴 | Platform-specific firewall rules (idempotent: delete-before-add) |
 | `disk-encryption` | ✅ | Detect BitLocker/FileVault/LUKS (read-only) |
-| `deploy-audit` | ⚠️ | Copy nightly audit script to workspace |
+| `deploy-audit` | ⚠️ | Deploy embedded audit script (handles immutable locks, content-same skip) |
 | `git-backup` | ⚠️ | Init Git repo in .openclaw for disaster recovery |
 | `security-audit` | ✅ | Run `openclaw security audit --deep` |
+| `deploy-verify-hint` | ✅ | Cron verification instructions (output only) |
+| **`list-backups`** | ✅ | List all available backup snapshots |
+| **`restore-backup`** | ⚠️ | One-click restore from backup (latest or by ID) |
 
 ### Agent-Callable Tools
 
 Three tools are registered via `api.registerTool` / `api.tools.register` (gracefully skipped if the OpenClaw runtime does not support tool registration):
 
 - **`security_scan`** — Read-only scan with A-F grade, progress bar, core/recommended separation. Optional `domain` parameter for filtering.
-- **`security_harden`** — Execute one of 14 actions (or `all`). Accepts `mode` parameter (`balanced`/`paranoid`).
+- **`security_harden`** — Execute one of 17 actions (or `all`). Accepts `mode` parameter (`balanced`/`paranoid`).
 - **`security_report`** — Full Markdown report with domain-level scoring table, failures/warnings summary.

@@ -9,8 +9,10 @@ import {
   mkdirSync,
   copyFileSync,
   chmodSync,
+  readdirSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
+import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { HardenResult, Platform } from "./types.js";
@@ -69,6 +71,66 @@ const DEFAULT_AGENTS_RULES = `# 安全行为规则
 - 使用 SHA256 校验下载的文件
 `;
 
+// ──────────────── Embedded config templates (fallback when files unavailable) ────────────────
+
+const EMBEDDED_TEMPLATES: Record<string, object> = {
+  balanced: {
+    gateway: {
+      bind: "loopback",
+      controlUi: {
+        allowInsecureAuth: false,
+        dangerouslyDisableDeviceAuth: false,
+        dangerouslyAllowHostHeaderOriginFallback: false,
+      },
+      auth: {
+        mode: "token",
+        rateLimit: { maxAttempts: 10, windowMs: 900000 },
+      },
+      trustedProxies: [],
+    },
+    tools: {
+      exec: {
+        security: "allowlist",
+        ask: "on-miss",
+        safeBins: [
+          "ls", "cat", "head", "tail", "grep", "find", "wc", "echo",
+          "date", "pwd", "whoami", "git", "node", "python3", "make", "cmake",
+        ],
+      },
+      fs: { workspaceOnly: true },
+    },
+    plugins: { allow: [] },
+    discovery: { mdns: { mode: "minimal" } },
+    commands: { ownerAllowFrom: [] },
+  },
+  paranoid: {
+    gateway: {
+      bind: "loopback",
+      controlUi: {
+        allowInsecureAuth: false,
+        dangerouslyDisableDeviceAuth: false,
+        dangerouslyAllowHostHeaderOriginFallback: false,
+      },
+      auth: {
+        mode: "token",
+        rateLimit: { maxAttempts: 5, windowMs: 900000 },
+      },
+      trustedProxies: [],
+    },
+    tools: {
+      exec: {
+        security: "allowlist",
+        ask: "always",
+        safeBins: ["ls", "cat", "head", "tail", "grep", "wc", "echo", "pwd", "git"],
+      },
+      fs: { workspaceOnly: true },
+    },
+    plugins: { allow: [] },
+    discovery: { mdns: { mode: "off" } },
+    commands: { ownerAllowFrom: [] },
+  },
+};
+
 // ════════════════════════════════════════════════════════════
 // Hardening operations
 // ════════════════════════════════════════════════════════════
@@ -119,58 +181,84 @@ export function deployConfig(
 ): HardenResult {
   const ocDir = getOpenClawDir();
   const configPath = join(ocDir, "openclaw.json");
-  const templatePath = join(getConfigDir(), `${mode}-mode.json`);
 
-  if (!existsSync(templatePath)) {
-    return {
-      id: "deploy-config",
-      name: "部署配置",
-      success: false,
-      changed: false,
-      message: `模板不存在: ${templatePath}`,
-    };
+  // Prefer external template file, fall back to embedded templates
+  let template: any;
+  const templatePath = join(getConfigDir(), `${mode}-mode.json`);
+  if (existsSync(templatePath)) {
+    template = JSON.parse(readFileSync(templatePath, "utf-8"));
+  } else {
+    template = EMBEDDED_TEMPLATES[mode];
+    if (!template) {
+      return {
+        id: "deploy-config",
+        name: "部署配置",
+        success: false,
+        changed: false,
+        message: `未知模式: ${mode}`,
+      };
+    }
   }
 
   try {
-    const template = JSON.parse(readFileSync(templatePath, "utf-8"));
-
     if (existsSync(configPath)) {
       const existing = JSON.parse(readFileSync(configPath, "utf-8"));
 
-      const merged: any = {
-        ...existing,
-        gateway: {
-          ...(existing.gateway || {}),
-          bind: template.gateway.bind,
-          controlUi: template.gateway.controlUi,
-          auth: {
-            ...(existing.gateway?.auth || {}),
-            ...template.gateway.auth,
-          },
-          trustedProxies: template.gateway.trustedProxies,
+      // Safe merge: preserve user config, only overwrite security-related fields
+      const merged: any = { ...existing };
+
+      // gateway: merge security fields, preserve others
+      merged.gateway = {
+        ...(existing.gateway || {}),
+        bind: template.gateway.bind,
+        controlUi: template.gateway.controlUi,
+        auth: {
+          ...(existing.gateway?.auth || {}),
+          ...template.gateway.auth,
         },
-        tools: template.tools,
-        plugins: template.plugins,
-        agents: template.agents,
-        discovery: template.discovery,
-        commands: {
-          ...(existing.commands || {}),
-          ...(template.commands || {}),
+        trustedProxies: template.gateway.trustedProxies,
+      };
+
+      // tools: merge exec/fs security config, preserve other tools config
+      merged.tools = {
+        ...(existing.tools || {}),
+        exec: {
+          ...(existing.tools?.exec || {}),
+          ...template.tools.exec,
+        },
+        fs: {
+          ...(existing.tools?.fs || {}),
+          ...template.tools.fs,
         },
       };
 
-      // Preserve user UIDs in channels (don't overwrite allowFrom)
-      if (existing.channels) {
-        merged.channels = existing.channels;
-        for (const [ch, chConf] of Object.entries<any>(
-          template.channels || {},
-        )) {
-          if (merged.channels[ch]) {
-            merged.channels[ch].dmPolicy = chConf.dmPolicy;
-          }
-        }
+      // plugins: preserve user's existing plugin whitelist to avoid disabling installed plugins
+      const existingAllow = existing.plugins?.allow;
+      if (Array.isArray(existingAllow) && existingAllow.length > 0) {
+        merged.plugins = existing.plugins;
       } else {
-        merged.channels = template.channels;
+        merged.plugins = template.plugins;
+      }
+
+      merged.discovery = template.discovery;
+      merged.commands = {
+        ...(existing.commands || {}),
+        ...(template.commands || {}),
+      };
+
+      // Preserve user-configured channels, don't overwrite
+      // Don't write empty channels/agents to avoid invalid schema
+
+      // Cleanup: delete invalid keys that previous hardening versions may have written
+      if (merged.tools?.defaults) delete merged.tools.defaults;
+      if (merged.agents?.defaults) delete merged.agents.defaults;
+      // discovery.mdns must be an object, not boolean
+      if (typeof merged.discovery?.mdns === "boolean") {
+        merged.discovery.mdns = { mode: merged.discovery.mdns ? "full" : "off" };
+      }
+      // gateway.controlUi must be an object, not boolean
+      if (typeof merged.gateway?.controlUi === "boolean") {
+        merged.gateway.controlUi = template.gateway.controlUi;
       }
 
       writeFileSync(configPath, JSON.stringify(merged, null, 2), "utf-8");
@@ -179,12 +267,13 @@ export function deployConfig(
         name: "部署配置",
         success: true,
         changed: true,
-        message: `配置已合并 (${mode} 模式) — ⚠ tools/plugins/agents/discovery 已被替换`,
+        message: `配置已合并 (${mode} 模式) — ⚠ gateway/tools.exec/tools.fs/discovery 安全字段已更新`,
         rollback:
           "cp ~/.openclaw/.backups/最新/openclaw.json ~/.openclaw/openclaw.json",
       };
     } else {
-      writeFileSync(configPath, readFileSync(templatePath, "utf-8"));
+      mkdirSync(ocDir, { recursive: true });
+      writeFileSync(configPath, JSON.stringify(template, null, 2), "utf-8");
       return {
         id: "deploy-config",
         name: "部署配置",
@@ -620,6 +709,9 @@ export function configureFirewall(pf: Platform): HardenResult {
   const port = 18789;
 
   if (pf.os === "win32") {
+    // Delete old rules first to prevent duplicates on repeated execution
+    safeExec(`netsh advfirewall firewall delete rule name="Block OpenClaw External"`);
+    safeExec(`netsh advfirewall firewall delete rule name="Allow OpenClaw Loopback"`);
     const r1 = safeExec(
       `netsh advfirewall firewall add rule name="Block OpenClaw External" dir=in action=block protocol=tcp localport=${port}`,
     );
@@ -685,6 +777,9 @@ export function configureFirewall(pf: Platform): HardenResult {
 
   const ipt = safeExec("which iptables");
   if (ipt.ok) {
+    // Delete old rules first to prevent duplicates on repeated execution
+    safeExec(`sudo iptables -D INPUT -p tcp --dport ${port} -s 127.0.0.1 -j ACCEPT`);
+    safeExec(`sudo iptables -D INPUT -p tcp --dport ${port} -j DROP`);
     safeExec(
       `sudo iptables -A INPUT -p tcp --dport ${port} -s 127.0.0.1 -j ACCEPT`,
     );
@@ -767,46 +862,252 @@ export function checkDiskEncryption(pf: Platform): HardenResult {
   };
 }
 
-/** Deploy nightly audit script */
+// ──── Embedded audit script templates (bash + PowerShell) ────
+
+const EMBEDDED_AUDIT_SH = `#!/bin/bash
+# OpenClaw Nightly Security Audit
+set -euo pipefail
+DATE=$(date +%Y-%m-%d)
+REPORT_DIR="/tmp/openclaw/security-reports"
+mkdir -p "$REPORT_DIR"
+REPORT="$REPORT_DIR/audit-$DATE.txt"
+echo "=== OpenClaw Security Audit - $DATE ===" > "$REPORT"
+echo "" >> "$REPORT"
+
+# 1. Config integrity
+if command -v openclaw &>/dev/null; then
+  echo "[Config Validation]" >> "$REPORT"
+  openclaw config validate >> "$REPORT" 2>&1 || echo "WARN: config validation failed" >> "$REPORT"
+  echo "" >> "$REPORT"
+
+  # 2. Security audit
+  echo "[Security Audit]" >> "$REPORT"
+  openclaw security audit >> "$REPORT" 2>&1 || echo "WARN: security audit failed" >> "$REPORT"
+else
+  echo "ERROR: openclaw not found in PATH" >> "$REPORT"
+fi
+
+# 3. Hash check
+OC_DIR="$HOME/.openclaw"
+if [ -f "$OC_DIR/.config-baseline.json" ]; then
+  echo "" >> "$REPORT"
+  echo "[Hash Integrity]" >> "$REPORT"
+  CURRENT_HASH=$(sha256sum "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
+  echo "Current config hash: $CURRENT_HASH" >> "$REPORT"
+fi
+
+# 4. Permission check
+echo "" >> "$REPORT"
+echo "[File Permissions]" >> "$REPORT"
+ls -la "$OC_DIR/openclaw.json" >> "$REPORT" 2>&1
+ls -la "$OC_DIR/" >> "$REPORT" 2>&1
+
+echo "" >> "$REPORT"
+echo "Audit complete: $REPORT"
+cat "$REPORT"
+`;
+
+const EMBEDDED_AUDIT_PS1 = `# OpenClaw Nightly Security Audit (Windows)
+$Date = Get-Date -Format 'yyyy-MM-dd'
+$ReportDir = Join-Path $env:TEMP 'openclaw\\security-reports'
+New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
+$Report = Join-Path $ReportDir "audit-$Date.txt"
+"=== OpenClaw Security Audit - $Date ===" | Out-File $Report
+
+# Config validation
+try {
+  openclaw config validate 2>&1 | Out-File $Report -Append
+} catch {
+  "WARN: openclaw not available" | Out-File $Report -Append
+}
+
+# Hash check
+$OcDir = Join-Path $env:USERPROFILE '.openclaw'
+$ConfigFile = Join-Path $OcDir 'openclaw.json'
+if (Test-Path $ConfigFile) {
+  $hash = (Get-FileHash $ConfigFile -Algorithm SHA256).Hash
+  "Config hash: $hash" | Out-File $Report -Append
+}
+
+Get-Content $Report
+`;
+
+/** Deploy nightly audit script (embedded templates, no external file dependency) */
 export function deployAuditScript(): HardenResult {
   const ocDir = getOpenClawDir();
-  const src = join(getScriptsDir(), "nightly-security-audit.sh");
   const dstDir = join(ocDir, "workspace", "scripts");
-  const dst = join(dstDir, "nightly-security-audit.sh");
+  const isWin = process.platform === "win32";
+  const dst = join(dstDir, isWin ? "nightly-security-audit.ps1" : "nightly-security-audit.sh");
+  const targetContent = isWin ? EMBEDDED_AUDIT_PS1 : EMBEDDED_AUDIT_SH;
 
   try {
-    mkdirSync(dstDir, { recursive: true });
-
-    if (existsSync(src)) {
-      copyFileSync(src, dst);
+    if (existsSync(dst)) {
       try {
-        chmodSync(dst, 0o700);
+        const content = readFileSync(dst, "utf-8");
+        if (content.trim().replace(/\r\n/g, "\n") === targetContent.trim().replace(/\r\n/g, "\n")) {
+          return {
+            id: "deploy-audit",
+            name: "部署审计脚本",
+            success: true,
+            changed: false,
+            message: "审计脚本已安全部署且内容相同 (跳过)",
+          };
+        }
+        // Content differs but file may be immutable-protected — try unlocking
+        if (isWin) safeExec(`icacls "${dst}" /remove:d Everyone`);
+        else safeExec(`sudo chattr -i "${dst}" || sudo chflags nouchg "${dst}"`);
       } catch {
-        /* Windows noop */
+        /* ignore read/unlock errors */
       }
-      return {
-        id: "deploy-audit",
-        name: "部署审计脚本",
-        success: true,
-        changed: true,
-        message: `审计脚本已部署: ${dst}`,
-      };
     }
 
+    mkdirSync(dstDir, { recursive: true });
+    writeFileSync(dst, targetContent, "utf-8");
+    try {
+      if (!isWin) chmodSync(dst, 0o700);
+    } catch {
+      /* Windows noop */
+    }
     return {
       id: "deploy-audit",
       name: "部署审计脚本",
-      success: false,
-      changed: false,
-      message: `审计脚本模板不存在: ${src}`,
+      success: true,
+      changed: true,
+      message: `审计脚本已部署: ${dst}`,
     };
   } catch (err: any) {
+    if ((err as NodeJS.ErrnoException).code === "EPERM") {
+      return {
+        id: "deploy-audit",
+        name: "部署审计脚本",
+        success: false,
+        changed: false,
+        message: `部署失败: 脚本正被「不可变保护」锁定拦截。\n请先手动解除保护状态: ` +
+          (isWin ? `icacls "${dst}" /remove:d Everyone` : `chattr -i "${dst}"`),
+      };
+    }
     return {
       id: "deploy-audit",
       name: "部署审计脚本",
       success: false,
       changed: false,
       message: `部署失败: ${err.message}`,
+    };
+  }
+}
+
+// ──────────── Backup restore (one-click rollback) ────────────
+
+/** List all available backups */
+export function listBackups(): { backups: { id: string; date: string; files: string[] }[] } {
+  const backupsDir = join(getOpenClawDir(), ".backups");
+  if (!existsSync(backupsDir)) return { backups: [] };
+
+  const entries = readdirSync(backupsDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .sort((a, b) => b.name.localeCompare(a.name)); // newest first
+
+  return {
+    backups: entries.map((e) => {
+      const backupPath = join(backupsDir, e.name);
+      let files: string[] = [];
+      try {
+        files = readdirSync(backupPath).filter((f) => !f.startsWith("."));
+      } catch {
+        /* ignore */
+      }
+      return {
+        id: e.name,
+        date: e.name.replace(/T/g, " ").replace(/-/g, ":").slice(0, 19),
+        files,
+      };
+    }),
+  };
+}
+
+/** Restore from backup (one-click rollback) */
+export function restoreBackup(backupId?: string): HardenResult {
+  const backupsDir = join(getOpenClawDir(), ".backups");
+  if (!existsSync(backupsDir)) {
+    return {
+      id: "rollback",
+      name: "一键恢复",
+      success: false,
+      changed: false,
+      message: "没有可用备份",
+    };
+  }
+
+  let targetDir: string;
+  if (backupId) {
+    targetDir = join(backupsDir, backupId);
+    if (!existsSync(targetDir)) {
+      return {
+        id: "rollback",
+        name: "一键恢复",
+        success: false,
+        changed: false,
+        message: `备份不存在: ${backupId}`,
+      };
+    }
+  } else {
+    const entries = readdirSync(backupsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .sort((a, b) => b.name.localeCompare(a.name));
+    if (entries.length === 0) {
+      return {
+        id: "rollback",
+        name: "一键恢复",
+        success: false,
+        changed: false,
+        message: "没有可用备份",
+      };
+    }
+    targetDir = join(backupsDir, entries[0].name);
+    backupId = entries[0].name;
+  }
+
+  const ocDir = getOpenClawDir();
+  const restoredFiles: string[] = [];
+
+  try {
+    const files = readdirSync(targetDir).filter((f) => !f.startsWith("."));
+    for (const file of files) {
+      const src = join(targetDir, file);
+      const dest = join(ocDir, file);
+      try {
+        copyFileSync(src, dest);
+        restoredFiles.push(file);
+      } catch (e: any) {
+        // On EPERM (Windows), try resetting ACL then retry
+        if (e.code === "EPERM" && process.platform === "win32") {
+          try {
+            execSync(`icacls "${dest}" /reset`, { stdio: "pipe", windowsHide: true });
+            copyFileSync(src, dest);
+            restoredFiles.push(file);
+          } catch {
+            restoredFiles.push(`${file} (恢复失败: 权限不足)`);
+          }
+        } else {
+          restoredFiles.push(`${file} (恢复失败: ${e.message})`);
+        }
+      }
+    }
+
+    return {
+      id: "rollback",
+      name: "一键恢复",
+      success: true,
+      changed: true,
+      message: `已从备份 ${backupId} 恢复 ${restoredFiles.length} 个文件:\n${restoredFiles.join(", ")}`,
+    };
+  } catch (err: any) {
+    return {
+      id: "rollback",
+      name: "一键恢复",
+      success: false,
+      changed: false,
+      message: `恢复失败: ${err.message}`,
     };
   }
 }
