@@ -613,8 +613,12 @@ function checkFileSystem(ocDir: string, pf: Platform): CheckResult[] {
     const configPath = join(ocDir, "openclaw.json");
     if (existsSync(configPath)) {
       const aclResult = safeExec(`icacls "${configPath}" 2>nul`);
+      // Check both English names and well-known SIDs for non-English Windows
       const aclDangerous = aclResult.ok &&
-        (aclResult.stdout.includes("Everyone") || aclResult.stdout.includes("BUILTIN\\Users"));
+        (aclResult.stdout.includes("Everyone") ||
+         aclResult.stdout.includes("BUILTIN\\Users") ||
+         aclResult.stdout.includes("S-1-1-0") ||
+         aclResult.stdout.includes("S-1-5-32-545"));
       results.push({
         id: "fs-win-acl",
         domain: "文件篡改",

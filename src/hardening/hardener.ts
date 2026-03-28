@@ -5,6 +5,7 @@
 import {
   readFileSync,
   writeFileSync,
+  renameSync,
   existsSync,
   mkdirSync,
   copyFileSync,
@@ -261,7 +262,10 @@ export function deployConfig(
         merged.gateway.controlUi = template.gateway.controlUi;
       }
 
-      writeFileSync(configPath, JSON.stringify(merged, null, 2), "utf-8");
+      // Atomic write: temp file + rename to prevent corruption on crash
+      const tmpPath = configPath + ".tmp." + process.pid;
+      writeFileSync(tmpPath, JSON.stringify(merged, null, 2), "utf-8");
+      renameSync(tmpPath, configPath);
       return {
         id: "deploy-config",
         name: "部署配置",
@@ -273,7 +277,9 @@ export function deployConfig(
       };
     } else {
       mkdirSync(ocDir, { recursive: true });
-      writeFileSync(configPath, JSON.stringify(template, null, 2), "utf-8");
+      const tmpPath = configPath + ".tmp." + process.pid;
+      writeFileSync(tmpPath, JSON.stringify(template, null, 2), "utf-8");
+      renameSync(tmpPath, configPath);
       return {
         id: "deploy-config",
         name: "部署配置",
@@ -300,6 +306,7 @@ export function hardenPermissions(pf: Platform): HardenResult {
   if (pf.os === "win32") {
     const user = process.env.USERNAME || "SYSTEM";
     try {
+      mkdirSync(ocDir, { recursive: true });
       safeExec(`icacls "${ocDir}" /inheritance:r`);
       safeExec(`icacls "${ocDir}" /grant:r "${user}:(OI)(CI)F"`);
       safeExec(`icacls "${ocDir}" /grant:r "SYSTEM:(OI)(CI)F"`);
@@ -432,12 +439,30 @@ export function hardenNpmrc(): HardenResult {
   }
 }
 
+// Shared gitignore content for .openclaw directory
+const OPENCLAW_GITIGNORE = [
+  "devices/*.tmp",
+  "media/",
+  "logs/",
+  "completions/",
+  "canvas/",
+  "*.bak*",
+  "*.tmp",
+  "node_modules/",
+  ".backups/",
+].join("\n");
+
 /** Initialize Git disaster recovery */
 export function initGitBackup(): HardenResult {
   const ocDir = getOpenClawDir();
   const gitDir = join(ocDir, ".git");
 
   if (existsSync(gitDir)) {
+    // Ensure .gitignore exists before git add to prevent committing secrets/media
+    const gitignorePath = join(ocDir, ".gitignore");
+    if (!existsSync(gitignorePath)) {
+      writeFileSync(gitignorePath, OPENCLAW_GITIGNORE, "utf-8");
+    }
     const result = safeExec(
       `cd "${ocDir}" && git add -A && git commit -m "Security snapshot - ${new Date().toISOString()}"`,
     );
@@ -454,19 +479,7 @@ export function initGitBackup(): HardenResult {
 
   try {
     safeExec(`cd "${ocDir}" && git init -q`);
-
-    const gitignore = [
-      "devices/*.tmp",
-      "media/",
-      "logs/",
-      "completions/",
-      "canvas/",
-      "*.bak*",
-      "*.tmp",
-      "node_modules/",
-      ".backups/",
-    ].join("\n");
-    writeFileSync(join(ocDir, ".gitignore"), gitignore, "utf-8");
+    writeFileSync(join(ocDir, ".gitignore"), OPENCLAW_GITIGNORE, "utf-8");
 
     safeExec(
       `cd "${ocDir}" && git add -A && git commit -q -m "Initial security baseline"`,
@@ -679,7 +692,8 @@ export function immutableProtect(pf: Platform): HardenResult {
   }
 
   if (pf.os === "win32") {
-    const result = safeExec(`icacls "${target}" /deny Everyone:(W)`);
+    // Use well-known SID *S-1-1-0 (Everyone) for non-English Windows compatibility
+    const result = safeExec(`icacls "${target}" /deny *S-1-1-0:(W)`);
     return {
       id: "immutable-protect",
       name: "不可变保护",
@@ -688,7 +702,7 @@ export function immutableProtect(pf: Platform): HardenResult {
       message: result.ok
         ? "NTFS Deny Write 已设置 ✓"
         : `设置失败: ${result.stderr}`,
-      rollback: `icacls "${target}" /remove:d Everyone`,
+      rollback: `icacls "${target}" /remove:d *S-1-1-0`,
     };
   }
 
@@ -821,7 +835,7 @@ export function configureFirewall(pf: Platform): HardenResult {
       success: result.ok,
       changed: result.ok,
       message: result.ok
-        ? "iptables: 规则已添加 ✓"
+        ? "iptables: 规则已添加 ✓\n⚠ 注意: 规则重启后失效, 请运行 iptables-save 或安装 netfilter-persistent 持久化"
         : `iptables 配置失败: ${result.stderr}`,
       rollback: `sudo iptables -D INPUT -p tcp --dport ${port} -j DROP`,
     };
@@ -989,8 +1003,10 @@ export function deployAuditScript(): HardenResult {
           };
         }
         // Content differs but file may be immutable-protected — try unlocking
-        if (isWin) safeExec(`icacls "${dst}" /remove:d Everyone`);
-        else safeExec(`sudo chattr -i "${dst}" || sudo chflags nouchg "${dst}"`);
+        // Use platform-specific commands (avoid chattr on macOS, chflags on Linux)
+        if (isWin) safeExec(`icacls "${dst}" /remove:d *S-1-1-0`);
+        else if (process.platform === "darwin") safeExec(`sudo chflags nouchg "${dst}"`);
+        else safeExec(`sudo chattr -i "${dst}"`);
       } catch {
         /* ignore read/unlock errors */
       }
@@ -1018,7 +1034,7 @@ export function deployAuditScript(): HardenResult {
         success: false,
         changed: false,
         message: `部署失败: 脚本正被「不可变保护」锁定拦截。\n请先手动解除保护状态: ` +
-          (isWin ? `icacls "${dst}" /remove:d Everyone` : `chattr -i "${dst}"`),
+          (isWin ? `icacls "${dst}" /remove:d *S-1-1-0` : process.platform === "darwin" ? `sudo chflags nouchg "${dst}"` : `sudo chattr -i "${dst}"`),
       };
     }
     return {
@@ -1053,7 +1069,8 @@ export function listBackups(): { backups: { id: string; date: string; files: str
       }
       return {
         id: e.name,
-        date: e.name.replace(/T/g, " ").replace(/-/g, ":").slice(0, 19),
+        // Parse "2024-03-15T12-34-56" → "2024-03-15 12:34:56" (only fix time dashes)
+        date: e.name.replace("T", " ").replace(/(\d{4}-\d{2}-\d{2}) (\d{2})-(\d{2})-(\d{2})/, "$1 $2:$3:$4"),
         files,
       };
     }),
