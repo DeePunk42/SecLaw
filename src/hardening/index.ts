@@ -10,7 +10,7 @@ export type {
   Platform,
 } from "./types.js";
 
-export { detectPlatform, getOpenClawDir, safeExec, safeExecAsync } from "./platform.js";
+export { detectPlatform, getOpenClawDir, safeExec, safeExecAsync, commandExists } from "./platform.js";
 export { detectOpenClaw, runAllChecks, generateSummary } from "./checker.js";
 export {
   backupConfig,

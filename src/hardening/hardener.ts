@@ -17,7 +17,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { HardenResult, Platform } from "./types.js";
-import { getOpenClawDir, safeExec, safeExecAsync } from "./platform.js";
+import { getOpenClawDir, safeExec, safeExecAsync, commandExists } from "./platform.js";
 
 // ──────────────── Template directory resolution ────────────────
 
@@ -454,6 +454,16 @@ const OPENCLAW_GITIGNORE = [
 
 /** Initialize Git disaster recovery */
 export function initGitBackup(): HardenResult {
+  if (!commandExists("git")) {
+    return {
+      id: "git-backup",
+      name: "Git 灾备",
+      success: false,
+      changed: false,
+      message: "git 未安装, 无法初始化灾备仓库. 请先安装 git: https://git-scm.com/",
+    };
+  }
+
   const ocDir = getOpenClawDir();
   const gitDir = join(ocDir, ".git");
 
@@ -734,6 +744,16 @@ export function immutableProtect(pf: Platform): HardenResult {
     };
   }
 
+  if (!commandExists("chattr")) {
+    return {
+      id: "immutable-protect",
+      name: "不可变保护",
+      success: false,
+      changed: false,
+      message: "chattr 不可用 (最小化系统/容器). 请安装 e2fsprogs 或跳过此操作",
+    };
+  }
+
   const result = safeExec(`sudo chattr +i "${target}"`);
   return {
     id: "immutable-protect",
@@ -802,9 +822,8 @@ export function configureFirewall(pf: Platform): HardenResult {
     };
   }
 
-  // Linux: try ufw then iptables
-  const ufw = safeExec("which ufw");
-  if (ufw.ok) {
+  // Linux: try ufw then iptables (use commandExists instead of `which`)
+  if (commandExists("ufw")) {
     const result = safeExec(`sudo ufw deny ${port}/tcp`);
     return {
       id: "firewall",
@@ -818,8 +837,7 @@ export function configureFirewall(pf: Platform): HardenResult {
     };
   }
 
-  const ipt = safeExec("which iptables");
-  if (ipt.ok) {
+  if (commandExists("iptables")) {
     // Delete old rules first to prevent duplicates on repeated execution
     safeExec(`sudo iptables -D INPUT -p tcp --dport ${port} -s 127.0.0.1 -j ACCEPT`);
     safeExec(`sudo iptables -D INPUT -p tcp --dport ${port} -j DROP`);
@@ -907,9 +925,9 @@ export function checkDiskEncryption(pf: Platform): HardenResult {
 
 // ──── Embedded audit script templates (bash + PowerShell) ────
 
-const EMBEDDED_AUDIT_SH = `#!/bin/bash
+const EMBEDDED_AUDIT_SH = `#!/bin/sh
 # OpenClaw Nightly Security Audit
-set -euo pipefail
+set -eu
 DATE=$(date +%Y-%m-%d)
 REPORT_DIR="/tmp/openclaw/security-reports"
 mkdir -p "$REPORT_DIR"
@@ -918,7 +936,7 @@ echo "=== OpenClaw Security Audit - $DATE ===" > "$REPORT"
 echo "" >> "$REPORT"
 
 # 1. Config integrity
-if command -v openclaw &>/dev/null; then
+if command -v openclaw >/dev/null 2>&1; then
   echo "[Config Validation]" >> "$REPORT"
   openclaw config validate >> "$REPORT" 2>&1 || echo "WARN: config validation failed" >> "$REPORT"
   echo "" >> "$REPORT"
@@ -935,9 +953,9 @@ OC_DIR="$HOME/.openclaw"
 if [ -f "$OC_DIR/.config-baseline.json" ]; then
   echo "" >> "$REPORT"
   echo "[Hash Integrity]" >> "$REPORT"
-  if command -v sha256sum &>/dev/null; then
+  if command -v sha256sum >/dev/null 2>&1; then
     CURRENT_HASH=$(sha256sum "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
-  elif command -v shasum &>/dev/null; then
+  elif command -v shasum >/dev/null 2>&1; then
     CURRENT_HASH=$(shasum -a 256 "$OC_DIR/openclaw.json" 2>/dev/null | cut -d' ' -f1)
   else
     CURRENT_HASH="(no sha256 tool available)"
