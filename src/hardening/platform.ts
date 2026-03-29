@@ -157,3 +157,11 @@ export function safeExecAsync(
     });
   });
 }
+
+/** Check if a command exists in PATH (cross-platform) */
+export function commandExists(cmd: string): boolean {
+  const check = process.platform === "win32"
+    ? `where ${cmd} 2>nul`
+    : `command -v ${cmd} 2>/dev/null`;
+  return safeExec(check, 3000).ok;
+}

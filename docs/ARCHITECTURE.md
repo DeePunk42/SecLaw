@@ -668,7 +668,7 @@ Or via plugin config `rules.extra` array.
 
 ## OpenClaw Plugin Integration
 
-SecLaw registers as an OpenClaw plugin via `register(api)`. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Note: `emitAgentEvent` was removed from the OpenClaw plugin API in 3.23; when absent, SSE notifications are safely skipped via null guard.
+SecLaw registers as an OpenClaw plugin via `register(api)`. A **version gate** checks `openclaw --version` at startup and refuses to load if the detected version is below 3.22 (logs error via `api.logger.error`). If the CLI is not in PATH (version undefined), startup proceeds — the runtime may still be compatible. All hooks use the typed lifecycle system `api.on()`. The `api.emitAgentEvent` function (if provided) is wired to `setEmitAgentEvent()` during `register()` to enable SSE events (async danger notifications). Note: `emitAgentEvent` was removed from the OpenClaw plugin API in 3.23; when absent, SSE notifications are safely skipped via null guard.
 
 ### Registered Hooks
 

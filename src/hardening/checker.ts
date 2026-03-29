@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { platform } from "node:os";
 import { createHash } from "node:crypto";
 import type { CheckResult, Grade, Platform, ScanSummary } from "./types.js";
-import { getOpenClawDir, safeExec, safeExecAsync } from "./platform.js";
+import { getOpenClawDir, safeExec, safeExecAsync, commandExists } from "./platform.js";
 
 // Balanced mode baseline safeBins
 const BALANCED_SAFEBINS = [
@@ -689,30 +689,54 @@ function checkFileSystem(ocDir: string, pf: Platform): CheckResult[] {
     }
   }
 
-  // Disk encryption detection
+  // Disk encryption detection — check tool availability first
   let encrypted = false;
+  let encryptionSkipped = false;
+  let encryptionSkipReason = "";
   if (pf.os === "win32") {
-    const r = safeExec("manage-bde -status C: 2>nul");
-    encrypted = r.ok && r.stdout.includes("Protection On");
+    if (!commandExists("manage-bde")) {
+      encryptionSkipped = true;
+      encryptionSkipReason = "manage-bde 不可用 (Windows Home 不支持 BitLocker)";
+    } else {
+      const r = safeExec("manage-bde -status C: 2>nul");
+      encrypted = r.ok && r.stdout.includes("Protection On");
+    }
   } else if (pf.os === "darwin") {
     const r = safeExec("fdesetup status");
     encrypted = r.ok && r.stdout.toLowerCase().includes("on");
-  } else if (!pf.isWSL2) {
-    const r = safeExec("lsblk -f 2>/dev/null");
-    encrypted = r.ok && /crypt|luks/i.test(r.stdout);
-  } else {
+  } else if (pf.isWSL2) {
     encrypted = true; // WSL2: depends on Windows BitLocker, skip
+  } else {
+    if (!commandExists("lsblk")) {
+      encryptionSkipped = true;
+      encryptionSkipReason = "lsblk 不可用 (最小化系统/容器)";
+    } else {
+      const r = safeExec("lsblk -f 2>/dev/null");
+      encrypted = r.ok && /crypt|luks/i.test(r.stdout);
+    }
   }
-  results.push({
-    id: "fs-disk-encryption",
-    domain: "文件篡改",
-    name: "磁盘加密",
-    severity: encrypted ? "pass" : "warning",
-    status: encrypted ? "pass" : "warn",
-    current: encrypted ? "已启用" : "未检测到",
-    message: encrypted ? "磁盘加密已启用 ✓" : "未检测到磁盘加密 (建议启用)",
-    fix: pf.os === "win32" ? "启用 BitLocker" : pf.os === "darwin" ? "启用 FileVault" : "启用 LUKS",
-  });
+  if (encryptionSkipped) {
+    results.push({
+      id: "fs-disk-encryption",
+      domain: "文件篡改",
+      name: "磁盘加密",
+      severity: "info",
+      status: "n/a",
+      current: encryptionSkipReason,
+      message: `磁盘加密检测跳过: ${encryptionSkipReason}`,
+    });
+  } else {
+    results.push({
+      id: "fs-disk-encryption",
+      domain: "文件篡改",
+      name: "磁盘加密",
+      severity: encrypted ? "pass" : "warning",
+      status: encrypted ? "pass" : "warn",
+      current: encrypted ? "已启用" : "未检测到",
+      message: encrypted ? "磁盘加密已启用 ✓" : "未检测到磁盘加密 (建议启用)",
+      fix: pf.os === "win32" ? "启用 BitLocker" : pf.os === "darwin" ? "启用 FileVault" : "启用 LUKS",
+    });
+  }
 
   return results;
 }
@@ -859,6 +883,8 @@ function checkAgentBehavior(
   // Pre-check: is agents section configured?
   const agentsSection = config?.agents;
   const sandbox = agentsSection?.defaults?.sandbox?.mode;
+  const dockerAvailable = safeExec("docker --version", 5000).ok;
+
   if (!agentsSection) {
     results.push({
       id: "agent-sandbox",
@@ -870,19 +896,52 @@ function checkAgentBehavior(
     });
   } else {
     const sandboxOk = sandbox === "all" || sandbox === "non-main";
-    results.push({
-      id: "agent-sandbox",
-      domain: "Agent 滥用",
-      name: "容器沙箱",
-      severity: sandboxOk ? "pass" : "warning",
-      status: sandboxOk ? "pass" : "warn",
-      current: sandbox || "(未设置)",
-      expected: '"all" 或 "non-main"',
-      message: sandboxOk
-        ? `沙箱模式: ${sandbox} ✓`
-        : "未启用容器沙箱",
-      fix: '设置 agents.defaults.sandbox.mode = "non-main"',
-    });
+    if (sandboxOk && !dockerAvailable) {
+      // Sandbox enabled but Docker missing → will cause fatal startup error
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "critical",
+        status: "fail",
+        current: sandbox,
+        message: `⚠ sandbox.mode="${sandbox}" 但未检测到 Docker — Agent 启动时会报错!`,
+        fix: '安装 Docker, 或设置 agents.defaults.sandbox.mode = "off" 以禁用沙箱',
+      });
+    } else if (sandboxOk) {
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "pass",
+        status: "pass",
+        current: sandbox,
+        message: `沙箱模式: ${sandbox} ✓`,
+      });
+    } else if (!dockerAvailable) {
+      // No sandbox, no Docker → can't recommend what won't work
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "info",
+        status: "n/a",
+        current: "Docker 不可用",
+        message: "未检测到 Docker, 容器沙箱不可用 (跳过)",
+      });
+    } else {
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "warning",
+        status: "warn",
+        current: sandbox || "(未设置)",
+        expected: '"all" 或 "non-main"',
+        message: "未启用容器沙箱",
+        fix: '设置 agents.defaults.sandbox.mode = "non-main" (需要 Docker)',
+      });
+    }
   }
 
   const agentsPath = join(ocDir, "workspace", "AGENTS.md");
@@ -928,7 +987,8 @@ function checkAgentBehavior(
   const piPluginInstalled = piDefenseTools.some((p: string) =>
     /agent[-_]?smith|llm[-_]?guard|nemo[-_]?guardrails|prompt[-_]?guard|rebuff/i.test(String(p)),
   );
-  const hasLlmGuard = (() => {
+  const pipAvailable = commandExists("pip");
+  const hasLlmGuard = pipAvailable && (() => {
     const r = safeExec("pip show llm-guard 2>&1", 5000);
     return r.ok && r.stdout.includes("Name:");
   })();
@@ -942,7 +1002,7 @@ function checkAgentBehavior(
     status: piMitigated ? "pass" : "warn",
     message: piMitigated
       ? "已检测到 PI 防御措施, 天花板已解除 ✓"
-      : "无专用 PI 防御工具 (Agent Smith, llm-guard 等); 依赖 AGENTS.md 规则和人工审查",
+      : `无专用 PI 防御工具 (Agent Smith, llm-guard 等)${!pipAvailable ? "; pip 不可用, 跳过 Python 库检测" : ""}; 依赖 AGENTS.md 规则和人工审查`,
     fix: piMitigated ? undefined : "安装 PI 防护工具 (agent-smith, llm-guard, nemo-guardrails) 可解除天花板",
   });
 
@@ -964,17 +1024,36 @@ function checkAgentBehavior(
   });
 
   const sandboxForLimit = sandbox === "all" || sandbox === "non-main";
-  results.push({
-    id: "limit-model-behavior",
-    domain: "Agent 滥用",
-    name: "模型行为控制",
-    severity: sandboxForLimit ? "pass" : "warning",
-    status: sandboxForLimit ? "pass" : "warn",
-    message: sandboxForLimit
-      ? "沙箱模式已启用, 模型行为受限 ✓"
-      : "无沙箱隔离, 模型可直接操作宿主环境",
-    fix: '设置 agents.defaults.sandbox.mode = "non-main" 或 "all"',
-  });
+  if (sandboxForLimit && dockerAvailable) {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "pass",
+      status: "pass",
+      message: "沙箱模式已启用, 模型行为受限 ✓",
+    });
+  } else if (!dockerAvailable) {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "warning",
+      status: "warn",
+      message: "无沙箱隔离 (Docker 不可用); 依赖 exec.allowlist + ask 模式防护",
+      fix: "安装 Docker 后可启用 agents.defaults.sandbox.mode",
+    });
+  } else {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "warning",
+      status: "warn",
+      message: "无沙箱隔离, 模型可直接操作宿主环境",
+      fix: '设置 agents.defaults.sandbox.mode = "non-main" (需要 Docker)',
+    });
+  }
 
   return results;
 }

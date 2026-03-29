@@ -1219,6 +1219,18 @@ function register(api: OpenClawPluginApi): void {
   // Heavy init (rule engine, LLM, audit log) runs once; hook and route
   // registration runs every time since each api object needs its own bindings.
   if (!initialized) {
+    // ─── Version gate: require OpenClaw >= 3.22 ───
+    const pf = detectPlatform();
+    if (pf.openclawVersion) {
+      const [major, minor] = pf.openclawVersion.split(".").map(Number);
+      if (major < 3 || (major === 3 && minor < 22)) {
+        api.logger.error(
+          `[seclaw] OpenClaw ${pf.openclawVersion} is too old. SecLaw requires >= 3.22. Plugin will NOT start.`,
+        );
+        return;
+      }
+    }
+
     initialized = true;
 
     const pluginConfig = (api.pluginConfig ?? {}) as Partial<SecLawConfig>;
