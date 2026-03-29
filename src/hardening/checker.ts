@@ -859,6 +859,8 @@ function checkAgentBehavior(
   // Pre-check: is agents section configured?
   const agentsSection = config?.agents;
   const sandbox = agentsSection?.defaults?.sandbox?.mode;
+  const dockerAvailable = safeExec("docker --version", 5000).ok;
+
   if (!agentsSection) {
     results.push({
       id: "agent-sandbox",
@@ -870,19 +872,52 @@ function checkAgentBehavior(
     });
   } else {
     const sandboxOk = sandbox === "all" || sandbox === "non-main";
-    results.push({
-      id: "agent-sandbox",
-      domain: "Agent 滥用",
-      name: "容器沙箱",
-      severity: sandboxOk ? "pass" : "warning",
-      status: sandboxOk ? "pass" : "warn",
-      current: sandbox || "(未设置)",
-      expected: '"all" 或 "non-main"',
-      message: sandboxOk
-        ? `沙箱模式: ${sandbox} ✓`
-        : "未启用容器沙箱",
-      fix: '设置 agents.defaults.sandbox.mode = "non-main"',
-    });
+    if (sandboxOk && !dockerAvailable) {
+      // Sandbox enabled but Docker missing → will cause fatal startup error
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "critical",
+        status: "fail",
+        current: sandbox,
+        message: `⚠ sandbox.mode="${sandbox}" 但未检测到 Docker — Agent 启动时会报错!`,
+        fix: '安装 Docker, 或设置 agents.defaults.sandbox.mode = "off" 以禁用沙箱',
+      });
+    } else if (sandboxOk) {
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "pass",
+        status: "pass",
+        current: sandbox,
+        message: `沙箱模式: ${sandbox} ✓`,
+      });
+    } else if (!dockerAvailable) {
+      // No sandbox, no Docker → can't recommend what won't work
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "info",
+        status: "n/a",
+        current: "Docker 不可用",
+        message: "未检测到 Docker, 容器沙箱不可用 (跳过)",
+      });
+    } else {
+      results.push({
+        id: "agent-sandbox",
+        domain: "Agent 滥用",
+        name: "容器沙箱",
+        severity: "warning",
+        status: "warn",
+        current: sandbox || "(未设置)",
+        expected: '"all" 或 "non-main"',
+        message: "未启用容器沙箱",
+        fix: '设置 agents.defaults.sandbox.mode = "non-main" (需要 Docker)',
+      });
+    }
   }
 
   const agentsPath = join(ocDir, "workspace", "AGENTS.md");
@@ -964,17 +999,36 @@ function checkAgentBehavior(
   });
 
   const sandboxForLimit = sandbox === "all" || sandbox === "non-main";
-  results.push({
-    id: "limit-model-behavior",
-    domain: "Agent 滥用",
-    name: "模型行为控制",
-    severity: sandboxForLimit ? "pass" : "warning",
-    status: sandboxForLimit ? "pass" : "warn",
-    message: sandboxForLimit
-      ? "沙箱模式已启用, 模型行为受限 ✓"
-      : "无沙箱隔离, 模型可直接操作宿主环境",
-    fix: '设置 agents.defaults.sandbox.mode = "non-main" 或 "all"',
-  });
+  if (sandboxForLimit && dockerAvailable) {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "pass",
+      status: "pass",
+      message: "沙箱模式已启用, 模型行为受限 ✓",
+    });
+  } else if (!dockerAvailable) {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "warning",
+      status: "warn",
+      message: "无沙箱隔离 (Docker 不可用); 依赖 exec.allowlist + ask 模式防护",
+      fix: "安装 Docker 后可启用 agents.defaults.sandbox.mode",
+    });
+  } else {
+    results.push({
+      id: "limit-model-behavior",
+      domain: "Agent 滥用",
+      name: "模型行为控制",
+      severity: "warning",
+      status: "warn",
+      message: "无沙箱隔离, 模型可直接操作宿主环境",
+      fix: '设置 agents.defaults.sandbox.mode = "non-main" (需要 Docker)',
+    });
+  }
 
   return results;
 }
